@@ -1021,6 +1021,19 @@ bool8 Net_PopCorrection(struct NetCorrection *out)
     return TRUE;
 }
 
+bool8 Net_HasServerSave(void)
+{
+    bool8 has;
+
+    if (!sInitialised)
+        return FALSE;
+
+    SDL_LockMutex(sNet.lock);
+    has = sNet.hasServerSave;
+    SDL_UnlockMutex(sNet.lock);
+    return has;
+}
+
 bool8 Net_TakeServerSave(void)
 {
     bool8 had;

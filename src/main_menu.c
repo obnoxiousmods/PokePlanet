@@ -710,6 +710,10 @@ static void EnterMainMenu(u8 taskId)
     gTasks[taskId].func = Task_MainMenuCheckSaveFile;
 }
 
+// How long to wait for the server's save before giving up and using what is here. Two
+// seconds: long enough for 128KB over a real connection, short enough not to look hung.
+#define SERVER_SAVE_WAIT_FRAMES 120
+
 static void Task_PokePlanetConnect(u8 taskId)
 {
     s16 *data = gTasks[taskId].data;
@@ -747,6 +751,19 @@ static void Task_PokePlanetConnect(u8 taskId)
 
     if (authState == NET_AUTH_ONLINE)
     {
+        // Wait for the server's save before going anywhere.
+        //
+        // It arrives on its own stream, shortly *after* the status says ONLINE, so checking
+        // for it the moment we see ONLINE almost always finds nothing -- and the player then
+        // enters the world from the local save, with the server's copy landing seconds later
+        // and nobody left to apply it. That is a save being silently ignored, which is the
+        // one thing this whole arrangement exists to prevent.
+        //
+        // Bounded, because a character who has never saved has nothing to send and would
+        // otherwise wait here forever.
+        if (!Net_HasServerSave() && ++tHoldTimer < SERVER_SAVE_WAIT_FRAMES)
+            return;
+
         // The server sends its copy of the save right after sign-in, and the network thread
         // has already written it into the flash mirror. The game read the local save at boot,
         // long before any of this, so reload from what just arrived: after this the player is
@@ -773,6 +790,16 @@ static void Task_PokePlanetConnect(u8 taskId)
                 // the edge of a small map, which loads as a black screen.
                 gSaveBlock1Ptr->location.mapGroup = profile.mapGroup;
                 gSaveBlock1Ptr->location.mapNum = profile.mapNum;
+
+                // location, not just pos. Loading a map runs SetPlayerCoordsFromWarp, which
+                // writes pos from location -- either the coordinates of location's warp, or
+                // location.x/y when there is no warp. Setting pos alone looks like it works
+                // and is then quietly overwritten by whatever the save image held, which is
+                // exactly what happened: the character kept appearing at the save's position
+                // while the server's was ignored.
+                gSaveBlock1Ptr->location.warpId = WARP_ID_NONE;
+                gSaveBlock1Ptr->location.x = profile.x - MAP_OFFSET;
+                gSaveBlock1Ptr->location.y = profile.y - MAP_OFFSET;
                 gSaveBlock1Ptr->pos.x = profile.x - MAP_OFFSET;
                 gSaveBlock1Ptr->pos.y = profile.y - MAP_OFFSET;
             }

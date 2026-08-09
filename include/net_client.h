@@ -163,6 +163,8 @@ bool8 Net_PopCorrection(struct NetCorrection *out);
 
 // TRUE once if the server handed over a save this session. The bytes are already in the
 // flash mirror; the caller reloads the game from them.
+// Has the server's save arrived yet? Does not consume it.
+bool8 Net_HasServerSave(void);
 bool8 Net_TakeServerSave(void);
 
 // Note that the save changed. Called from the sector write chokepoint in save.c, so it must
