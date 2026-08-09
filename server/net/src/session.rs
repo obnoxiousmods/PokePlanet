@@ -284,6 +284,14 @@ impl Session {
                             // an older server is still understood rather than dropped.
                             tracing::debug!("ignoring a save sent on the control stream");
                         }
+                        ServerControl::BattleStarting { opponent, opponent_name, link_id } => {
+                            tracing::info!(opponent, %opponent_name, link_id, "battle starting");
+                            self.link
+                                .send(wire::encode_battle_starting(
+                                    opponent, &opponent_name, link_id,
+                                ))
+                                .await;
+                        }
                         ServerControl::Superseded { reason } => {
                             tracing::warn!(%reason, "signed in elsewhere; shutting down");
                             self.report(wire::AUTH_SUPERSEDED, "", &reason).await;

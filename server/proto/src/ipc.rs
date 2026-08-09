@@ -34,6 +34,9 @@ pub const MSG_BATTLE_FAILED: u8 = 0x07;
 /// A slice of the server's copy of the save, handed over at sign-in. Layout matches the
 /// upload: u32 offset, u32 total, u16 len, bytes.
 pub const MSG_SAVE_IMAGE: u8 = 0x08;
+/// Both players agreed to battle. Carries the opponent and the slot the server assigned
+/// this player, which is what decides who runs the battle engine.
+pub const MSG_BATTLE_STARTING: u8 = 0x09;
 
 // Game -> sidecar
 pub const MSG_SELF_STATE: u8 = 0x81;
@@ -150,6 +153,15 @@ pub fn encode_save_image(offset: u32, total: u32, bytes: &[u8]) -> Vec<u8> {
     b.extend_from_slice(&total.to_le_bytes());
     b.extend_from_slice(&(bytes.len() as u16).to_le_bytes());
     b.extend_from_slice(bytes);
+    frame(b)
+}
+
+pub fn encode_battle_starting(opponent: PlayerId, opponent_name: &str, link_id: u8) -> Vec<u8> {
+    let mut b = Vec::with_capacity(2 + 4 + NAME_LEN);
+    b.push(MSG_BATTLE_STARTING);
+    b.push(link_id);
+    b.extend_from_slice(&opponent.to_le_bytes());
+    put_str(&mut b, opponent_name, NAME_LEN);
     frame(b)
 }
 
