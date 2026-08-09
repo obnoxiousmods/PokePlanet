@@ -25,6 +25,7 @@
 #include "pokemon.h"
 #include "random.h"
 #include "rtc.h"
+#include "fieldmap.h"
 #include "reload_save.h"
 #include "save.h"
 #include "scanline_effect.h"
@@ -764,10 +765,16 @@ static void Task_PokePlanetConnect(u8 taskId)
             // other ten times a second the moment the player appeared.
             if (Net_GetProfile(&profile))
             {
+                // The server holds runtime coordinates, which is what the client reports
+                // and what every other player is drawn at. SaveBlock1's own position is in
+                // layout coordinates -- the game adds the border back when it loads a map,
+                // and sets this field from warp coordinates and map dimensions. Writing one
+                // into the other put the player seven tiles from where they belonged, off
+                // the edge of a small map, which loads as a black screen.
                 gSaveBlock1Ptr->location.mapGroup = profile.mapGroup;
                 gSaveBlock1Ptr->location.mapNum = profile.mapNum;
-                gSaveBlock1Ptr->pos.x = profile.x;
-                gSaveBlock1Ptr->pos.y = profile.y;
+                gSaveBlock1Ptr->pos.x = profile.x - MAP_OFFSET;
+                gSaveBlock1Ptr->pos.y = profile.y - MAP_OFFSET;
             }
         }
 
