@@ -1026,19 +1026,37 @@ static u16 ControllerButtonMask(Uint8 button)
 // frames (default 45). That is what lets the whole client be exercised under gdb in a
 // terminal instead of by hand on a desktop.
 //
-//   POKEPLANET_AUTOKEYS=enter,enter,z,z,down,down,z ./pokeemerald
+//   POKEPLANET_AUTOKEYS=enter,enter,z,z,down:20,z ./pokeemerald
 //
 // Recognised: a b start select l r up down left right, and the key names z x enter.
-static void PumpScriptedInput(void)
+//
+// A token may carry a hold length in game frames, as in "down:20". The default is a short
+// tap, which is all a menu needs. Walking is different: tapping a direction only turns the
+// player, and actually stepping a tile needs the direction held for the length of the step,
+// so anything that has to move must ask for it.
+//
+// This runs on the game thread, from Platform_GetKeyInput, so "frame" here means a game
+// frame. It used to run on the SDL event thread inside ProcessEvents, which iterates at its
+// own rate entirely independently of the game thread; a press was set and cleared within one
+// event-loop pass and the game frequently never sampled it in between. That is why scripted
+// runs never got past the sign-in gate and why the harness had never actually proven
+// anything end to end.
+#define AUTOKEY_DEFAULT_HOLD 2
+
+static u16 PumpScriptedInput(void)
 {
     static const char *sScript = NULL;
     static bool8 sChecked = FALSE;
     static u32 sFrame = 0;
-    static u32 sIndex = 0;
     static u32 sInterval = 45;
-    u32 step;
     const char *cursor;
+    const char *colon;
+    const char *comma;
+    u32 token;
+    u32 phase;
+    u32 hold;
     u32 i;
+    u16 step;
 
     if (!sChecked)
     {
@@ -1051,26 +1069,24 @@ static void PumpScriptedInput(void)
             SDL_Log("autokeys: '%s' every %u frames", sScript, (unsigned)sInterval);
     }
     if (sScript == NULL)
-        return;
+        return 0;
 
-    // Release last frame's press so each key registers as a discrete tap.
-    if (sFrame % sInterval == 1)
-        keyboardKeys = 0;
+    // Which token this frame belongs to, and how far into its window we are. Deriving both
+    // from the frame counter keeps the whole thing stateless, so a token is held for a
+    // definite number of frames rather than depending on when it was last advanced.
+    token = sFrame / sInterval;
+    phase = sFrame % sInterval;
+    sFrame++;
 
-    if (sFrame++ % sInterval != 0)
-        return;
-
-    // Walk to the sIndex'th comma-separated token.
     cursor = sScript;
-    for (i = 0; i < sIndex && cursor != NULL; i++)
+    for (i = 0; i < token && cursor != NULL; i++)
     {
         cursor = SDL_strchr(cursor, ',');
         if (cursor != NULL)
             cursor++;
     }
     if (cursor == NULL || *cursor == '\0')
-        return; // script exhausted; leave the game running for inspection
-    sIndex++;
+        return 0; // script exhausted; leave the game running for inspection
 
     step = 0;
     if      (SDL_strncasecmp(cursor, "a", 1) == 0 || SDL_strncasecmp(cursor, "z", 1) == 0) step = A_BUTTON;
@@ -1084,14 +1100,25 @@ static void PumpScriptedInput(void)
     else if (SDL_strncasecmp(cursor, "l", 1) == 0)     step = L_BUTTON;
     else if (SDL_strncasecmp(cursor, "r", 1) == 0)     step = R_BUTTON;
 
-    keyboardKeys = step;
+    hold = AUTOKEY_DEFAULT_HOLD;
+    colon = SDL_strchr(cursor, ':');
+    comma = SDL_strchr(cursor, ',');
+    if (colon != NULL && (comma == NULL || colon < comma))
+    {
+        int parsed = SDL_atoi(colon + 1);
+        if (parsed > 0)
+            hold = (u32)parsed;
+    }
+    // Holding past the end of the window would run into the next token's press.
+    if (hold > sInterval)
+        hold = sInterval;
+
+    return phase < hold ? step : 0;
 }
 
 void ProcessEvents(void)
 {
     SDL_Event event;
-
-    PumpScriptedInput();
 
     while (SDL_PollEvent(&event))
     {
@@ -1263,14 +1290,18 @@ u16 GetXInputKeys()
 
 u16 Platform_GetKeyInput(void)
 {
+    // Called once per game frame from ReadKeys, which is what makes it the right place to
+    // step the test script: the game cannot miss a press it is itself sampling.
+    u16 scripted = PumpScriptedInput();
+
 #ifdef _WIN32
     u16 gamepadKeys = GetXInputKeys();
-    return gamepadKeys | keyboardKeys;
+    return gamepadKeys | keyboardKeys | scripted;
 #elif defined(__ANDROID__)
-    return keyboardKeys | controllerKeys | controllerAxisKeys;
+    return keyboardKeys | controllerKeys | controllerAxisKeys | scripted;
 #endif
 
-    return keyboardKeys;
+    return keyboardKeys | scripted;
 }
 
 void VDraw(SDL_Texture *texture)
