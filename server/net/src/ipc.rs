@@ -10,10 +10,20 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, Mutex};
 
+/// The two messages a newly attached game cannot do without. Both are sent once, at the
+/// moment they change, so without keeping a copy a game that attaches later never learns
+/// them.
+#[derive(Default)]
+struct Latched {
+    status: Option<Vec<u8>>,
+    profile: Option<Vec<u8>>,
+}
+
 /// Handle used by the rest of the sidecar to talk to whichever game process is attached.
 #[derive(Clone, Default)]
 pub struct GameLink {
     outbound: Arc<Mutex<Option<mpsc::Sender<Vec<u8>>>>>,
+    latched: Arc<Mutex<Latched>>,
 }
 
 impl GameLink {
@@ -26,7 +36,32 @@ impl GameLink {
         }
     }
 
+    /// Send the sign-in state, remembering it for whichever game attaches next.
+    pub async fn send_status(&self, frame: Vec<u8>) {
+        self.latched.lock().await.status = Some(frame.clone());
+        self.send(frame).await;
+    }
+
+    /// Send the save summary, remembering it for whichever game attaches next.
+    pub async fn send_profile(&self, frame: Vec<u8>) {
+        self.latched.lock().await.profile = Some(frame.clone());
+        self.send(frame).await;
+    }
+
     async fn attach(&self, tx: mpsc::Sender<Vec<u8>>) {
+        // Replay what the sign-in screen needs. Otherwise a game that attaches after the
+        // sidecar has already signed in -- a restart, or just a sidecar that reconnected
+        // faster than the game could boot -- waits on the connecting screen forever.
+        {
+            let latched = self.latched.lock().await;
+            // Profile first: the menu reads the save summary as soon as it sees ONLINE.
+            if let Some(profile) = latched.profile.as_ref() {
+                let _ = tx.try_send(profile.clone());
+            }
+            if let Some(status) = latched.status.as_ref() {
+                let _ = tx.try_send(status.clone());
+            }
+        }
         *self.outbound.lock().await = Some(tx);
     }
 

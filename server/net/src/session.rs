@@ -53,7 +53,7 @@ impl Session {
 
     async fn report(&self, state: u8, name: &str, login_url: &str) {
         self.link
-            .send(wire::encode_status(state, name, login_url))
+            .send_status(wire::encode_status(state, name, login_url))
             .await;
     }
 
@@ -159,7 +159,7 @@ impl Session {
                             pending_ticket = None;
                             // Profile before status: the sign-in screen reads the save
                             // summary as soon as it sees the ONLINE state.
-                            self.link.send(wire::encode_profile(&profile)).await;
+                            self.link.send_profile(wire::encode_profile(&profile)).await;
                             self.report(wire::AUTH_ONLINE, &profile.name, "").await;
                         }
                         ServerControl::AuthRequired { ticket, login_url } => {
