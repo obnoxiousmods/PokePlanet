@@ -25,6 +25,10 @@ pub struct Config {
     pub irc_port: u16,
     pub irc_channel: String,
     pub irc_enabled: bool,
+
+    /// Hand the stored save to the client at sign-in. Off until the delivery is reliable:
+    /// see the note at the send site in quic.rs. Uploading is unaffected.
+    pub send_stored_save: bool,
 }
 
 fn var(key: &str) -> anyhow::Result<String> {
@@ -68,6 +72,7 @@ impl Config {
             irc_port: var_or("POKEPLANET_IRC_PORT", "6697").parse()?,
             irc_channel: var_or("POKEPLANET_IRC_CHANNEL", "#pokeplanet"),
             irc_enabled: var_or("POKEPLANET_IRC_ENABLED", "1") != "0",
+            send_stored_save: var_or("POKEPLANET_SEND_STORED_SAVE", "0") != "0",
         })
     }
 

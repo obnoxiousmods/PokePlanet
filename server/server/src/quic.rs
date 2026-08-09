@@ -239,20 +239,28 @@ async fn run_session(
     // Hand over the stored save immediately after Welcome, so the client is playing this
     // character as the server last saw them rather than as this machine last saw them. A
     // character who has never saved has nothing here, and the client keeps what it has.
-    if let Some(image) = db::load_save(&server.db, character.id).await? {
-        let total = image.len() as u32;
-        for (i, piece) in image.chunks(SAVE_STREAM_CHUNK).enumerate() {
-            write_frame(
-                &mut send,
-                &ServerControl::SaveImage {
-                    offset: (i * SAVE_STREAM_CHUNK) as u32,
-                    total,
-                    bytes: piece.to_vec(),
-                },
-            )
-            .await?;
+    //
+    // Off by default because it is not finished. Pushing 128 slices down the control stream
+    // right after Welcome leaves the session cycling on the 30-second idle timeout and only
+    // a fraction of the slices reaching the game, so enabling it would trade a working
+    // connection for a save that never arrives. Uploading is unaffected and stays on: the
+    // server is already collecting saves, which is what the rest of this needs.
+    if server.cfg.send_stored_save {
+        if let Some(image) = db::load_save(&server.db, character.id).await? {
+            let total = image.len() as u32;
+            for (i, piece) in image.chunks(SAVE_STREAM_CHUNK).enumerate() {
+                write_frame(
+                    &mut send,
+                    &ServerControl::SaveImage {
+                        offset: (i * SAVE_STREAM_CHUNK) as u32,
+                        total,
+                        bytes: piece.to_vec(),
+                    },
+                )
+                .await?;
+            }
+            tracing::info!(player = player_id, bytes = total, "sent the stored save");
         }
-        tracing::info!(player = player_id, bytes = total, "sent the stored save");
     }
 
     // Fan-in for anything the world wants to push at this client.
