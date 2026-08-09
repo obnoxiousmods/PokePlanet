@@ -1022,8 +1022,37 @@ static void UNUSED SendBerryBlenderNoSpaceForPokeblocks(void)
     BuildSendCmd(LINKCMD_BLENDER_NO_PBLOCK_SPACE);
 }
 
+#ifdef PORTABLE
+// The slot the server gave us for the battle in progress, or NO_ASSIGNED_SLOT.
+//
+// SIO_MULTI_CNT->id reads a hardware register that this port only fakes: REG_BASE is
+// ordinary zeroed memory and nothing ever writes the id field, so every machine reads 0
+// and every machine concludes it is player 0. FindLinkBattleMaster gives player 0 the
+// battle engine, so both sides would run it and neither would be watching -- which is
+// the single thing most likely to break a networked battle without looking broken.
+//
+// The server assigns the slots instead, because it is the only party that can see both.
+#define NO_ASSIGNED_SLOT 0xFF
+static u8 sAssignedMultiplayerId = NO_ASSIGNED_SLOT;
+
+void Link_SetAssignedMultiplayerId(u8 id)
+{
+    sAssignedMultiplayerId = id;
+}
+
+void Link_ClearAssignedMultiplayerId(void)
+{
+    sAssignedMultiplayerId = NO_ASSIGNED_SLOT;
+}
+#endif
+
 u8 GetMultiplayerId(void)
 {
+#ifdef PORTABLE
+    if (sAssignedMultiplayerId != NO_ASSIGNED_SLOT)
+        return sAssignedMultiplayerId;
+#endif
+
     if (gWirelessCommType == TRUE)
         return Rfu_GetMultiplayerId();
 

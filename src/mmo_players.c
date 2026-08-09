@@ -13,6 +13,7 @@
 #include "mmo_chat.h"
 #include "mmo_players.h"
 #include "mmo_text.h"
+#include "link.h"
 #include "net_client.h"
 #include "script.h"
 #include "string_util.h"
@@ -135,6 +136,25 @@ static void ReportSelf(void)
                  player->heldMovementActive && !player->heldMovementFinished,
                  graphicsId,
                  player->currentElevation);
+}
+
+// Take the battle slot the server assigned.
+//
+// This is the whole reason the server hands one out. The game decides who runs the battle
+// engine from GetMultiplayerId, and on this port that reads a register nothing ever writes,
+// so both machines would read 0 and both would run it. Recording the assignment here makes
+// exactly one of them right.
+//
+// Entering the battle itself needs the link transport, which does not exist yet; until then
+// this establishes identity and says who the opponent is.
+static void CheckForBattleStart(void)
+{
+    struct NetBattleStart start;
+
+    if (!Net_PopBattleStart(&start))
+        return;
+
+    Link_SetAssignedMultiplayerId(start.linkId);
 }
 
 // The server refused where we said we were, so go where it says instead.
@@ -416,6 +436,7 @@ void MmoPlayers_Update(void)
     }
 
     ApplyCorrection();
+    CheckForBattleStart();
     ReportSelf();
     CheckForBattleInvite();
     CheckForBattleOutcome();

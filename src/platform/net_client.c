@@ -116,6 +116,10 @@ struct NetState
     struct NetCorrection correction;
     bool8 hasCorrection;
 
+    // Both sides agreed to battle, and this is the slot the server gave us.
+    struct NetBattleStart battleStart;
+    bool8 hasBattleStart;
+
     // Frames waiting for the worker thread to push onto the socket.
     u8 txQueue[TX_QUEUE_FRAMES][TX_FRAME_MAX];
     u16 txLength[TX_QUEUE_FRAMES];
@@ -405,6 +409,19 @@ static void HandleCorrection(const u8 *payload, u32 len)
     SDL_UnlockMutex(sNet.lock);
 }
 
+static void HandleBattleStarting(const u8 *payload, u32 len)
+{
+    if (len < 1 + 4 + NET_NAME_LEN)
+        return;
+
+    SDL_LockMutex(sNet.lock);
+    sNet.battleStart.linkId = payload[0];
+    sNet.battleStart.opponent = ReadU32(payload + 1);
+    CopyField(sNet.battleStart.opponentName, payload + 5, NET_NAME_LEN);
+    sNet.hasBattleStart = TRUE;
+    SDL_UnlockMutex(sNet.lock);
+}
+
 static void DispatchFrame(const u8 *body, u32 len)
 {
     if (len < 1)
@@ -428,6 +445,9 @@ static void DispatchFrame(const u8 *body, u32 len)
         break;
     case MSG_CORRECTION:
         HandleCorrection(body + 1, len - 1);
+        break;
+    case MSG_BATTLE_STARTING:
+        HandleBattleStarting(body + 1, len - 1);
         break;
     case MSG_SNAPSHOT:
         HandleSnapshot(body + 1, len - 1);
@@ -964,6 +984,23 @@ bool8 Net_TakeSaveChanged(void)
     if (!sSaveChanged)
         return FALSE;
     sSaveChanged = FALSE;
+    return TRUE;
+}
+
+bool8 Net_PopBattleStart(struct NetBattleStart *out)
+{
+    if (!sInitialised || out == NULL)
+        return FALSE;
+
+    SDL_LockMutex(sNet.lock);
+    if (!sNet.hasBattleStart)
+    {
+        SDL_UnlockMutex(sNet.lock);
+        return FALSE;
+    }
+    *out = sNet.battleStart;
+    sNet.hasBattleStart = FALSE;
+    SDL_UnlockMutex(sNet.lock);
     return TRUE;
 }
 

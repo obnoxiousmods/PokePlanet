@@ -134,6 +134,19 @@ bool8 Net_PopBattleAnswer(struct NetBattleInvite *out, bool8 *accepted);
 // Why a challenge we sent could not be delivered, if the server refused it.
 bool8 Net_PopBattleFailure(char *out, u8 outSize);
 
+// Both players agreed to battle. `linkId` is the slot the server assigned: the game
+// decides who runs the battle engine from it, and only the server can decide that
+// without both machines claiming the same one.
+struct NetBattleStart
+{
+    u32 opponent;
+    char opponentName[NET_NAME_LEN];
+    u8 linkId;
+};
+
+// Take the pending battle assignment, if one arrived.
+bool8 Net_PopBattleStart(struct NetBattleStart *out);
+
 // Where the server says the player really is, after refusing a reported step.
 struct NetCorrection
 {
