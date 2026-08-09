@@ -7,7 +7,7 @@
 //!
 //! Usage:
 //!   pokeplanet-ghost --token TOKEN [--server HOST[:PORT]] [--map GROUP:NUM]
-//!                    [--at X,Y] [--still]
+//!                    [--at X,Y] [--still] [--challenge PLAYER_ID]
 
 use pokeplanet_proto::quic::{
     self, ClientControl, ClientMovement, ServerControl, ServerSnapshot,
@@ -24,6 +24,9 @@ struct Options {
     x: i16,
     y: i16,
     still: bool,
+    /// Challenge this player id a few seconds after signing in, so the receiving side of
+    /// the invitation flow can be exercised without a second human.
+    challenge: Option<u32>,
 }
 
 fn parse_options() -> anyhow::Result<Options> {
@@ -35,6 +38,7 @@ fn parse_options() -> anyhow::Result<Options> {
         x: 17,
         y: 18,
         still: false,
+        challenge: None,
     };
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -70,6 +74,7 @@ fn parse_options() -> anyhow::Result<Options> {
                 opts.y = y.parse()?;
             }
             "--still" => opts.still = true,
+            "--challenge" => opts.challenge = Some(next()?.parse()?),
             other => anyhow::bail!("unrecognised argument {other}"),
         }
     }
@@ -89,7 +94,7 @@ async fn main() -> anyhow::Result<()> {
         .install_default()
         .map_err(|_| anyhow::anyhow!("could not install the rustls crypto provider"))?;
 
-    let opts = parse_options()?;
+    let mut opts = parse_options()?;
 
     let mut endpoint = quinn::Endpoint::client("0.0.0.0:0".parse()?)?;
     let mut roots = rustls::RootCertStore::empty();
@@ -166,6 +171,12 @@ async fn main() -> anyhow::Result<()> {
         moving: false,
     };
 
+    // The first tick of an interval fires immediately, so consume it here; the challenge
+    // should land a few seconds after sign-in, once the other client is actually in the
+    // world and able to be interrupted.
+    let mut challenge_at = tokio::time::interval(Duration::from_secs(6));
+    challenge_at.tick().await;
+
     let mut movement = tokio::time::interval(Duration::from_millis(100));
     let mut walk = tokio::time::interval(Duration::from_millis(500));
     let mut reported = tokio::time::interval(Duration::from_secs(5));
@@ -199,6 +210,14 @@ async fn main() -> anyhow::Result<()> {
             _ = movement.tick() => {
                 let bytes = quic::encode(&ClientMovement { pose })?;
                 let _ = conn.send_datagram(bytes.into());
+            }
+            _ = challenge_at.tick(), if opts.challenge.is_some() => {
+                if let Some(target) = opts.challenge.take() {
+                    let msg = quic::encode(&ClientControl::RequestBattle { target })?;
+                    send.write_all(&(msg.len() as u32).to_le_bytes()).await?;
+                    send.write_all(&msg).await?;
+                    tracing::info!(target, "challenge sent");
+                }
             }
             _ = reported.tick() => {
                 tracing::debug!(x = pose.x, y = pose.y, "still here");

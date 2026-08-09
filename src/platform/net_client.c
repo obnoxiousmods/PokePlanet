@@ -35,6 +35,9 @@
 #define MSG_SNAPSHOT     0x02
 #define MSG_CHAT         0x03
 #define MSG_PROFILE      0x04
+#define MSG_BATTLE_INVITE   0x05
+#define MSG_BATTLE_ANSWERED 0x06
+#define MSG_BATTLE_FAILED   0x07
 // Game -> sidecar
 #define MSG_SELF_STATE   0x81
 #define MSG_BEGIN_LOGIN  0x82
@@ -82,6 +85,14 @@ struct NetState
     u8 chatHead;   // next slot to write
     u8 chatTail;   // next slot to read
     u8 chatCount;
+
+    // Only the newest of each is kept. Interrupting the player once for the challenge in
+    // front of them is right; queueing up a backlog to answer is not.
+    struct NetBattleInvite invite;
+    bool8 hasInvite;
+    struct NetBattleInvite answer;
+    bool8 answerAccepted;
+    bool8 hasAnswer;
 
     // Frames waiting for the worker thread to push onto the socket.
     u8 txQueue[TX_QUEUE_FRAMES][TX_FRAME_MAX];
@@ -266,6 +277,31 @@ static void HandleChat(const u8 *payload, u32 len)
     SDL_UnlockMutex(sNet.lock);
 }
 
+static void HandleBattleInvite(const u8 *payload, u32 len)
+{
+    if (len < 4 + NET_NAME_LEN)
+        return;
+
+    SDL_LockMutex(sNet.lock);
+    sNet.invite.from = ReadU32(payload);
+    CopyField(sNet.invite.fromName, payload + 4, NET_NAME_LEN);
+    sNet.hasInvite = TRUE;
+    SDL_UnlockMutex(sNet.lock);
+}
+
+static void HandleBattleAnswered(const u8 *payload, u32 len)
+{
+    if (len < 1 + 4 + NET_NAME_LEN)
+        return;
+
+    SDL_LockMutex(sNet.lock);
+    sNet.answerAccepted = payload[0] != 0;
+    sNet.answer.from = ReadU32(payload + 1);
+    CopyField(sNet.answer.fromName, payload + 5, NET_NAME_LEN);
+    sNet.hasAnswer = TRUE;
+    SDL_UnlockMutex(sNet.lock);
+}
+
 static void DispatchFrame(const u8 *body, u32 len)
 {
     if (len < 1)
@@ -274,6 +310,17 @@ static void DispatchFrame(const u8 *body, u32 len)
     {
     case MSG_STATUS:
         HandleStatus(body + 1, len - 1);
+        break;
+    case MSG_BATTLE_INVITE:
+        HandleBattleInvite(body + 1, len - 1);
+        break;
+    case MSG_BATTLE_ANSWERED:
+        HandleBattleAnswered(body + 1, len - 1);
+        break;
+    case MSG_BATTLE_FAILED:
+        // Nothing to show yet; the challenger simply never hears back. Logged so the
+        // reason is visible while the refusal UI does not exist.
+        SDL_Log("net: battle invitation refused by the server");
         break;
     case MSG_SNAPSHOT:
         HandleSnapshot(body + 1, len - 1);
@@ -700,6 +747,41 @@ void Net_SendChat(u8 kind, const char *target, const char *text)
     WriteField(body + 2, target, NET_SENDER_LEN);
     WriteField(body + 2 + NET_SENDER_LEN, text, NET_TEXT_LEN);
     Enqueue(body, sizeof(body));
+}
+
+bool8 Net_PopBattleInvite(struct NetBattleInvite *out)
+{
+    if (!sInitialised || out == NULL)
+        return FALSE;
+
+    SDL_LockMutex(sNet.lock);
+    if (!sNet.hasInvite)
+    {
+        SDL_UnlockMutex(sNet.lock);
+        return FALSE;
+    }
+    *out = sNet.invite;
+    sNet.hasInvite = FALSE;
+    SDL_UnlockMutex(sNet.lock);
+    return TRUE;
+}
+
+bool8 Net_PopBattleAnswer(struct NetBattleInvite *out, bool8 *accepted)
+{
+    if (!sInitialised || out == NULL || accepted == NULL)
+        return FALSE;
+
+    SDL_LockMutex(sNet.lock);
+    if (!sNet.hasAnswer)
+    {
+        SDL_UnlockMutex(sNet.lock);
+        return FALSE;
+    }
+    *out = sNet.answer;
+    *accepted = sNet.answerAccepted;
+    sNet.hasAnswer = FALSE;
+    SDL_UnlockMutex(sNet.lock);
+    return TRUE;
 }
 
 bool8 Net_PopChatLine(struct NetChatLine *out)

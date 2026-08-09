@@ -211,12 +211,19 @@ impl Session {
                         // silently, so the server flow can be exercised end to end.
                         ServerControl::BattleInvitation { from, from_name } => {
                             tracing::info!(from, %from_name, "battle invitation received");
+                            self.link
+                                .send(wire::encode_battle_invite(from, &from_name))
+                                .await;
                         }
-                        ServerControl::BattleInvitationAnswered { from_name, accepted, .. } => {
+                        ServerControl::BattleInvitationAnswered { from, from_name, accepted } => {
                             tracing::info!(%from_name, accepted, "battle invitation answered");
+                            self.link
+                                .send(wire::encode_battle_answered(from, &from_name, accepted))
+                                .await;
                         }
                         ServerControl::BattleInvitationFailed { reason } => {
                             tracing::info!(%reason, "battle invitation failed");
+                            self.link.send(wire::encode_battle_failed(&reason)).await;
                         }
                         ServerControl::Rejected { reason } => {
                             tracing::error!(%reason, "server rejected this client");

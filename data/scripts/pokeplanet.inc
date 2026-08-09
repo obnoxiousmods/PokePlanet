@@ -20,6 +20,24 @@ PokePlanet_EventScript_DeclineBattle::
 	release
 	end
 
+@ Someone challenged us. Started from MmoPlayers_Update the moment the field is idle, so
+@ the prompt never lands on top of another script.
+@
+@ gStringVar1 holds the challenger's name.
+PokePlanet_EventScript_BattleInvite::
+	lock
+	msgbox PokePlanet_Text_Challenged, MSGBOX_YESNO
+	goto_if_eq VAR_RESULT, NO, PokePlanet_EventScript_DeclineChallenge
+	special PokePlanet_AcceptBattle
+	msgbox PokePlanet_Text_Accepted, MSGBOX_DEFAULT
+	release
+	end
+
+PokePlanet_EventScript_DeclineChallenge::
+	special PokePlanet_DeclineBattle
+	release
+	end
+
 @ The player walked away between the interaction and the script starting.
 PokePlanet_EventScript_PlayerGone::
 	lock
@@ -39,3 +57,11 @@ PokePlanet_Text_RequestSent:
 
 PokePlanet_Text_PlayerGone:
 	.string "They wandered off…$"
+
+PokePlanet_Text_Challenged:
+	.string "{STR_VAR_1} wants to battle!\p"
+	.string "Do you accept?$"
+
+PokePlanet_Text_Accepted:
+	.string "You accepted {STR_VAR_1}'s\n"
+	.string "challenge!$"

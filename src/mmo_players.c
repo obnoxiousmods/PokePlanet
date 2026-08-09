@@ -14,6 +14,7 @@
 #include "mmo_players.h"
 #include "mmo_text.h"
 #include "net_client.h"
+#include "script.h"
 #include "string_util.h"
 #include "constants/event_object_movement.h"
 
@@ -262,6 +263,49 @@ void PokePlanet_SendBattleRequest(void)
         Net_RequestBattle(sInteractingWith);
 }
 
+extern const u8 PokePlanet_EventScript_BattleInvite[];
+
+// Who challenged us, kept for the script's YES branch for the same reason as above: a
+// script variable is 16 bits and a player id is 32.
+static u32 sChallengedBy;
+
+// Called from the invitation script's branches (see data/scripts/pokeplanet.inc).
+void PokePlanet_AcceptBattle(void)
+{
+    if (sChallengedBy != 0)
+        Net_RespondToBattle(sChallengedBy, TRUE);
+    sChallengedBy = 0;
+}
+
+void PokePlanet_DeclineBattle(void)
+{
+    if (sChallengedBy != 0)
+        Net_RespondToBattle(sChallengedBy, FALSE);
+    sChallengedBy = 0;
+}
+
+// Interrupt the player with a challenge, but only while they are actually standing in the
+// field doing nothing. Starting a script on top of a running one, mid-warp or mid-battle
+// would corrupt the script context, so a challenge that arrives at a bad moment simply
+// waits for the next frame that is safe.
+static void CheckForBattleInvite(void)
+{
+    struct NetBattleInvite invite;
+    u8 encoded[NET_NAME_LEN + 1];
+
+    if (ArePlayerFieldControlsLocked() || ScriptContext_IsEnabled())
+        return;
+    if (!Net_PopBattleInvite(&invite))
+        return;
+
+    sChallengedBy = invite.from;
+    MmoText_FromAscii(encoded, invite.fromName, sizeof(encoded));
+    StringCopy(gStringVar1, encoded);
+
+    LockPlayerFieldControls();
+    ScriptContext_SetupScript(PokePlanet_EventScript_BattleInvite);
+}
+
 const u8 *MmoPlayers_GetInteractionScript(u8 objectEventId)
 {
     const char *name = MmoPlayers_GetRemoteName(objectEventId);
@@ -303,6 +347,7 @@ void MmoPlayers_Update(void)
     }
 
     ReportSelf();
+    CheckForBattleInvite();
 
     count = Net_GetRemotePlayers(remotes);
     for (i = 0; i < NET_MAX_REMOTE_PLAYERS; i++)

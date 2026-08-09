@@ -105,11 +105,26 @@ void Net_SendSelf(u8 mapGroup, u8 mapNum, s16 x, s16 y, u8 facing, bool8 moving,
 // `out` must have room for NET_MAX_REMOTE_PLAYERS.
 u8 Net_GetRemotePlayers(struct NetRemotePlayer *out);
 
+// A challenge from another player, waiting to be answered.
+struct NetBattleInvite
+{
+    u32 from;
+    char fromName[NET_NAME_LEN];
+};
+
 // Challenge another player to a battle. The server refuses the request if they are
 // offline, on another map, or already holding an invitation.
 void Net_RequestBattle(u32 playerId);
 // Answer a challenge someone sent us.
 void Net_RespondToBattle(u32 playerId, bool8 accepted);
+
+// Take the pending challenge, if one has arrived. Returns FALSE when there is none.
+// Only the newest is kept: an older unanswered challenge is not worth interrupting the
+// player twice for, and the server expires them anyway.
+bool8 Net_PopBattleInvite(struct NetBattleInvite *out);
+// The answer to a challenge we sent, once it arrives. `accepted` is meaningless if FALSE
+// is returned.
+bool8 Net_PopBattleAnswer(struct NetBattleInvite *out, bool8 *accepted);
 
 void Net_SendChat(u8 kind, const char *target, const char *text);
 // Pop the oldest unread chat line. Returns FALSE when nothing is queued.

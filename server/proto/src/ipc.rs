@@ -26,6 +26,11 @@ pub const MSG_STATUS: u8 = 0x01;
 pub const MSG_SNAPSHOT: u8 = 0x02;
 pub const MSG_CHAT: u8 = 0x03;
 pub const MSG_PROFILE: u8 = 0x04;
+/// Someone challenged this player. Without these three the client can send a challenge but
+/// can never learn it has received one, which is why answering was impossible.
+pub const MSG_BATTLE_INVITE: u8 = 0x05;
+pub const MSG_BATTLE_ANSWERED: u8 = 0x06;
+pub const MSG_BATTLE_FAILED: u8 = 0x07;
 
 // Game -> sidecar
 pub const MSG_SELF_STATE: u8 = 0x81;
@@ -101,6 +106,34 @@ pub fn take_frame(buf: &mut Vec<u8>) -> anyhow::Result<Option<Vec<u8>>> {
     let body = buf[4..4 + len].to_vec();
     buf.drain(..4 + len);
     Ok(Some(body))
+}
+
+/// Someone has challenged this player. Carries who, so the answer can name them and be
+/// routed back to the right person.
+pub fn encode_battle_invite(from: PlayerId, from_name: &str) -> Vec<u8> {
+    let mut b = Vec::with_capacity(1 + 4 + NAME_LEN);
+    b.push(MSG_BATTLE_INVITE);
+    b.extend_from_slice(&from.to_le_bytes());
+    put_str(&mut b, from_name, NAME_LEN);
+    frame(b)
+}
+
+/// The outcome of a challenge this player sent.
+pub fn encode_battle_answered(from: PlayerId, from_name: &str, accepted: bool) -> Vec<u8> {
+    let mut b = Vec::with_capacity(2 + 4 + NAME_LEN);
+    b.push(MSG_BATTLE_ANSWERED);
+    b.push(u8::from(accepted));
+    b.extend_from_slice(&from.to_le_bytes());
+    put_str(&mut b, from_name, NAME_LEN);
+    frame(b)
+}
+
+/// A challenge could not be delivered: they left, or are already busy.
+pub fn encode_battle_failed(reason: &str) -> Vec<u8> {
+    let mut b = Vec::with_capacity(1 + TEXT_LEN);
+    b.push(MSG_BATTLE_FAILED);
+    put_str(&mut b, reason, TEXT_LEN);
+    frame(b)
 }
 
 pub fn encode_status(state: u8, name: &str, login_url: &str) -> Vec<u8> {
