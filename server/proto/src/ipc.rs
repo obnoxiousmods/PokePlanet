@@ -42,6 +42,9 @@ pub const MSG_LOGOUT: u8 = 0x85;
 pub const MSG_BATTLE_REQUEST: u8 = 0x86;
 /// Answer a challenge: u32 player id, u8 accepted.
 pub const MSG_BATTLE_RESPOND: u8 = 0x87;
+/// A slice of the save. Sent in pieces because the whole flash image is 128KB and the game
+/// must not sit in a single blocking write. Layout: u32 offset, u32 total, u16 len, bytes.
+pub const MSG_SAVE_CHUNK: u8 = 0x88;
 
 /// Mirrors `enum NetAuthState` in the C header.
 pub const AUTH_OFFLINE: u8 = 0;
@@ -208,6 +211,9 @@ pub enum GameMessage {
     Logout,
     RequestBattle { target: PlayerId },
     RespondToBattle { from: PlayerId, accepted: bool },
+    /// One slice of the save. `total` is the whole image, so the receiver knows when it
+    /// has all of it without a separate end marker.
+    SaveChunk { offset: u32, total: u32, bytes: Vec<u8> },
 }
 
 pub fn decode_game_message(body: &[u8]) -> anyhow::Result<GameMessage> {
@@ -246,6 +252,27 @@ pub fn decode_game_message(body: &[u8]) -> anyhow::Result<GameMessage> {
             Ok(GameMessage::RespondToBattle {
                 from: u32::from_le_bytes([rest[0], rest[1], rest[2], rest[3]]),
                 accepted: rest[4] != 0,
+            })
+        }
+        MSG_SAVE_CHUNK => {
+            if rest.len() < 10 {
+                anyhow::bail!("short SAVE_CHUNK header ({} bytes)", rest.len());
+            }
+            let offset = u32::from_le_bytes([rest[0], rest[1], rest[2], rest[3]]);
+            let total = u32::from_le_bytes([rest[4], rest[5], rest[6], rest[7]]);
+            let len = u16::from_le_bytes([rest[8], rest[9]]) as usize;
+            if rest.len() < 10 + len {
+                anyhow::bail!("SAVE_CHUNK claims {len} bytes but carries {}", rest.len() - 10);
+            }
+            // A chunk that runs past the end it declares is malformed, and trusting it
+            // would size an allocation from the wire.
+            if offset as usize + len > total as usize {
+                anyhow::bail!("SAVE_CHUNK at {offset}+{len} exceeds its total of {total}");
+            }
+            Ok(GameMessage::SaveChunk {
+                offset,
+                total,
+                bytes: rest[10..10 + len].to_vec(),
             })
         }
         MSG_BEGIN_LOGIN => Ok(GameMessage::BeginLogin),

@@ -139,6 +139,8 @@ impl Session {
         let mut player_name = String::new();
         let mut pending_ticket: Option<String> = None;
         let mut latest_pose: Option<(Pose, u8)> = None;
+        // The save arrives in slices; this is where they are put back together.
+        let mut save_image: Vec<u8> = Vec::new();
 
         let mut movement = tokio::time::interval(MOVEMENT_INTERVAL);
         let mut login_poll = tokio::time::interval(LOGIN_POLL_INTERVAL);
@@ -311,6 +313,27 @@ impl Session {
                                 &ClientControl::RespondToBattle { from, accepted },
                             )
                             .await?;
+                        }
+                        wire::GameMessage::SaveChunk { offset, total, bytes } => {
+                            // Reassemble in place. The game sends the image in order from
+                            // zero, so a chunk that does not continue the current one means
+                            // a new save started and whatever was half-collected is stale.
+                            if offset == 0 || save_image.len() != offset as usize {
+                                save_image.clear();
+                                save_image.reserve(total as usize);
+                            }
+                            if save_image.len() == offset as usize {
+                                save_image.extend_from_slice(&bytes);
+                                if save_image.len() == total as usize {
+                                    tracing::info!(
+                                        bytes = save_image.len(),
+                                        "save received from the game"
+                                    );
+                                    // Sending it on to the server is the next piece; for now
+                                    // arriving intact is what is being established.
+                                    save_image.clear();
+                                }
+                            }
                         }
                         wire::GameMessage::Logout => {
                             self.tokens.clear();

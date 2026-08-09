@@ -28,6 +28,7 @@
 
 #include "global.h"
 #include "net_client.h"
+#include "gba/flash_internal.h"
 #include "platform.h"
 
 // Sidecar -> game
@@ -46,6 +47,11 @@
 #define MSG_LOGOUT       0x85
 #define MSG_BATTLE_REQUEST 0x86
 #define MSG_BATTLE_RESPOND 0x87
+#define MSG_SAVE_CHUNK     0x88
+
+// Big enough that the 128KB image is a few hundred frames rather than thousands, small
+// enough to sit on the stack.
+#define SAVE_CHUNK_BYTES   1024
 
 // Must match REMOTE_PLAYER_SIZE in the Rust protocol crate.
 #define REMOTE_PLAYER_STRIDE 32
@@ -114,6 +120,14 @@ static u16 GetSidecarPort(void);
 // ---------------------------------------------------------------------------
 // Small helpers for the fixed-layout wire format.
 // ---------------------------------------------------------------------------
+
+static void PutU32(u8 *p, u32 v)
+{
+    p[0] = (u8)(v & 0xFF);
+    p[1] = (u8)((v >> 8) & 0xFF);
+    p[2] = (u8)((v >> 16) & 0xFF);
+    p[3] = (u8)((v >> 24) & 0xFF);
+}
 
 static void PutU16(u8 *p, u16 v)
 {
@@ -440,6 +454,59 @@ static bool8 FlushTxQueue(NetSocket sock)
     }
 }
 
+// Ship the whole flash image to the sidecar, in slices.
+//
+// Sent straight down the socket rather than through the outbound queue: the queue holds 32
+// small frames and this is 128KB, so it would overflow immediately. The worker owns the
+// socket, so writing from here is safe, and loopback makes it quick.
+//
+// The game may write more sectors while this is in flight. That is why the flag is taken
+// before reading rather than after: a write during the send raises it again and the next
+// pass sends a consistent image over the top.
+static bool8 SendSaveImage(NetSocket sock)
+{
+    u8 frame[10 + SAVE_CHUNK_BYTES];
+    u32 offset;
+
+    for (offset = 0; offset < sizeof(FLASH_BASE); offset += SAVE_CHUNK_BYTES)
+    {
+        u32 remaining = sizeof(FLASH_BASE) - offset;
+        u16 length = remaining < SAVE_CHUNK_BYTES ? (u16)remaining : SAVE_CHUNK_BYTES;
+        u32 bodyLen = 1 + 10 + length;
+        u8 header[4];
+        int sent;
+
+        frame[0] = MSG_SAVE_CHUNK;
+        PutU32(frame + 1, offset);
+        PutU32(frame + 5, sizeof(FLASH_BASE));
+        PutU16(frame + 9, length);
+        memcpy(frame + 11, FLASH_BASE + offset, length);
+
+        PutU32(header, bodyLen);
+        for (sent = 0; sent < (int)sizeof(header); )
+        {
+            int n = send(sock, (const char *)header + sent, sizeof(header) - sent, NET_SEND_FLAGS);
+            if (n < 0 && NetCallInterrupted())
+                continue;
+            if (n <= 0)
+                return FALSE;
+            sent += n;
+        }
+        for (sent = 0; sent < (int)bodyLen; )
+        {
+            int n = send(sock, (const char *)frame + sent, bodyLen - sent, NET_SEND_FLAGS);
+            if (n < 0 && NetCallInterrupted())
+                continue;
+            if (n <= 0)
+                return FALSE;
+            sent += n;
+        }
+    }
+
+    SDL_Log("net: sent the save (%u bytes)", (unsigned)sizeof(FLASH_BASE));
+    return TRUE;
+}
+
 static int NetThreadMain(void *unused)
 {
     u8 rx[RX_BUFFER_SIZE];
@@ -495,6 +562,10 @@ static int NetThreadMain(void *unused)
             int ready;
 
             if (!FlushTxQueue(sock))
+                break;
+
+            // A save happened; the server's copy is now out of date.
+            if (Net_TakeSaveChanged() && !SendSaveImage(sock))
                 break;
 
             FD_ZERO(&readable);
