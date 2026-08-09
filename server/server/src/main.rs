@@ -8,6 +8,7 @@
 //! Durable player progress lives in PostgreSQL; presence is in memory.
 
 mod auth;
+mod collision;
 mod config;
 mod db;
 mod http;
@@ -34,7 +35,25 @@ async fn main() -> anyhow::Result<()> {
 
     let cfg = Arc::new(config::Config::from_env().context("loading configuration")?);
     let db = db::connect(&cfg.database_url).await?;
-    let world = world::World::new();
+    // A missing table is not fatal: the server still refuses teleports, it just cannot
+    // tell a wall from a path. Say so loudly rather than silently allowing it.
+    let collision_path = std::path::PathBuf::from(
+        std::env::var("POKEPLANET_COLLISION").unwrap_or_else(|_| "collision.bin".into()),
+    );
+    let world = match collision::Collision::load(&collision_path) {
+        Ok(c) => {
+            tracing::info!(maps = c.len(), "loaded map collision");
+            world::World::with_collision(c)
+        }
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                path = %collision_path.display(),
+                "no map collision; players will not be stopped by walls"
+            );
+            world::World::new()
+        }
+    };
 
     let server = Arc::new(quic::Server {
         cfg: cfg.clone(),

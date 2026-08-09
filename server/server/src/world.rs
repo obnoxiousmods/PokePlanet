@@ -37,6 +37,9 @@ pub struct Presence {
 #[derive(Default)]
 pub struct World {
     players: RwLock<HashMap<PlayerId, Presence>>,
+    /// Where players may stand. Empty when the table could not be loaded, in which case
+    /// steps are still checked for being single steps, just not for hitting walls.
+    collision: crate::collision::Collision,
 }
 
 pub type SharedWorld = Arc<World>;
@@ -44,6 +47,10 @@ pub type SharedWorld = Arc<World>;
 impl World {
     pub fn new() -> SharedWorld {
         Arc::new(World::default())
+    }
+
+    pub fn with_collision(collision: crate::collision::Collision) -> SharedWorld {
+        Arc::new(World { collision, ..Default::default() })
     }
 
     pub async fn join(&self, id: PlayerId, presence: Presence) {
@@ -103,8 +110,8 @@ impl World {
     /// accepted, which needs no knowledge of the map at all and still rules out teleporting
     /// and moving faster than the game can walk.
     ///
-    /// It does not yet rule out walking through a wall -- that needs the map's collision,
-    /// which the server does not have yet.
+    /// A step also has to land somewhere the map allows, using collision exported from
+    /// the game's own layout data, so walking through a wall is refused as well.
     pub async fn update_pose(&self, id: PlayerId, session: SessionId, pose: Pose) -> Option<Pose> {
         let mut players = self.players.write().await;
         let p = players.get_mut(&id)?;
@@ -125,7 +132,11 @@ impl World {
 
         // Standing still, turning, or a single step along one axis. Diagonals are not a
         // thing the player avatar can do.
-        let legal = (dx == 0 && dy == 0) || (dx + dy == 1);
+        let legal = (dx == 0 && dy == 0)
+            || (dx + dy == 1
+                && self
+                    .collision
+                    .walkable(pose.map.group, pose.map.num, pose.x, pose.y));
         if legal {
             p.pose = pose;
             Some(pose)
