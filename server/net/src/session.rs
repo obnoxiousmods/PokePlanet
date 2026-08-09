@@ -177,11 +177,15 @@ impl Session {
                             return;
                         }
                         tracing::info!(bytes = total, "received the stored save");
-                        for (i, piece) in image.chunks(SAVE_TO_GAME_CHUNK).enumerate() {
-                            let offset = (i * SAVE_TO_GAME_CHUNK) as u32;
-                            link.send_save_image(wire::encode_save_image(offset, total, piece))
-                                .await;
-                        }
+                        let frames = image
+                            .chunks(SAVE_TO_GAME_CHUNK)
+                            .enumerate()
+                            .map(|(i, piece)| {
+                                let offset = (i * SAVE_TO_GAME_CHUNK) as u32;
+                                wire::encode_save_image(offset, total, piece)
+                            })
+                            .collect();
+                        link.send_save_image(frames).await;
                     });
                 }
 

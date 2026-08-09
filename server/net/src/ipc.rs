@@ -24,6 +24,8 @@ struct Latched {
 pub struct GameLink {
     outbound: Arc<Mutex<Option<mpsc::Sender<Vec<u8>>>>>,
     latched: Arc<Mutex<Latched>>,
+    /// Held while a save is being handed to the game, so two never interleave.
+    save_run: Arc<Mutex<()>>,
 }
 
 impl GameLink {
@@ -48,22 +50,30 @@ impl GameLink {
         self.send(frame).await;
     }
 
-    /// Send one slice of the stored save.
+    /// Hand a whole save to the game, in the slices it should arrive as.
     ///
-    /// Deliberately not remembered, unlike the status and profile. The game writes each
-    /// slice straight into its flash image, so replaying a save from an earlier sign-in
-    /// would not merely be stale -- it would land in front of the fresh copy that a
-    /// resyncing game is already being sent, and the two would interleave into an image
-    /// that was never valid. A game that attaches late asks for the save it should have,
-    /// which is what `ClientControl::Resync` is for.
+    /// All of it or none of it, because the game writes each slice straight into its flash
+    /// image at the offset the slice names. Two saves can genuinely be in flight at once --
+    /// the one sign-in sends and the one a resync asks for moments later -- and they arrive
+    /// on separate streams read by separate tasks. Letting those two interleave would build
+    /// an image in the game that is half of each and was never valid anywhere. So a save is
+    /// delivered under a lock and the later one simply overwrites the earlier in full.
+    ///
+    /// Deliberately not remembered for replay, unlike the status and profile: an old save
+    /// resent to a game that attaches later has the same tearing problem and is stale as
+    /// well. A game that attaches late asks for the save it should have, which is what
+    /// `ClientControl::Resync` is for.
     ///
     /// Snapshots pour through this same queue ten times a second and losing one costs
     /// nothing, but a missing slice means the save never completes and the player silently
     /// carries on with the copy on this machine. So the queue is deep enough to hold a whole
     /// save alongside snapshot churn -- and this stays non-blocking, because waiting here
     /// would stall the session loop that is also reading the server's control stream.
-    pub async fn send_save_image(&self, frame: Vec<u8>) {
-        self.send(frame).await;
+    pub async fn send_save_image(&self, frames: Vec<Vec<u8>>) {
+        let _run = self.save_run.lock().await;
+        for frame in frames {
+            self.send(frame).await;
+        }
     }
 
     async fn attach(&self, tx: mpsc::Sender<Vec<u8>>) {
