@@ -11,6 +11,7 @@ PokePlanet_EventScript_PlayerInteract::
 	faceplayer
 	msgbox PokePlanet_Text_AskBattle, MSGBOX_YESNO
 	goto_if_eq VAR_RESULT, NO, PokePlanet_EventScript_DeclineBattle
+	special PokePlanet_SendBattleRequest
 	msgbox PokePlanet_Text_RequestSent, MSGBOX_DEFAULT
 	release
 	end

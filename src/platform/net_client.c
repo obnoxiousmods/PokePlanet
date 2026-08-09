@@ -34,6 +34,8 @@
 #define MSG_CANCEL_LOGIN 0x83
 #define MSG_CHAT_SEND    0x84
 #define MSG_LOGOUT       0x85
+#define MSG_BATTLE_REQUEST 0x86
+#define MSG_BATTLE_RESPOND 0x87
 
 // Must match REMOTE_PLAYER_SIZE in the Rust protocol crate.
 #define REMOTE_PLAYER_STRIDE 32
@@ -594,6 +596,35 @@ u8 Net_GetRemotePlayers(struct NetRemotePlayer *out)
     memcpy(out, sNet.remotePlayers, sizeof(struct NetRemotePlayer) * count);
     SDL_UnlockMutex(sNet.lock);
     return count;
+}
+
+void Net_RequestBattle(u32 playerId)
+{
+    u8 body[5];
+
+    if (!sInitialised)
+        return;
+    body[0] = MSG_BATTLE_REQUEST;
+    body[1] = (u8)(playerId & 0xFF);
+    body[2] = (u8)((playerId >> 8) & 0xFF);
+    body[3] = (u8)((playerId >> 16) & 0xFF);
+    body[4] = (u8)((playerId >> 24) & 0xFF);
+    Enqueue(body, sizeof(body));
+}
+
+void Net_RespondToBattle(u32 playerId, bool8 accepted)
+{
+    u8 body[6];
+
+    if (!sInitialised)
+        return;
+    body[0] = MSG_BATTLE_RESPOND;
+    body[1] = (u8)(playerId & 0xFF);
+    body[2] = (u8)((playerId >> 8) & 0xFF);
+    body[3] = (u8)((playerId >> 16) & 0xFF);
+    body[4] = (u8)((playerId >> 24) & 0xFF);
+    body[5] = accepted ? 1 : 0;
+    Enqueue(body, sizeof(body));
 }
 
 void Net_SendChat(u8 kind, const char *target, const char *text)

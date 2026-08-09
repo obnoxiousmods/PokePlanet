@@ -250,6 +250,18 @@ const char *MmoPlayers_GetRemoteName(u8 objectEventId)
 extern const u8 PokePlanet_EventScript_PlayerInteract[];
 extern const u8 PokePlanet_EventScript_PlayerGone[];
 
+// Who the player is currently talking to. The interaction script runs across several
+// frames and cannot carry a 32-bit id in a script variable, so it is held here between
+// GetInteractionScript and the special that sends the challenge.
+static u32 sInteractingWith;
+
+// Called from the interaction script's YES branch (see data/scripts/pokeplanet.inc).
+void PokePlanet_SendBattleRequest(void)
+{
+    if (sInteractingWith != 0)
+        Net_RequestBattle(sInteractingWith);
+}
+
 const u8 *MmoPlayers_GetInteractionScript(u8 objectEventId)
 {
     const char *name = MmoPlayers_GetRemoteName(objectEventId);
@@ -257,7 +269,11 @@ const u8 *MmoPlayers_GetInteractionScript(u8 objectEventId)
 
     // They left between the A press and this call.
     if (name == NULL)
+    {
+        sInteractingWith = 0;
         return PokePlanet_EventScript_PlayerGone;
+    }
+    sInteractingWith = sSlots[gObjectEvents[objectEventId].localId - MMO_LOCAL_ID_BASE].playerId;
 
     // The script addresses them by name, which is also how a player tells another trainer
     // apart from one of the map's own NPCs.
