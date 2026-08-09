@@ -17,11 +17,6 @@ use tokio::sync::{mpsc, Mutex};
 struct Latched {
     status: Option<Vec<u8>>,
     profile: Option<Vec<u8>>,
-    /// The stored save, in the slices it arrived as. Latched for the same reason as the
-    /// other two and more urgently: it is sent once, immediately after sign-in, which is
-    /// normally before the game has even finished booting. Dropping it means the player
-    /// silently continues the save on this machine instead of the one the server holds.
-    save_image: Vec<Vec<u8>>,
 }
 
 /// Handle used by the rest of the sidecar to talk to whichever game process is attached.
@@ -53,23 +48,21 @@ impl GameLink {
         self.send(frame).await;
     }
 
-    /// Send one slice of the stored save, remembering the whole run. `first` starts a new
-    /// run, so a second sign-in cannot leave slices of an older save in front of a newer one.
+    /// Send one slice of the stored save.
+    ///
+    /// Deliberately not remembered, unlike the status and profile. The game writes each
+    /// slice straight into its flash image, so replaying a save from an earlier sign-in
+    /// would not merely be stale -- it would land in front of the fresh copy that a
+    /// resyncing game is already being sent, and the two would interleave into an image
+    /// that was never valid. A game that attaches late asks for the save it should have,
+    /// which is what `ClientControl::Resync` is for.
     ///
     /// Snapshots pour through this same queue ten times a second and losing one costs
     /// nothing, but a missing slice means the save never completes and the player silently
     /// carries on with the copy on this machine. So the queue is deep enough to hold a whole
     /// save alongside snapshot churn -- and this stays non-blocking, because waiting here
     /// would stall the session loop that is also reading the server's control stream.
-    pub async fn send_save_image(&self, frame: Vec<u8>, first: bool) {
-        {
-            let mut latched = self.latched.lock().await;
-            if first {
-                latched.save_image.clear();
-            }
-            latched.save_image.push(frame.clone());
-        }
-
+    pub async fn send_save_image(&self, frame: Vec<u8>) {
         self.send(frame).await;
     }
 
@@ -80,16 +73,15 @@ impl GameLink {
         {
             let latched = self.latched.lock().await;
             // Profile first: the menu reads the save summary as soon as it sees ONLINE.
+            //
+            // Safe to replay where the save is not: it is a small whole value that the
+            // fresh one replaces outright, so the worst case is the sign-in screen showing
+            // a slightly old badge count for the few milliseconds before the resync lands.
             if let Some(profile) = latched.profile.as_ref() {
                 let _ = tx.try_send(profile.clone());
             }
             if let Some(status) = latched.status.as_ref() {
                 let _ = tx.try_send(status.clone());
-            }
-            // After the status, so the game is already signed in by the time the save it is
-            // meant to play arrives.
-            for piece in &latched.save_image {
-                let _ = tx.try_send(piece.clone());
             }
         }
         *self.outbound.lock().await = Some(tx);
@@ -115,6 +107,10 @@ pub async fn serve(
             continue;
         }
         tracing::info!(%peer, "game attached");
+        // The latched frames replayed below are only as fresh as the last sign-in, and this
+        // sidecar may have been signed in for hours. Ask for the current ones, which arrive
+        // by the same path and overwrite them.
+        let _ = commands.try_send(GameMessage::Attached);
         let link = link.clone();
         let commands = commands.clone();
         tokio::spawn(async move {

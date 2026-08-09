@@ -179,11 +179,8 @@ impl Session {
                         tracing::info!(bytes = total, "received the stored save");
                         for (i, piece) in image.chunks(SAVE_TO_GAME_CHUNK).enumerate() {
                             let offset = (i * SAVE_TO_GAME_CHUNK) as u32;
-                            link.send_save_image(
-                                wire::encode_save_image(offset, total, piece),
-                                offset == 0,
-                            )
-                            .await;
+                            link.send_save_image(wire::encode_save_image(offset, total, piece))
+                                .await;
                         }
                     });
                 }
@@ -405,6 +402,14 @@ impl Session {
                                     }
                                     save_image.clear();
                                 }
+                            }
+                        }
+                        wire::GameMessage::Attached => {
+                            // Only worth asking once signed in. Before that the sign-in
+                            // exchange is already on its way and brings the same data with
+                            // it, and the server would have no character to answer about.
+                            if !player_name.is_empty() {
+                                write_control(&mut send, &ClientControl::Resync).await?;
                             }
                         }
                         wire::GameMessage::Logout => {

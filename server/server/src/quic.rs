@@ -223,15 +223,15 @@ async fn run_session(
     let player_id = character.id as PlayerId;
     let session = crate::world::next_session_id();
     let name = character.name.clone();
-    let token = auth::random_token();
-    db::issue_session(&server.db, character.id, &token).await?;
+    let session_token = auth::random_token();
+    db::issue_session(&server.db, character.id, &session_token).await?;
 
     write_frame(
         &mut send,
         &ServerControl::Welcome {
             player_id,
             profile: character.profile(),
-            token,
+            token: session_token.clone(),
         },
     )
     .await?;
@@ -245,32 +245,7 @@ async fn run_session(
     // a fraction of the slices reaching the game, so enabling it would trade a working
     // connection for a save that never arrives. Uploading is unaffected and stays on: the
     // server is already collecting saves, which is what the rest of this needs.
-    if let Some(image) = db::load_save(&server.db, character.id).await? {
-        // On a stream of its own rather than the control stream.
-        //
-        // Sending it as a hundred-odd control messages starved that stream: only a fraction
-        // reached the game and the connection then cycled on the idle timeout. Control
-        // carries chat, battles and presence, and a 128KB burst has no business queueing in
-        // front of them. A separate stream is what QUIC offers for exactly this, and it
-        // cannot interfere with the traffic that keeps the session alive.
-        //
-        // Spawned so a slow client reading its save cannot hold up the rest of sign-in.
-        let conn_for_save = conn.clone();
-        tokio::spawn(async move {
-            match conn_for_save.open_uni().await {
-                Ok(mut stream) => {
-                    let total = image.len() as u32;
-                    if stream.write_all(&total.to_le_bytes()).await.is_ok()
-                        && stream.write_all(&image).await.is_ok()
-                    {
-                        let _ = stream.finish();
-                        tracing::info!(player = player_id, bytes = total, "sent the stored save");
-                    }
-                }
-                Err(e) => tracing::debug!(error = %e, "could not open a stream for the save"),
-            }
-        });
-    }
+    hand_over_save(&server, &conn, character.id, player_id).await?;
 
     // Fan-in for anything the world wants to push at this client.
     let (control_tx, mut control_rx) = mpsc::channel::<ServerControl>(64);
@@ -321,8 +296,10 @@ async fn run_session(
     });
 
     // Control messages from the client until it hangs up.
-    let result =
-        control_loop(&server, &mut recv, player_id, session, &name, character.id).await;
+    let result = control_loop(
+        &server, &conn, &mut recv, player_id, session, &name, character.id, &session_token,
+    )
+    .await;
 
     server.world.leave(player_id, session).await;
     if let Some(pose) = server.world.pose_of(player_id).await {
@@ -334,13 +311,53 @@ async fn run_session(
     result
 }
 
+/// Send this character's stored save, if there is one.
+///
+/// On a stream of its own rather than the control stream. Sending it as a hundred-odd
+/// control messages starved that stream: only a fraction reached the game and the connection
+/// then cycled on the idle timeout. Control carries chat, battles and presence, and a 128KB
+/// burst has no business queueing in front of them. A separate stream is what QUIC offers
+/// for exactly this, and it cannot interfere with the traffic that keeps the session alive.
+///
+/// A character who has never saved has nothing here, and the client keeps what it has.
+async fn hand_over_save(
+    server: &Arc<Server>,
+    conn: &Connection,
+    character_id: i64,
+    player_id: PlayerId,
+) -> anyhow::Result<()> {
+    let Some(image) = db::load_save(&server.db, character_id).await? else {
+        return Ok(());
+    };
+    // Spawned so a slow client reading its save cannot hold up whatever asked for it.
+    let conn = conn.clone();
+    tokio::spawn(async move {
+        match conn.open_uni().await {
+            Ok(mut stream) => {
+                let total = image.len() as u32;
+                if stream.write_all(&total.to_le_bytes()).await.is_ok()
+                    && stream.write_all(&image).await.is_ok()
+                {
+                    let _ = stream.finish();
+                    tracing::info!(player = player_id, bytes = total, "sent the stored save");
+                }
+            }
+            Err(e) => tracing::debug!(error = %e, "could not open a stream for the save"),
+        }
+    });
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
 async fn control_loop(
     server: &Arc<Server>,
+    conn: &Connection,
     recv: &mut RecvStream,
     player_id: PlayerId,
     session: crate::world::SessionId,
     name: &str,
     character_id: i64,
+    session_token: &str,
 ) -> anyhow::Result<()> {
     // Save slices are reassembled here, per connection.
     let mut save_image: Vec<u8> = Vec::new();
@@ -403,6 +420,43 @@ async fn control_loop(
                         save_image.clear();
                     }
                 }
+            }
+            ClientControl::Resync => {
+                // Read the character again rather than reusing the one sign-in loaded: this
+                // is asked precisely because that copy may be hours old.
+                let Some(fresh) = db::character_by_id(&server.db, character_id).await? else {
+                    tracing::warn!(player = player_id, "resync for a character that is gone");
+                    break;
+                };
+                let mut profile = fresh.profile();
+                // Prefer where the world has them standing. The row is only written when
+                // they save or leave, so during play it lags; the world is the authority
+                // movement is validated against and is what the client must agree with.
+                if let Some(pose) = server.world.pose_of(player_id).await {
+                    profile.map_group = pose.map.group;
+                    profile.map_num = pose.map.num;
+                    profile.x = pose.x;
+                    profile.y = pose.y;
+                }
+                tracing::info!(
+                    player = player_id, map_group = profile.map_group,
+                    map_num = profile.map_num, x = profile.x, y = profile.y,
+                    "resyncing a newly attached game"
+                );
+                server
+                    .world
+                    .tell(
+                        player_id,
+                        ServerControl::Welcome {
+                            player_id,
+                            profile,
+                            // The same token, not a new one: this is the same session, and
+                            // rotating it here would invalidate the copy the sidecar holds.
+                            token: session_token.to_string(),
+                        },
+                    )
+                    .await;
+                hand_over_save(server, conn, character_id, player_id).await?;
             }
             ClientControl::Goodbye => break,
             ClientControl::Hello { .. } | ClientControl::BeginLogin | ClientControl::PollLogin { .. } => {

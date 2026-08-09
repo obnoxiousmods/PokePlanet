@@ -46,6 +46,14 @@ pub enum ClientControl {
     /// Appended after Goodbye rather than inserted next to the other gameplay messages so
     /// the existing variant numbering does not shift under a client that has not updated.
     SaveUpload { offset: u32, total: u32, bytes: Vec<u8> },
+    /// Send this character's profile and stored save again, as they are now.
+    ///
+    /// The sidecar outlives the game deliberately -- that is what lets a restart skip the
+    /// browser -- so the sign-in data it holds is only accurate at the moment it signed in.
+    /// A game attaching later needs what is true now, not then.
+    ///
+    /// Appended so the existing variant numbering does not shift.
+    Resync,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

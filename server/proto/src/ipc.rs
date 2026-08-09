@@ -259,6 +259,12 @@ pub enum GameMessage {
     /// One slice of the save. `total` is the whole image, so the receiver knows when it
     /// has all of it without a separate end marker.
     SaveChunk { offset: u32, total: u32, bytes: Vec<u8> },
+    /// A game process connected to the sidecar.
+    ///
+    /// Synthesised locally rather than decoded from a frame: the game cannot send this,
+    /// because the point of it is that the game has only just arrived and has said nothing
+    /// yet. It carries no wire encoding for the same reason.
+    Attached,
 }
 
 pub fn decode_game_message(body: &[u8]) -> anyhow::Result<GameMessage> {
