@@ -15,13 +15,16 @@
 // through 0x193 free -- 91 tiles. This window is 26x3, or 78.
 
 #include "global.h"
+#include "main.h"
 #include "menu.h"
 #include "mmo_chat.h"
 #include "mmo_text.h"
 #include "net_client.h"
+#include "field_player_avatar.h"
 #include "script.h"
 #include "string_util.h"
 #include "text.h"
+#include "platform.h"
 #include "window.h"
 #include "constants/characters.h"
 
@@ -45,6 +48,13 @@ static const struct WindowTemplate sChatWindowTemplate =
 
 static u8 sChatWindowId = WINDOW_NONE;
 static u16 sFramesLeft;
+static bool8 sComposing;
+
+// Comfortably longer than anything that fits the window, but bounded: the wire caps a
+// message at NET_TEXT_LEN and the server will not carry more.
+#define TEXT_INPUT_LIMIT 96
+
+static const u8 sSayPrompt[] = _("Say: ");
 
 static void HideChatWindow(void)
 {
@@ -94,19 +104,90 @@ static void ShowLine(const struct NetChatLine *line)
     sFramesLeft = CHAT_VISIBLE_FRAMES;
 }
 
+// Draw what is being typed, with a caret, so it is obvious the game is listening.
+static void ShowComposer(const char *typed)
+{
+    u8 text[TEXT_INPUT_LIMIT + 8];
+    u8 encoded[TEXT_INPUT_LIMIT + 1];
+    u8 *end;
+
+    if (sChatWindowId == WINDOW_NONE)
+    {
+        sChatWindowId = AddWindow(&sChatWindowTemplate);
+        if (sChatWindowId == WINDOW_NONE)
+            return;
+        LoadMessageBoxAndBorderGfx();
+    }
+
+    end = StringCopy(text, sSayPrompt);
+    MmoText_FromAscii(encoded, typed, sizeof(encoded));
+    end = StringCopy(end, encoded);
+    *end++ = CHAR_UNDERSCORE;
+    *end = EOS;
+
+    DrawStdWindowFrame(sChatWindowId, FALSE);
+    FillWindowPixelBuffer(sChatWindowId, PIXEL_FILL(1));
+    AddTextPrinterParameterized(sChatWindowId, FONT_NARROW, text, 0, 1, TEXT_SKIP_DRAW, NULL);
+    CopyWindowToVram(sChatWindowId, COPYWIN_FULL);
+    sFramesLeft = 0; // Stays up until the player is done.
+}
+
 // Ticked once per overworld frame.
 void MmoChat_Update(void)
 {
     struct NetChatLine line;
 
     if (!Net_IsLinked() || Net_GetAuthState() != NET_AUTH_ONLINE)
+    {
+        if (sComposing)
+        {
+            // Went offline mid-sentence; there is nowhere to send it.
+            Platform_EndTextInput();
+            sComposing = FALSE;
+            UnlockPlayerFieldControls();
+            HideChatWindow();
+        }
         return;
+    }
+
+    if (sComposing)
+    {
+        char typed[TEXT_INPUT_LIMIT];
+        u8 result = Platform_PollTextInput(typed, sizeof(typed));
+
+        if (result == 0)
+        {
+            ShowComposer(typed);
+            return;
+        }
+
+        Platform_EndTextInput();
+        sComposing = FALSE;
+        UnlockPlayerFieldControls();
+
+        if (result == 1 && typed[0] != '\0')
+            Net_SendChat(NET_CHAT_GLOBAL, "", typed);
+
+        HideChatWindow();
+        return;
+    }
 
     // A script owns the screen while it runs, and the dialogue box shares this layer.
     // Lines that arrive meanwhile stay queued in net_client until the field is clear.
     if (ScriptContext_IsEnabled() || ArePlayerFieldControlsLocked())
     {
         HideChatWindow();
+        return;
+    }
+
+    // R opens the composer. The field is locked while typing so the player does not walk
+    // off mid-sentence, and the platform stops reporting buttons at all.
+    if (JOY_NEW(R_BUTTON))
+    {
+        sComposing = TRUE;
+        LockPlayerFieldControls();
+        Platform_BeginTextInput();
+        ShowComposer("");
         return;
     }
 

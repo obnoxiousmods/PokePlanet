@@ -1202,12 +1202,132 @@ static u16 PumpScriptedInput(void)
     return phase < hold ? step : 0;
 }
 
+// Typing, for chat.
+//
+// The naming screen is the only text entry the original game has, and it tops out at about
+// ten characters chosen from a grid with the d-pad. That is fine for naming a Pokemon and
+// useless for talking to someone. This is a PC port and there is a real keyboard attached,
+// so chat uses it.
+//
+// The buffer is written here, on the SDL event thread, and read by game code on its own
+// thread, so it is guarded like every other shared piece of state. While typing is active
+// the key mapping is suppressed, otherwise typing "a" would also press the A button.
+#define TEXT_INPUT_MAX 120
+
+static SDL_mutex *sTextInputLock;
+static char sTextInput[TEXT_INPUT_MAX];
+static u8 sTextInputLength;
+static bool8 sTextInputActive;
+static u8 sTextInputResult; // 0 none, 1 submitted, 2 cancelled
+
+void Platform_BeginTextInput(void)
+{
+    if (sTextInputLock == NULL)
+        sTextInputLock = SDL_CreateMutex();
+    SDL_LockMutex(sTextInputLock);
+    sTextInput[0] = '\0';
+    sTextInputLength = 0;
+    sTextInputResult = 0;
+    sTextInputActive = TRUE;
+    SDL_UnlockMutex(sTextInputLock);
+    SDL_StartTextInput();
+}
+
+void Platform_EndTextInput(void)
+{
+    SDL_StopTextInput();
+    if (sTextInputLock == NULL)
+        return;
+    SDL_LockMutex(sTextInputLock);
+    sTextInputActive = FALSE;
+    SDL_UnlockMutex(sTextInputLock);
+}
+
+// Copies what has been typed so far. Returns 0 while still typing, 1 once the player has
+// pressed Enter, 2 if they backed out.
+u8 Platform_PollTextInput(char *out, u8 outSize)
+{
+    u8 result;
+
+    if (sTextInputLock == NULL || out == NULL || outSize == 0)
+        return 0;
+
+    SDL_LockMutex(sTextInputLock);
+    {
+        u8 i;
+
+        for (i = 0; i < outSize - 1 && sTextInput[i] != '\0'; i++)
+            out[i] = sTextInput[i];
+        out[i] = '\0';
+    }
+    result = sTextInputResult;
+    sTextInputResult = 0;
+    SDL_UnlockMutex(sTextInputLock);
+    return result;
+}
+
+// TRUE while the player is typing, so the rest of the game ignores the keyboard.
+bool8 Platform_IsTextInputActive(void)
+{
+    return sTextInputActive;
+}
+
+// Returns TRUE if the event was consumed by the text field.
+static bool8 HandleTextInputEvent(const SDL_Event *event)
+{
+    if (!sTextInputActive)
+        return FALSE;
+
+    SDL_LockMutex(sTextInputLock);
+    if (event->type == SDL_TEXTINPUT)
+    {
+        const char *typed = event->text.text;
+        u8 i;
+
+        // Only what the game's font can draw; everything else is dropped rather than
+        // silently becoming a space in the middle of a sentence.
+        for (i = 0; typed[i] != '\0' && sTextInputLength < TEXT_INPUT_MAX - 1; i++)
+        {
+            if ((unsigned char)typed[i] >= ' ' && (unsigned char)typed[i] < 0x7F)
+                sTextInput[sTextInputLength++] = typed[i];
+        }
+        sTextInput[sTextInputLength] = '\0';
+    }
+    else if (event->type == SDL_KEYDOWN)
+    {
+        switch (event->key.keysym.sym)
+        {
+        case SDLK_BACKSPACE:
+            if (sTextInputLength > 0)
+                sTextInput[--sTextInputLength] = '\0';
+            break;
+        case SDLK_RETURN:
+        case SDLK_KP_ENTER:
+            sTextInputResult = 1;
+            break;
+        case SDLK_ESCAPE:
+            sTextInputResult = 2;
+            break;
+        default:
+            break;
+        }
+    }
+    SDL_UnlockMutex(sTextInputLock);
+
+    // Swallow key events while typing so they never reach the button mapping.
+    return event->type == SDL_TEXTINPUT || event->type == SDL_KEYDOWN
+        || event->type == SDL_KEYUP;
+}
+
 void ProcessEvents(void)
 {
     SDL_Event event;
 
     while (SDL_PollEvent(&event))
     {
+        if (HandleTextInputEvent(&event))
+            continue;
+
         switch (event.type)
         {
         case SDL_QUIT:
@@ -1379,6 +1499,11 @@ u16 Platform_GetKeyInput(void)
     // Called once per game frame from ReadKeys, which is what makes it the right place to
     // step the test script: the game cannot miss a press it is itself sampling.
     u16 scripted = PumpScriptedInput();
+
+    // While the player is typing, the keyboard belongs to the text field. Without this,
+    // composing "start again" would press START, SELECT and A along the way.
+    if (sTextInputActive)
+        return 0;
 
 #ifdef _WIN32
     u16 gamepadKeys = GetXInputKeys();

@@ -9,6 +9,14 @@ void Platform_RequestQuit(void);
 // Start the network sidecar. Harmless if one is already running: the newcomer finds the
 // IPC port taken and exits, leaving the existing one serving.
 void Platform_LaunchSidecar(void);
+
+// Typing with the real keyboard, for chat. While active the button mapping is suppressed,
+// so the game sees no input at all until the player finishes.
+void Platform_BeginTextInput(void);
+void Platform_EndTextInput(void);
+// Copies what has been typed. 0 while still typing, 1 on Enter, 2 on Escape.
+u8 Platform_PollTextInput(char *out, u8 outSize);
+bool8 Platform_IsTextInputActive(void);
 void Platform_StoreSaveFile(void);
 void Platform_ReadFlash(u16 sectorNum, u32 offset, u8 *dest, u32 size);
 void Platform_QueueAudio(float *audioBuffer, s32 samplesPerFrame);
