@@ -78,6 +78,7 @@ static char sSavePath[1024] = "pokeemerald.sav";
 static char sConfigPath[1024] = "pokeemerald.cfg";
 static char sLogPath[1024] = "pokeplanet.log";
 static char sTokenPath[1024] = "pokeplanet-auth.json";
+static char sSidecarLogPath[1024] = "pokeplanet-net.log";
 
 // Which instance this is, taken from the executable's own name: pokeplanet.exe runs the
 // default profile and pokeplanet_tester.exe runs "tester".
@@ -148,6 +149,7 @@ static void DeriveProfile(const char *argv0)
     SDL_snprintf(sConfigPath, sizeof(sConfigPath), "pokeemerald-%s.cfg", sProfile);
     SDL_snprintf(sLogPath, sizeof(sLogPath), "pokeplanet-%s.log", sProfile);
     SDL_snprintf(sTokenPath, sizeof(sTokenPath), "pokeplanet-auth-%s.json", sProfile);
+    SDL_snprintf(sSidecarLogPath, sizeof(sSidecarLogPath), "pokeplanet-net-%s.log", sProfile);
     sSidecarPort = DEFAULT_SIDECAR_PORT + 1;
 }
 
@@ -199,7 +201,7 @@ static void ReadConfigFile(void);
 // The sidecar is a separate process so QUIC and TLS stay out of this 32-bit binary. It
 // is optional: if it is missing or fails to start, Net_Init simply never links and the
 // game runs single-player.
-static void LaunchSidecar(void)
+void Platform_LaunchSidecar(void)
 {
 #ifdef _WIN32
     STARTUPINFOA startup;
@@ -217,8 +219,8 @@ static void LaunchSidecar(void)
     // the same person already playing the main client -- and the two would fight over one
     // identity rather than being two players who can see each other.
     snprintf(commandLine, sizeof(commandLine),
-             "pokeplanet-net.exe --server %s --port %u --ipc-port %u --token %s%s",
-             sServerHost, sServerPort, sSidecarPort, sTokenPath,
+             "pokeplanet-net.exe --server %s --port %u --ipc-port %u --token %s --log %s%s",
+             sServerHost, sServerPort, sSidecarPort, sTokenPath, sSidecarLogPath,
              sProfile[0] != '\0' ? " --fixed-token" : "");
 
     memset(&startup, 0, sizeof(startup));
@@ -285,7 +287,7 @@ int main(int argc, char **argv)
     // ReadConfigFile is called later during video setup, but the sidecar needs the
     // server address before it launches, so read the file once up front.
     ReadConfigFile();
-    LaunchSidecar();
+    Platform_LaunchSidecar();
     Net_Init();
 
 #ifdef __ANDROID__

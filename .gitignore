@@ -62,5 +62,6 @@ prefabs.json
 /pokeplanet-auth.json
 /pokeplanet-auth-*.json
 /pokeplanet-*.log
+/pokeplanet-net.log
 /pokeemerald-*.sav
 /pokeemerald-*.cfg

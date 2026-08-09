@@ -18,19 +18,35 @@ use tokio::sync::mpsc;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info,pokeplanet_net=debug".into()),
-        )
-        .with_writer(std::io::stderr)
-        .init();
+    // Settings first: the log destination is one of them, and the game starts this process
+    // detached with no console, so stderr alone means every diagnostic is lost exactly when
+    // multiplayer misbehaves for a real player.
+    let settings = settings::Settings::load(std::env::args().skip(1))?;
+
+    let filter = || {
+        tracing_subscriber::EnvFilter::try_from_default_env()
+            .unwrap_or_else(|_| "info,pokeplanet_net=debug".into())
+    };
+    match settings.log_path.as_ref().and_then(|path| {
+        std::fs::File::create(path)
+            .map_err(|e| eprintln!("could not open {}: {e}", path.display()))
+            .ok()
+    }) {
+        Some(file) => tracing_subscriber::fmt()
+            .with_env_filter(filter())
+            .with_ansi(false)
+            .with_writer(file)
+            .init(),
+        None => tracing_subscriber::fmt()
+            .with_env_filter(filter())
+            .with_writer(std::io::stderr)
+            .init(),
+    }
 
     rustls::crypto::ring::default_provider()
         .install_default()
         .map_err(|_| anyhow::anyhow!("could not install the rustls crypto provider"))?;
 
-    let settings = settings::Settings::load(std::env::args().skip(1))?;
     tracing::info!(
         server = %settings.server_host,
         port = settings.server_port,

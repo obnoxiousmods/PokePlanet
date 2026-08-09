@@ -49,6 +49,10 @@
 
 #define DEFAULT_SIDECAR_PORT 38400
 #define RECONNECT_DELAY_MS   1000
+// Connection attempts to tolerate before concluding no sidecar is coming and starting one.
+// The first few failures are the ordinary case of the game winning the race at startup.
+#define RELAUNCH_AFTER_ATTEMPTS 5
+#define RELAUNCH_BACKOFF_MAX    60
 // Matches the sidecar's own upstream cadence; sending faster would be discarded anyway.
 #define SELF_STATE_INTERVAL_MS 100
 
@@ -382,6 +386,8 @@ static int NetThreadMain(void *unused)
 {
     u8 rx[RX_BUFFER_SIZE];
     u32 rxUsed = 0;
+    u32 failedConnects = 0;
+    u32 relaunchAfter = RELAUNCH_AFTER_ATTEMPTS;
 
 #ifdef _WIN32
     WSADATA wsa;
@@ -397,11 +403,28 @@ static int NetThreadMain(void *unused)
         NetSocket sock = ConnectToSidecar();
         if (sock == NET_INVALID_SOCKET)
         {
+            // The sidecar is started once at boot, so if it dies -- it lost a race for the
+            // IPC port, crashed, or was killed -- the game would otherwise spend the rest
+            // of the session connecting to nothing and silently stay offline. Start
+            // another, backing off so a sidecar that cannot run is not respawned forever.
+            if (++failedConnects >= relaunchAfter)
+            {
+                SDL_Log("net: no sidecar after %u attempts; starting one",
+                        (unsigned)failedConnects);
+                Platform_LaunchSidecar();
+                failedConnects = 0;
+                if (relaunchAfter < RELAUNCH_BACKOFF_MAX)
+                    relaunchAfter *= 2;
+            }
             SDL_Delay(RECONNECT_DELAY_MS);
             continue;
         }
 
         SDL_Log("net: linked to sidecar on port %u", (unsigned)GetSidecarPort());
+        // A link that came up resets the backoff, so a later death is handled promptly
+        // rather than inheriting the patience earned by an earlier failure.
+        failedConnects = 0;
+        relaunchAfter = RELAUNCH_AFTER_ATTEMPTS;
         SDL_LockMutex(sNet.lock);
         sNet.linked = TRUE;
         SDL_UnlockMutex(sNet.lock);

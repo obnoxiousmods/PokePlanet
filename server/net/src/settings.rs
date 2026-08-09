@@ -30,6 +30,10 @@ pub struct Settings {
     /// left to itself the test client signs in as the real player, and the two connections
     /// then fight over one identity instead of seeing each other.
     pub fixed_token: bool,
+    /// Where to write diagnostics. The game starts the sidecar detached and with no
+    /// console, so without this its log goes nowhere and a multiplayer fault leaves no
+    /// trace to look at afterwards.
+    pub log_path: Option<PathBuf>,
 }
 
 impl Default for Settings {
@@ -41,6 +45,7 @@ impl Default for Settings {
             token_path: PathBuf::from("pokeplanet-auth.json"),
             insecure: false,
             fixed_token: false,
+            log_path: None,
         }
     }
 }
@@ -120,6 +125,13 @@ impl Settings {
                 }
                 "--insecure" => self.insecure = true,
                 "--fixed-token" => self.fixed_token = true,
+                "--log" => {
+                    self.log_path = Some(
+                        args.next()
+                            .ok_or_else(|| anyhow::anyhow!("--log needs a path"))?
+                            .into(),
+                    );
+                }
                 "--help" | "-h" => {
                     println!(
                         "pokeplanet-net — PokePlanet network sidecar\n\n\
@@ -129,6 +141,7 @@ impl Settings {
                            --ipc-port PORT       loopback port the game connects to (default {DEFAULT_IPC_PORT})\n  \
                            --token PATH          session token cache\n  \
                            --fixed-token         stay signed in as the cached token; never\n                                                 log in through a browser, never rewrite it\n  \
+                           --log PATH            also write diagnostics to PATH\n  \
                            --insecure            skip TLS verification (development only)\n"
                     );
                     std::process::exit(0);

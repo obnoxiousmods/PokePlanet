@@ -6,6 +6,9 @@
 
 // Ask the game to shut down cleanly. Safe to call from any thread.
 void Platform_RequestQuit(void);
+// Start the network sidecar. Harmless if one is already running: the newcomer finds the
+// IPC port taken and exits, leaving the existing one serving.
+void Platform_LaunchSidecar(void);
 void Platform_StoreSaveFile(void);
 void Platform_ReadFlash(u16 sectorNum, u32 offset, u8 *dest, u32 size);
 void Platform_QueueAudio(float *audioBuffer, s32 samplesPerFrame);
