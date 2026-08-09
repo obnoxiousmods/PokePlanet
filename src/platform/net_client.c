@@ -93,6 +93,8 @@ struct NetState
     struct NetBattleInvite answer;
     bool8 answerAccepted;
     bool8 hasAnswer;
+    char failedReason[NET_TEXT_LEN];
+    bool8 hasFailed;
 
     // Frames waiting for the worker thread to push onto the socket.
     u8 txQueue[TX_QUEUE_FRAMES][TX_FRAME_MAX];
@@ -302,6 +304,17 @@ static void HandleBattleAnswered(const u8 *payload, u32 len)
     SDL_UnlockMutex(sNet.lock);
 }
 
+static void HandleBattleFailed(const u8 *payload, u32 len)
+{
+    if (len < NET_TEXT_LEN)
+        return;
+
+    SDL_LockMutex(sNet.lock);
+    CopyField(sNet.failedReason, payload, NET_TEXT_LEN);
+    sNet.hasFailed = TRUE;
+    SDL_UnlockMutex(sNet.lock);
+}
+
 static void DispatchFrame(const u8 *body, u32 len)
 {
     if (len < 1)
@@ -318,9 +331,7 @@ static void DispatchFrame(const u8 *body, u32 len)
         HandleBattleAnswered(body + 1, len - 1);
         break;
     case MSG_BATTLE_FAILED:
-        // Nothing to show yet; the challenger simply never hears back. Logged so the
-        // reason is visible while the refusal UI does not exist.
-        SDL_Log("net: battle invitation refused by the server");
+        HandleBattleFailed(body + 1, len - 1);
         break;
     case MSG_SNAPSHOT:
         HandleSnapshot(body + 1, len - 1);
@@ -780,6 +791,29 @@ bool8 Net_PopBattleAnswer(struct NetBattleInvite *out, bool8 *accepted)
     *out = sNet.answer;
     *accepted = sNet.answerAccepted;
     sNet.hasAnswer = FALSE;
+    SDL_UnlockMutex(sNet.lock);
+    return TRUE;
+}
+
+bool8 Net_PopBattleFailure(char *out, u8 outSize)
+{
+    if (!sInitialised || out == NULL || outSize == 0)
+        return FALSE;
+
+    SDL_LockMutex(sNet.lock);
+    if (!sNet.hasFailed)
+    {
+        SDL_UnlockMutex(sNet.lock);
+        return FALSE;
+    }
+    {
+        u8 i;
+
+        for (i = 0; i < outSize - 1 && sNet.failedReason[i] != '\0'; i++)
+            out[i] = sNet.failedReason[i];
+        out[i] = '\0';
+    }
+    sNet.hasFailed = FALSE;
     SDL_UnlockMutex(sNet.lock);
     return TRUE;
 }

@@ -125,6 +125,8 @@ bool8 Net_PopBattleInvite(struct NetBattleInvite *out);
 // The answer to a challenge we sent, once it arrives. `accepted` is meaningless if FALSE
 // is returned.
 bool8 Net_PopBattleAnswer(struct NetBattleInvite *out, bool8 *accepted);
+// Why a challenge we sent could not be delivered, if the server refused it.
+bool8 Net_PopBattleFailure(char *out, u8 outSize);
 
 void Net_SendChat(u8 kind, const char *target, const char *text);
 // Pop the oldest unread chat line. Returns FALSE when nothing is queued.

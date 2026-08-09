@@ -126,6 +126,11 @@ async fn main() -> anyhow::Result<()> {
     send.write_all(&(hello.len() as u32).to_le_bytes()).await?;
     send.write_all(&hello).await?;
 
+    // The reader owns  but not , so anything it wants to reply to goes back to
+    // the main loop through here. Auto-accepting is what lets the *outgoing* half of the
+    // invitation flow be tested: a real client challenges the ghost and gets an answer.
+    let (reply_tx, mut reply_rx) = tokio::sync::mpsc::channel::<u32>(8);
+
     // Read the control stream in the background so Welcome and chat are visible.
     tokio::spawn(async move {
         loop {
@@ -147,6 +152,10 @@ async fn main() -> anyhow::Result<()> {
                 }
                 Ok(ServerControl::AuthRequired { .. }) => {
                     tracing::error!("token rejected; the server wants a browser login");
+                }
+                Ok(ServerControl::BattleInvitation { from, from_name }) => {
+                    tracing::info!(from, %from_name, "challenged; accepting");
+                    let _ = reply_tx.send(from).await;
                 }
                 Ok(ServerControl::Rejected { reason }) => tracing::error!(%reason, "rejected"),
                 Ok(other) => tracing::info!(?other, "control"),
@@ -218,6 +227,12 @@ async fn main() -> anyhow::Result<()> {
                     send.write_all(&msg).await?;
                     tracing::info!(target, "challenge sent");
                 }
+            }
+            Some(from) = reply_rx.recv() => {
+                let msg = quic::encode(&ClientControl::RespondToBattle { from, accepted: true })?;
+                send.write_all(&(msg.len() as u32).to_le_bytes()).await?;
+                send.write_all(&msg).await?;
+                tracing::info!(from, "accepted challenge");
             }
             _ = reported.tick() => {
                 tracing::debug!(x = pose.x, y = pose.y, "still here");

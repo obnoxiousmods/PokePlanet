@@ -38,6 +38,26 @@ PokePlanet_EventScript_DeclineChallenge::
 	release
 	end
 
+@ How the challenge we sent turned out. gStringVar1 holds the other player's name, or the
+@ server's reason in the failure case.
+PokePlanet_EventScript_ChallengeAccepted::
+	lock
+	msgbox PokePlanet_Text_TheyAccepted, MSGBOX_DEFAULT
+	release
+	end
+
+PokePlanet_EventScript_ChallengeDeclined::
+	lock
+	msgbox PokePlanet_Text_TheyDeclined, MSGBOX_DEFAULT
+	release
+	end
+
+PokePlanet_EventScript_ChallengeFailed::
+	lock
+	msgbox PokePlanet_Text_ChallengeFailed, MSGBOX_DEFAULT
+	release
+	end
+
 @ The player walked away between the interaction and the script starting.
 PokePlanet_EventScript_PlayerGone::
 	lock
@@ -65,3 +85,15 @@ PokePlanet_Text_Challenged:
 PokePlanet_Text_Accepted:
 	.string "You accepted {STR_VAR_1}'s\n"
 	.string "challenge!$"
+
+PokePlanet_Text_TheyAccepted:
+	.string "{STR_VAR_1} accepted your\n"
+	.string "challenge!$"
+
+PokePlanet_Text_TheyDeclined:
+	.string "{STR_VAR_1} turned down your\n"
+	.string "challenge…$"
+
+PokePlanet_Text_ChallengeFailed:
+	.string "The challenge could not be sent.\p"
+	.string "{STR_VAR_1}$"

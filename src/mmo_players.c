@@ -306,6 +306,41 @@ static void CheckForBattleInvite(void)
     ScriptContext_SetupScript(PokePlanet_EventScript_BattleInvite);
 }
 
+extern const u8 PokePlanet_EventScript_ChallengeAccepted[];
+extern const u8 PokePlanet_EventScript_ChallengeDeclined[];
+extern const u8 PokePlanet_EventScript_ChallengeFailed[];
+
+// Tell the player how the challenge they sent turned out. Same idle-frame rule as above:
+// waiting for a safe frame costs a moment, interrupting a running script corrupts it.
+static void CheckForBattleOutcome(void)
+{
+    struct NetBattleInvite answer;
+    bool8 accepted;
+    char reason[NET_TEXT_LEN];
+    u8 encoded[NET_TEXT_LEN];
+
+    if (ArePlayerFieldControlsLocked() || ScriptContext_IsEnabled())
+        return;
+
+    if (Net_PopBattleAnswer(&answer, &accepted))
+    {
+        MmoText_FromAscii(encoded, answer.fromName, NET_NAME_LEN + 1);
+        StringCopy(gStringVar1, encoded);
+        LockPlayerFieldControls();
+        ScriptContext_SetupScript(accepted ? PokePlanet_EventScript_ChallengeAccepted
+                                           : PokePlanet_EventScript_ChallengeDeclined);
+        return;
+    }
+
+    if (Net_PopBattleFailure(reason, sizeof(reason)))
+    {
+        MmoText_FromAscii(encoded, reason, sizeof(encoded));
+        StringCopy(gStringVar1, encoded);
+        LockPlayerFieldControls();
+        ScriptContext_SetupScript(PokePlanet_EventScript_ChallengeFailed);
+    }
+}
+
 const u8 *MmoPlayers_GetInteractionScript(u8 objectEventId)
 {
     const char *name = MmoPlayers_GetRemoteName(objectEventId);
@@ -348,6 +383,7 @@ void MmoPlayers_Update(void)
 
     ReportSelf();
     CheckForBattleInvite();
+    CheckForBattleOutcome();
 
     count = Net_GetRemotePlayers(remotes);
     for (i = 0; i < NET_MAX_REMOTE_PLAYERS; i++)
