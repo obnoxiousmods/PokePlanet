@@ -80,7 +80,16 @@ endif
 
 CPPFLAGS := -std=gnu99 -iquote include -iquote $(GFLIB_SUBDIR) -Wno-trigraphs -D NONMATCHING -D PORTABLE -D $(TARGET_PLATFORM) -D $(TILE_RENDERER) -D MODERN=$(MODERN) -D UBFIX
 ifeq ($(NATIVE_LINUX),1)
-CPPFLAGS += -m32 -D NATIVE_LINUX $(shell pkg-config --cflags sdl2 SDL2_image)
+# SDL2_image only loads the decorative border and background PNGs. Arch has no
+# lib32-sdl2_image, so NO_SDL_IMAGE=1 drops it for the 32-bit debug build; the game runs
+# with a plain black background, which is exactly what a debugging session wants.
+ifeq ($(NO_SDL_IMAGE),1)
+SDL_PKGS := sdl2
+CPPFLAGS += -D NO_SDL_IMAGE
+else
+SDL_PKGS := sdl2 SDL2_image
+endif
+CPPFLAGS += -m32 -D NATIVE_LINUX $(shell pkg-config --cflags $(SDL_PKGS))
 else
 CPPFLAGS += -I$(SDL_DIR)/include -L$(SDL_DIR)/lib
 endif
@@ -90,7 +99,7 @@ LDFLAGS = -Map ../../$(MAP)
 PLATFORM_INCLUDES := 
 
 ifeq ($(NATIVE_LINUX),1)
-PLATFORM_INCLUDES += $(shell pkg-config --libs sdl2 SDL2_image) -lm
+PLATFORM_INCLUDES += $(shell pkg-config --libs $(SDL_PKGS)) -lm
 else
 # Windows only
 ifneq ($(NO_STD_LIB),1)

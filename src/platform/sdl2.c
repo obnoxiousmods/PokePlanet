@@ -16,7 +16,7 @@
 #else
 #include <SDL2/SDL.h>
 #endif
-#ifdef NATIVE_LINUX
+#if defined(NATIVE_LINUX) && !defined(NO_SDL_IMAGE)
 #include <SDL2/SDL_image.h>
 #endif
 
@@ -294,7 +294,10 @@ int main(int argc, char **argv)
         sBackgroundOrderVersion = 2;
         StoreConfigFile();
     }
-#ifdef NATIVE_LINUX
+#if defined(NATIVE_LINUX) && defined(NO_SDL_IMAGE)
+    // Debug build without SDL2_image: no border or background artwork, plain black.
+    SDL_RenderSetLogicalSize(sdlRenderer, 0, 0);
+#elif defined(NATIVE_LINUX)
     SDL_RenderSetLogicalSize(sdlRenderer, 0, 0);
     if ((IMG_Init(IMG_INIT_PNG) & IMG_INIT_PNG) == 0)
     {
@@ -495,7 +498,7 @@ int main(int argc, char **argv)
         SDL_DestroyTexture(sdlBackgroundTextures[i]);
     SDL_DestroyTexture(sdlBorderTexture);
 #endif
-#ifdef NATIVE_LINUX
+#if defined(NATIVE_LINUX) && !defined(NO_SDL_IMAGE)
     IMG_Quit();
 #endif
     SDL_DestroyWindow(sdlWindow);
