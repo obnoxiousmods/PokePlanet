@@ -671,41 +671,23 @@ static void ShowAuthMessage(u8 authState)
     }
 }
 
-// Drop the player straight into the world once they are signed in.
+// Begin a character the server already knows about but this machine has never run.
 //
-// The account is the identity, so there is nothing to choose: either there is a game in
-// progress to resume, or the server has just created this character and we start one.
-// Either way the player never sees NEW GAME / CONTINUE.
-static void EnterWorldSignedIn(u8 taskId)
+// The account is the identity, so there is nothing for the player to choose: no gender
+// prompt and no name entry, because the server already holds both. Neither CB2_NewGame nor
+// NewGameInitData touches SaveBlock2's playerName, so writing it here survives into the
+// new game.
+//
+// CB2_NewGame runs NewGameInitData itself, which sets the truck warp, so the Littleroot
+// override has to happen inside it -- see MmoPlayers_ShouldSkipIntro.
+static void StartServerCharacter(void)
 {
-    ClearWindowTilemap(7);
-    ClearMainMenuWindowTilemap(&sWindowTemplates_MainMenu[7]);
-    SetGpuReg(REG_OFFSET_WIN0H, 0);
-    SetGpuReg(REG_OFFSET_WIN0V, 0);
-    gPlttBufferUnfaded[0] = RGB_BLACK;
-    gPlttBufferFaded[0] = RGB_BLACK;
+    u8 name[PLAYER_NAME_LENGTH + 1];
 
-    if (gSaveFileStatus == SAVE_STATUS_OK)
-    {
-        SetMainCallback2(CB2_ContinueSavedGame);
-    }
-    else
-    {
-        // A character the server already knows about but this machine has never run.
-        // Skip the Birch introduction entirely and begin in Littleroot, which is where
-        // the server places new characters.
-        u8 name[PLAYER_NAME_LENGTH + 1];
-
-        // CB2_NewGame runs NewGameInitData itself, which sets the truck warp, so the
-        // Littleroot override has to happen inside it -- see MmoPlayers_ShouldSkipIntro.
-        // PLAYER_NAME_LENGTH now matches the wire protocol's name field, so the Discord
-        // display name is stored whole rather than truncated.
-        MmoText_FromAscii(name, Net_GetPlayerName(), sizeof(name));
-        SetMainCallback2(CB2_NewGame);
-        gMain.savedCallback = NULL;
-        StringCopy(gSaveBlock2Ptr->playerName, name);
-    }
-    DestroyTask(taskId);
+    MmoText_FromAscii(name, Net_GetPlayerName(), sizeof(name));
+    SetMainCallback2(CB2_NewGame);
+    gMain.savedCallback = NULL;
+    StringCopy(gSaveBlock2Ptr->playerName, name);
 }
 
 // Leave the gate and continue into the normal save-file checks.
@@ -1247,6 +1229,14 @@ static void Task_HandleMainMenuAPressed(u8 taskId)
             default:
                 gPlttBufferUnfaded[0] = RGB_BLACK;
                 gPlttBufferFaded[0] = RGB_BLACK;
+                // A signed-in player has already been given a name and a starting position
+                // by the server, so the Birch introduction has nothing left to ask them.
+                if (Net_GetAuthState() == NET_AUTH_ONLINE)
+                {
+                    StartServerCharacter();
+                    DestroyTask(taskId);
+                    break;
+                }
                 gTasks[taskId].func = Task_NewGameBirchSpeech_Init;
                 break;
             case ACTION_CONTINUE:
