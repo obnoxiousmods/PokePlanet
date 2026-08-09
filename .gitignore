@@ -56,3 +56,6 @@ prefabs.json
 /pokeplanet.log
 /server/target/
 /pokeplanet-net.exe
+# A live session token. The sidecar writes this into whatever directory it runs from,
+# which for a development build is the repo root.
+/pokeplanet-auth.json
