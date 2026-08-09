@@ -3,6 +3,7 @@
 #include "agb_flash.h"
 #include "gba/flash_internal.h"
 #include "fieldmap.h"
+#include "net_client.h"
 #include "save.h"
 #include "task.h"
 #include "decompress.h"
@@ -244,6 +245,16 @@ static u8 TryWriteSector(u8 sector, u8 *data)
     {
         // Succeeded
         SetDamagedSectorBits(DISABLE, sector);
+
+        // Every durable write in the game arrives here, whichever path asked for it: the
+        // ordinary full save, the incremental link saves behind trades and record mixing,
+        // and the hall of fame. Hooking the file-level Platform_StoreSaveFile instead would
+        // miss most of them, because the link paths write sectors and never flush.
+        //
+        // This only records that the save changed. Shipping it is the network layer's
+        // problem and must not happen on this thread, which is mid-write.
+        Net_NoteSaveChanged();
+
         return SAVE_STATUS_OK;
     }
 }

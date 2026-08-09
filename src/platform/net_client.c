@@ -795,6 +795,25 @@ bool8 Net_PopBattleAnswer(struct NetBattleInvite *out, bool8 *accepted)
     return TRUE;
 }
 
+// Raised on the game thread from inside a sector write, cleared by whoever ships it.
+// Deliberately a plain flag rather than a queue of sectors: a save writes fourteen of them
+// in a burst, and the only thing worth knowing afterwards is that the save is no longer
+// what the server has.
+static volatile bool8 sSaveChanged;
+
+void Net_NoteSaveChanged(void)
+{
+    sSaveChanged = TRUE;
+}
+
+bool8 Net_TakeSaveChanged(void)
+{
+    if (!sSaveChanged)
+        return FALSE;
+    sSaveChanged = FALSE;
+    return TRUE;
+}
+
 bool8 Net_PopBattleFailure(char *out, u8 outSize)
 {
     if (!sInitialised || out == NULL || outSize == 0)
