@@ -39,6 +39,7 @@
 #define MSG_BATTLE_INVITE   0x05
 #define MSG_BATTLE_ANSWERED 0x06
 #define MSG_BATTLE_FAILED   0x07
+#define MSG_SAVE_IMAGE      0x08
 // Game -> sidecar
 #define MSG_SELF_STATE   0x81
 #define MSG_BEGIN_LOGIN  0x82
@@ -101,6 +102,9 @@ struct NetState
     bool8 hasAnswer;
     char failedReason[NET_TEXT_LEN];
     bool8 hasFailed;
+
+    // The server handed over a save and it is now sitting in the flash mirror.
+    bool8 hasServerSave;
 
     // Frames waiting for the worker thread to push onto the socket.
     u8 txQueue[TX_QUEUE_FRAMES][TX_FRAME_MAX];
@@ -329,6 +333,48 @@ static void HandleBattleFailed(const u8 *payload, u32 len)
     SDL_UnlockMutex(sNet.lock);
 }
 
+// The server's copy of the save, written straight into the flash mirror.
+//
+// This is the point of the whole exercise: the game's load path already reads from
+// FLASH_BASE, so once this lands the game reads the server's save without any other part of
+// it knowing the difference. Written from the worker thread, which is safe here because the
+// only moment this arrives is at sign-in, while the player is still on the menu and nothing
+// is reading flash.
+static void HandleSaveImage(const u8 *payload, u32 len)
+{
+    u32 offset;
+    u32 total;
+    u16 length;
+
+    if (len < 10)
+        return;
+
+    offset = ReadU32(payload);
+    total = ReadU32(payload + 4);
+    length = ReadU16(payload + 8);
+
+    if (len < 10u + length)
+        return;
+    if (total != sizeof(FLASH_BASE))
+    {
+        SDL_Log("net: ignoring a save of %u bytes; this build expects %u",
+                (unsigned)total, (unsigned)sizeof(FLASH_BASE));
+        return;
+    }
+    if (offset > sizeof(FLASH_BASE) || length > sizeof(FLASH_BASE) - offset)
+        return;
+
+    memcpy(FLASH_BASE + offset, payload + 10, length);
+
+    if (offset + length == total)
+    {
+        SDL_LockMutex(sNet.lock);
+        sNet.hasServerSave = TRUE;
+        SDL_UnlockMutex(sNet.lock);
+        SDL_Log("net: loaded the server's save (%u bytes)", (unsigned)total);
+    }
+}
+
 static void DispatchFrame(const u8 *body, u32 len)
 {
     if (len < 1)
@@ -346,6 +392,9 @@ static void DispatchFrame(const u8 *body, u32 len)
         break;
     case MSG_BATTLE_FAILED:
         HandleBattleFailed(body + 1, len - 1);
+        break;
+    case MSG_SAVE_IMAGE:
+        HandleSaveImage(body + 1, len - 1);
         break;
     case MSG_SNAPSHOT:
         HandleSnapshot(body + 1, len - 1);
@@ -883,6 +932,20 @@ bool8 Net_TakeSaveChanged(void)
         return FALSE;
     sSaveChanged = FALSE;
     return TRUE;
+}
+
+bool8 Net_TakeServerSave(void)
+{
+    bool8 had;
+
+    if (!sInitialised)
+        return FALSE;
+
+    SDL_LockMutex(sNet.lock);
+    had = sNet.hasServerSave;
+    sNet.hasServerSave = FALSE;
+    SDL_UnlockMutex(sNet.lock);
+    return had;
 }
 
 bool8 Net_PopBattleFailure(char *out, u8 outSize)

@@ -25,6 +25,7 @@
 #include "pokemon.h"
 #include "random.h"
 #include "rtc.h"
+#include "reload_save.h"
 #include "save.h"
 #include "scanline_effect.h"
 #include "sound.h"
@@ -745,6 +746,16 @@ static void Task_PokePlanetConnect(u8 taskId)
 
     if (authState == NET_AUTH_ONLINE)
     {
+        // The server sends its copy of the save right after sign-in, and the network thread
+        // has already written it into the flash mirror. The game read the local save at boot,
+        // long before any of this, so reload from what just arrived: after this the player is
+        // continuing the character the server holds rather than whatever is on this machine.
+        if (Net_TakeServerSave())
+        {
+            ReloadSave();
+            gSaveFileStatus = SAVE_STATUS_OK;
+        }
+
         // Signed in: hand straight over to the normal menu, which draws the CONTINUE
         // panel from the server's save summary.
         EnterMainMenu(taskId);

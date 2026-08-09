@@ -241,6 +241,17 @@ impl Session {
                             }
                             anyhow::bail!("{reason}");
                         }
+                        ServerControl::SaveImage { offset, total, bytes } => {
+                            // Straight through to the game, which writes it into the flash
+                            // mirror. No need to assemble it here first; the game is putting
+                            // it back together in the place it will be read from anyway.
+                            if offset == 0 {
+                                tracing::info!(bytes = total, "receiving the stored save");
+                            }
+                            self.link
+                                .send(wire::encode_save_image(offset, total, &bytes))
+                                .await;
+                        }
                         ServerControl::Superseded { reason } => {
                             tracing::warn!(%reason, "signed in elsewhere; shutting down");
                             self.report(wire::AUTH_SUPERSEDED, "", &reason).await;

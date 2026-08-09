@@ -31,6 +31,9 @@ pub const MSG_PROFILE: u8 = 0x04;
 pub const MSG_BATTLE_INVITE: u8 = 0x05;
 pub const MSG_BATTLE_ANSWERED: u8 = 0x06;
 pub const MSG_BATTLE_FAILED: u8 = 0x07;
+/// A slice of the server's copy of the save, handed over at sign-in. Layout matches the
+/// upload: u32 offset, u32 total, u16 len, bytes.
+pub const MSG_SAVE_IMAGE: u8 = 0x08;
 
 // Game -> sidecar
 pub const MSG_SELF_STATE: u8 = 0x81;
@@ -136,6 +139,17 @@ pub fn encode_battle_failed(reason: &str) -> Vec<u8> {
     let mut b = Vec::with_capacity(1 + TEXT_LEN);
     b.push(MSG_BATTLE_FAILED);
     put_str(&mut b, reason, TEXT_LEN);
+    frame(b)
+}
+
+/// A slice of the server's save, on its way to the game.
+pub fn encode_save_image(offset: u32, total: u32, bytes: &[u8]) -> Vec<u8> {
+    let mut b = Vec::with_capacity(11 + bytes.len());
+    b.push(MSG_SAVE_IMAGE);
+    b.extend_from_slice(&offset.to_le_bytes());
+    b.extend_from_slice(&total.to_le_bytes());
+    b.extend_from_slice(&(bytes.len() as u16).to_le_bytes());
+    b.extend_from_slice(bytes);
     frame(b)
 }
 

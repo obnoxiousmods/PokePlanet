@@ -104,6 +104,9 @@ pub enum ServerControl {
     ///
     /// Appended rather than inserted so the existing variant numbering does not shift.
     Superseded { reason: String },
+    /// One slice of the character's stored save, sent at sign-in so the client plays the
+    /// server's copy rather than whatever is on this machine.
+    SaveImage { offset: u32, total: u32, bytes: Vec<u8> },
 }
 
 /// Position report, sent by the client at roughly 10Hz on a datagram.

@@ -21,6 +21,8 @@ const POSITION_SAVE_INTERVAL: Duration = Duration::from_secs(15);
 const MAX_CONTROL_FRAME: usize = 64 * 1024;
 /// The game's flash image, and therefore the largest save that can be genuine.
 const MAX_SAVE_BYTES: usize = 128 * 1024;
+/// Slice size for handing a stored save back to a client.
+const SAVE_STREAM_CHUNK: usize = 8 * 1024;
 
 pub struct Server {
     pub cfg: Arc<Config>,
@@ -233,6 +235,25 @@ async fn run_session(
         },
     )
     .await?;
+
+    // Hand over the stored save immediately after Welcome, so the client is playing this
+    // character as the server last saw them rather than as this machine last saw them. A
+    // character who has never saved has nothing here, and the client keeps what it has.
+    if let Some(image) = db::load_save(&server.db, character.id).await? {
+        let total = image.len() as u32;
+        for (i, piece) in image.chunks(SAVE_STREAM_CHUNK).enumerate() {
+            write_frame(
+                &mut send,
+                &ServerControl::SaveImage {
+                    offset: (i * SAVE_STREAM_CHUNK) as u32,
+                    total,
+                    bytes: piece.to_vec(),
+                },
+            )
+            .await?;
+        }
+        tracing::info!(player = player_id, bytes = total, "sent the stored save");
+    }
 
     // Fan-in for anything the world wants to push at this client.
     let (control_tx, mut control_rx) = mpsc::channel::<ServerControl>(64);
