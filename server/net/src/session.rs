@@ -249,7 +249,10 @@ impl Session {
                                 tracing::info!(bytes = total, "receiving the stored save");
                             }
                             self.link
-                                .send(wire::encode_save_image(offset, total, &bytes))
+                                .send_save_image(
+                                    wire::encode_save_image(offset, total, &bytes),
+                                    offset == 0,
+                                )
                                 .await;
                         }
                         ServerControl::Superseded { reason } => {

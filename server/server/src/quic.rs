@@ -22,7 +22,7 @@ const MAX_CONTROL_FRAME: usize = 64 * 1024;
 /// The game's flash image, and therefore the largest save that can be genuine.
 const MAX_SAVE_BYTES: usize = 128 * 1024;
 /// Slice size for handing a stored save back to a client.
-const SAVE_STREAM_CHUNK: usize = 8 * 1024;
+const SAVE_STREAM_CHUNK: usize = 1024;
 
 pub struct Server {
     pub cfg: Arc<Config>,

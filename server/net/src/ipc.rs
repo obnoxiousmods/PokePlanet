@@ -17,6 +17,11 @@ use tokio::sync::{mpsc, Mutex};
 struct Latched {
     status: Option<Vec<u8>>,
     profile: Option<Vec<u8>>,
+    /// The stored save, in the slices it arrived as. Latched for the same reason as the
+    /// other two and more urgently: it is sent once, immediately after sign-in, which is
+    /// normally before the game has even finished booting. Dropping it means the player
+    /// silently continues the save on this machine instead of the one the server holds.
+    save_image: Vec<Vec<u8>>,
 }
 
 /// Handle used by the rest of the sidecar to talk to whichever game process is attached.
@@ -48,6 +53,26 @@ impl GameLink {
         self.send(frame).await;
     }
 
+    /// Send one slice of the stored save, remembering the whole run. `first` starts a new
+    /// run, so a second sign-in cannot leave slices of an older save in front of a newer one.
+    ///
+    /// Snapshots pour through this same queue ten times a second and losing one costs
+    /// nothing, but a missing slice means the save never completes and the player silently
+    /// carries on with the copy on this machine. So the queue is deep enough to hold a whole
+    /// save alongside snapshot churn -- and this stays non-blocking, because waiting here
+    /// would stall the session loop that is also reading the server's control stream.
+    pub async fn send_save_image(&self, frame: Vec<u8>, first: bool) {
+        {
+            let mut latched = self.latched.lock().await;
+            if first {
+                latched.save_image.clear();
+            }
+            latched.save_image.push(frame.clone());
+        }
+
+        self.send(frame).await;
+    }
+
     async fn attach(&self, tx: mpsc::Sender<Vec<u8>>) {
         // Replay what the sign-in screen needs. Otherwise a game that attaches after the
         // sidecar has already signed in -- a restart, or just a sidecar that reconnected
@@ -60,6 +85,11 @@ impl GameLink {
             }
             if let Some(status) = latched.status.as_ref() {
                 let _ = tx.try_send(status.clone());
+            }
+            // After the status, so the game is already signed in by the time the save it is
+            // meant to play arrives.
+            for piece in &latched.save_image {
+                let _ = tx.try_send(piece.clone());
             }
         }
         *self.outbound.lock().await = Some(tx);
@@ -107,7 +137,8 @@ async fn handle_game(
 
     // A bounded queue means a wedged game cannot make the sidecar grow without limit;
     // snapshots are disposable, so dropping the oldest is the right failure mode.
-    let (tx, mut rx) = mpsc::channel::<Vec<u8>>(64);
+    // Deep enough for a whole save in 1KB slices plus the snapshot churn beside it.
+    let (tx, mut rx) = mpsc::channel::<Vec<u8>>(512);
     link.attach(tx).await;
 
     let pump = tokio::spawn(async move {
