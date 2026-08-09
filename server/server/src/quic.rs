@@ -19,6 +19,8 @@ const SNAPSHOT_INTERVAL: Duration = Duration::from_millis(100);
 /// How often a player's position is written back to Postgres.
 const POSITION_SAVE_INTERVAL: Duration = Duration::from_secs(15);
 const MAX_CONTROL_FRAME: usize = 64 * 1024;
+/// The game's flash image, and therefore the largest save that can be genuine.
+const MAX_SAVE_BYTES: usize = 128 * 1024;
 
 pub struct Server {
     pub cfg: Arc<Config>,
@@ -280,7 +282,8 @@ async fn run_session(
     });
 
     // Control messages from the client until it hangs up.
-    let result = control_loop(&server, &mut recv, player_id, session, &name).await;
+    let result =
+        control_loop(&server, &mut recv, player_id, session, &name, character.id).await;
 
     server.world.leave(player_id, session).await;
     if let Some(pose) = server.world.pose_of(player_id).await {
@@ -298,7 +301,11 @@ async fn control_loop(
     player_id: PlayerId,
     session: crate::world::SessionId,
     name: &str,
+    character_id: i64,
 ) -> anyhow::Result<()> {
+    // Save slices are reassembled here, per connection.
+    let mut save_image: Vec<u8> = Vec::new();
+
     while let Some(frame) = read_frame(recv).await? {
         match quic::decode::<ClientControl>(&frame)? {
             ClientControl::Chat { target, text } => {
@@ -329,6 +336,33 @@ async fn control_loop(
                         .world
                         .tell(player_id, ServerControl::BattleInvitationFailed { reason })
                         .await;
+                }
+            }
+            ClientControl::SaveUpload { offset, total, bytes } => {
+                // A save is never larger than the flash image the game actually has, so a
+                // client claiming otherwise is either broken or probing; refuse rather than
+                // let the wire decide how much memory to hold.
+                if total as usize > MAX_SAVE_BYTES {
+                    tracing::warn!(player = player_id, total, "refusing an oversized save");
+                    break;
+                }
+                if offset as usize + bytes.len() > total as usize {
+                    tracing::warn!(player = player_id, "refusing a malformed save chunk");
+                    break;
+                }
+                // Out of order, or a restart part way through: begin again.
+                if offset == 0 || save_image.len() != offset as usize {
+                    save_image.clear();
+                }
+                if save_image.len() == offset as usize {
+                    save_image.extend_from_slice(&bytes);
+                    if save_image.len() == total as usize {
+                        db::store_save(&server.db, character_id, &save_image).await?;
+                        tracing::info!(
+                            player = player_id, bytes = save_image.len(), "save stored"
+                        );
+                        save_image.clear();
+                    }
                 }
             }
             ClientControl::Goodbye => break,

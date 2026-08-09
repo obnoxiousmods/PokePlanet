@@ -39,6 +39,13 @@ pub enum ClientControl {
     /// Answer an outstanding invitation.
     RespondToBattle { from: PlayerId, accepted: bool },
     Goodbye,
+    /// One slice of this character's save. Sent in pieces for the same reason as over the
+    /// IPC link: the whole image is 128KB and nothing should sit in a single huge write.
+    /// `total` lets the server know when it has all of it without a separate end marker.
+    ///
+    /// Appended after Goodbye rather than inserted next to the other gameplay messages so
+    /// the existing variant numbering does not shift under a client that has not updated.
+    SaveUpload { offset: u32, total: u32, bytes: Vec<u8> },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

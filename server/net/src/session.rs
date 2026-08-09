@@ -19,6 +19,9 @@ use tokio::sync::mpsc;
 const LOGIN_POLL_INTERVAL: Duration = Duration::from_secs(2);
 /// How often the local player's position is pushed upstream.
 const MOVEMENT_INTERVAL: Duration = Duration::from_millis(100);
+/// Slice size for forwarding a save upstream. Small enough that chat and battle messages
+/// sharing the control stream are not stuck behind a whole save.
+const SAVE_UPLOAD_CHUNK: usize = 8 * 1024;
 const MAX_CONTROL_FRAME: usize = 64 * 1024;
 
 pub struct Session {
@@ -327,10 +330,24 @@ impl Session {
                                 if save_image.len() == total as usize {
                                     tracing::info!(
                                         bytes = save_image.len(),
-                                        "save received from the game"
+                                        "save received from the game; uploading"
                                     );
-                                    // Sending it on to the server is the next piece; for now
-                                    // arriving intact is what is being established.
+                                    // Forward in the same slices rather than one huge frame,
+                                    // so a save never blocks the control stream that chat
+                                    // and battle messages also share.
+                                    for (i, piece) in
+                                        save_image.chunks(SAVE_UPLOAD_CHUNK).enumerate()
+                                    {
+                                        write_control(
+                                            &mut send,
+                                            &ClientControl::SaveUpload {
+                                                offset: (i * SAVE_UPLOAD_CHUNK) as u32,
+                                                total,
+                                                bytes: piece.to_vec(),
+                                            },
+                                        )
+                                        .await?;
+                                    }
                                     save_image.clear();
                                 }
                             }

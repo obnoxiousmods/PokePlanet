@@ -111,6 +111,18 @@ CREATE TABLE IF NOT EXISTS story_state (
     updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- The character's save, exactly as the game's flash image.
+--
+-- Stored whole rather than picked apart because the game's own load path reads it back
+-- byte for byte, so anything less than the real image would have to be reassembled into
+-- one anyway. The projected columns on `characters` stay as they are: they answer "what
+-- should the sign-in screen show" without parsing 128KB.
+CREATE TABLE IF NOT EXISTS saves (
+    character_id BIGINT PRIMARY KEY REFERENCES characters(id) ON DELETE CASCADE,
+    image        BYTEA NOT NULL,
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- Progress counters shown on the sign-in screen.
 ALTER TABLE characters ADD COLUMN IF NOT EXISTS badges         SMALLINT NOT NULL DEFAULT 0;
 ALTER TABLE characters ADD COLUMN IF NOT EXISTS pokedex_caught INTEGER  NOT NULL DEFAULT 0;
@@ -249,6 +261,33 @@ pub async fn ensure_character(
         )
         .await?;
     Ok(Character::from_row(&row))
+}
+
+/// Replace this character's save with `image`.
+pub async fn store_save(db: &Db, character_id: i64, image: &[u8]) -> anyhow::Result<()> {
+    let client = db.get().await?;
+    client
+        .execute(
+            "INSERT INTO saves (character_id, image, updated_at)
+             VALUES ($1, $2, now())
+             ON CONFLICT (character_id)
+             DO UPDATE SET image = EXCLUDED.image, updated_at = now()",
+            &[&character_id, &image],
+        )
+        .await?;
+    Ok(())
+}
+
+/// This character's save, or None for one that has never saved.
+pub async fn load_save(db: &Db, character_id: i64) -> anyhow::Result<Option<Vec<u8>>> {
+    let client = db.get().await?;
+    Ok(client
+        .query_opt(
+            "SELECT image FROM saves WHERE character_id = $1",
+            &[&character_id],
+        )
+        .await?
+        .map(|row| row.get::<_, Vec<u8>>("image")))
 }
 
 pub async fn character_by_id(db: &Db, id: i64) -> anyhow::Result<Option<Character>> {
