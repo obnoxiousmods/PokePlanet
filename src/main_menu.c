@@ -698,8 +698,8 @@ static void EnterWorldSignedIn(u8 taskId)
 
         // CB2_NewGame runs NewGameInitData itself, which sets the truck warp, so the
         // Littleroot override has to happen inside it -- see MmoPlayers_ShouldSkipIntro.
-        // Only the trainer name is set here, and it is still bounded by the save block's
-        // 7-character field; the full display name comes from the server profile.
+        // PLAYER_NAME_LENGTH now matches the wire protocol's name field, so the Discord
+        // display name is stored whole rather than truncated.
         MmoText_FromAscii(name, Net_GetPlayerName(), sizeof(name));
         SetMainCallback2(CB2_NewGame);
         gMain.savedCallback = NULL;
@@ -811,9 +811,13 @@ static void Task_MainMenuCheckSaveFile(u8 taskId)
         if (IsWirelessAdapterConnected())
             tWirelessAdapterConnected = TRUE;
 
-        // Signed in: the save lives on the server, so there is always a game to
-        // continue regardless of what this machine has on disk.
-        if (Net_GetAuthState() == NET_AUTH_ONLINE)
+        // Signed in with a local save: show CONTINUE and fill its panel from the server.
+        //
+        // Deliberately still requires a valid local save. Forcing CONTINUE on regardless
+        // sent players into CB2_ContinueSavedGame with an empty save block, which crashes.
+        // Once the save block is hydrated from the server (the save-authority work) this
+        // condition goes away, because there will always genuinely be a game to continue.
+        if (Net_GetAuthState() == NET_AUTH_ONLINE && gSaveFileStatus == SAVE_STATUS_OK)
         {
             tMenuType = HAS_SAVED_GAME;
             tCurrItem = 0;
