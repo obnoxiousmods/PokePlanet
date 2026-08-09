@@ -245,22 +245,31 @@ async fn run_session(
     // a fraction of the slices reaching the game, so enabling it would trade a working
     // connection for a save that never arrives. Uploading is unaffected and stays on: the
     // server is already collecting saves, which is what the rest of this needs.
-    if server.cfg.send_stored_save {
-        if let Some(image) = db::load_save(&server.db, character.id).await? {
-            let total = image.len() as u32;
-            for (i, piece) in image.chunks(SAVE_STREAM_CHUNK).enumerate() {
-                write_frame(
-                    &mut send,
-                    &ServerControl::SaveImage {
-                        offset: (i * SAVE_STREAM_CHUNK) as u32,
-                        total,
-                        bytes: piece.to_vec(),
-                    },
-                )
-                .await?;
+    if let Some(image) = db::load_save(&server.db, character.id).await? {
+        // On a stream of its own rather than the control stream.
+        //
+        // Sending it as a hundred-odd control messages starved that stream: only a fraction
+        // reached the game and the connection then cycled on the idle timeout. Control
+        // carries chat, battles and presence, and a 128KB burst has no business queueing in
+        // front of them. A separate stream is what QUIC offers for exactly this, and it
+        // cannot interfere with the traffic that keeps the session alive.
+        //
+        // Spawned so a slow client reading its save cannot hold up the rest of sign-in.
+        let conn_for_save = conn.clone();
+        tokio::spawn(async move {
+            match conn_for_save.open_uni().await {
+                Ok(mut stream) => {
+                    let total = image.len() as u32;
+                    if stream.write_all(&total.to_le_bytes()).await.is_ok()
+                        && stream.write_all(&image).await.is_ok()
+                    {
+                        let _ = stream.finish();
+                        tracing::info!(player = player_id, bytes = total, "sent the stored save");
+                    }
+                }
+                Err(e) => tracing::debug!(error = %e, "could not open a stream for the save"),
             }
-            tracing::info!(player = player_id, bytes = total, "sent the stored save");
-        }
+        });
     }
 
     // Fan-in for anything the world wants to push at this client.

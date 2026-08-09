@@ -22,6 +22,10 @@ const MOVEMENT_INTERVAL: Duration = Duration::from_millis(100);
 /// Slice size for forwarding a save upstream. Small enough that chat and battle messages
 /// sharing the control stream are not stuck behind a whole save.
 const SAVE_UPLOAD_CHUNK: usize = 8 * 1024;
+/// Slice size for handing the save down to the game over the loopback link.
+const SAVE_TO_GAME_CHUNK: usize = 1024;
+/// The game's flash image, and so the largest save that can be genuine.
+const MAX_SAVE_BYTES: usize = 128 * 1024;
 const MAX_CONTROL_FRAME: usize = 64 * 1024;
 
 pub struct Session {
@@ -150,6 +154,40 @@ impl Session {
 
         loop {
             tokio::select! {
+                // --- from the server, the save on its own stream ---
+                //
+                // Read in a task rather than here: the whole image is 128KB and this loop
+                // also has to keep answering the control stream.
+                incoming = conn.accept_uni() => {
+                    let mut stream = incoming?;
+                    let link = self.link.clone();
+                    tokio::spawn(async move {
+                        let mut header = [0u8; 4];
+                        if stream.read_exact(&mut header).await.is_err() {
+                            return;
+                        }
+                        let total = u32::from_le_bytes(header);
+                        if total as usize > MAX_SAVE_BYTES {
+                            tracing::warn!(total, "refusing an oversized save from the server");
+                            return;
+                        }
+                        let mut image = vec![0u8; total as usize];
+                        if stream.read_exact(&mut image).await.is_err() {
+                            tracing::warn!("the save stream ended early");
+                            return;
+                        }
+                        tracing::info!(bytes = total, "received the stored save");
+                        for (i, piece) in image.chunks(SAVE_TO_GAME_CHUNK).enumerate() {
+                            let offset = (i * SAVE_TO_GAME_CHUNK) as u32;
+                            link.send_save_image(
+                                wire::encode_save_image(offset, total, piece),
+                                offset == 0,
+                            )
+                            .await;
+                        }
+                    });
+                }
+
                 // --- from the server, control stream ---
                 frame = read_control(&mut recv) => {
                     let Some(frame) = frame? else { return Ok(()) };
@@ -241,19 +279,10 @@ impl Session {
                             }
                             anyhow::bail!("{reason}");
                         }
-                        ServerControl::SaveImage { offset, total, bytes } => {
-                            // Straight through to the game, which writes it into the flash
-                            // mirror. No need to assemble it here first; the game is putting
-                            // it back together in the place it will be read from anyway.
-                            if offset == 0 {
-                                tracing::info!(bytes = total, "receiving the stored save");
-                            }
-                            self.link
-                                .send_save_image(
-                                    wire::encode_save_image(offset, total, &bytes),
-                                    offset == 0,
-                                )
-                                .await;
+                        ServerControl::SaveImage { .. } => {
+                            // The save comes on its own stream now; this variant stays so
+                            // an older server is still understood rather than dropped.
+                            tracing::debug!("ignoring a save sent on the control stream");
                         }
                         ServerControl::Superseded { reason } => {
                             tracing::warn!(%reason, "signed in elsewhere; shutting down");
