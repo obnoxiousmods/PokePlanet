@@ -281,6 +281,15 @@ else
 override CFLAGS += -O3
 endif
 
+# ASAN=1 builds the native Linux target with AddressSanitizer and UBSan. This catches
+# out-of-bounds accesses, use-after-free and undefined behaviour at the exact line rather
+# than as a mystery crash later -- the class of bug this codebase is full of.
+# Linux only: it needs the sanitizer runtime, which the mingw cross build has no copy of.
+ifeq ($(ASAN),1)
+override CFLAGS += -fsanitize=address,undefined -fno-omit-frame-pointer
+PLATFORM_INCLUDES += -fsanitize=address,undefined
+endif
+
 $(C_BUILDDIR)/%.o : $(C_SUBDIR)/%.c $$(c_dep)
 	@$(CPP) $(CPPFLAGS) $< -o $(C_BUILDDIR)/$*.i
 ifeq ($(NATIVE_LINUX),1)
