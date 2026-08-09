@@ -107,6 +107,14 @@ pub enum ServerControl {
     /// One slice of the character's stored save, sent at sign-in so the client plays the
     /// server's copy rather than whatever is on this machine.
     SaveImage { offset: u32, total: u32, bytes: Vec<u8> },
+    /// Both players agreed to battle. Sent to each of them.
+    ///
+    /// `link_id` is this player's slot in the battle, and it is the server's job to assign
+    /// it rather than the clients'. The game works out who runs the battle engine from
+    /// GetMultiplayerId, which on this port reads a register nothing ever writes and so
+    /// returns 0 on both machines -- leaving both convinced they are the master. An
+    /// externally assigned id is what makes exactly one of them right.
+    BattleStarting { opponent: PlayerId, opponent_name: String, link_id: u8 },
 }
 
 /// Position report, sent by the client at roughly 10Hz on a datagram.

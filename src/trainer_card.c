@@ -17,6 +17,7 @@
 #include "money.h"
 #include "strings.h"
 #include "string_util.h"
+#include "mmo_text.h"
 #include "trainer_card.h"
 #include "menu_helpers.h"
 #include "gpu_regs.h"
@@ -1009,7 +1010,8 @@ static void PrintNameOnCardFront(void)
     u8 buffer[32];
     u8 *txtPtr;
     txtPtr = StringCopy(buffer, gText_TrainerCardName);
-    StringCopy(txtPtr, sData->trainerCard.playerName);
+    // The card record holds seven characters; show the whole name when signed in.
+    StringCopy(txtPtr, MmoText_PlayerNameOr(sData->trainerCard.playerName));
     ConvertInternationalString(txtPtr, sData->language);
     if (sData->cardType == CARD_TYPE_FRLG)
         AddTextPrinterParameterized3(WIN_CARD_TEXT, FONT_NORMAL, 20, 28, sTrainerCardTextColors, TEXT_SKIP_DRAW, buffer);
@@ -1167,7 +1169,7 @@ static void PrintProfilePhraseOnCard(void)
 
 static void BufferNameForCardBack(void)
 {
-    StringCopy(sData->textPlayersCard, sData->trainerCard.playerName);
+    StringCopy(sData->textPlayersCard, MmoText_PlayerNameOr(sData->trainerCard.playerName));
     ConvertInternationalString(sData->textPlayersCard, sData->language);
     if (sData->cardType != CARD_TYPE_FRLG)
     {

@@ -21,4 +21,8 @@ u8 MmoText_FromAscii(u8 *dest, const char *src, u8 destSize);
 // The save format cannot hold a name this long; this is substituted at display time.
 const u8 *MmoText_PlayerDisplayName(void);
 
+// The display name when signed in, otherwise `fallback`. For screens that print the
+// player's name straight out of a fixed-width record instead of through {PLAYER}.
+const u8 *MmoText_PlayerNameOr(const u8 *fallback);
+
 #endif // GUARD_MMO_TEXT_H

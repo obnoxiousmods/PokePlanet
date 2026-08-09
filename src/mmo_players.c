@@ -22,13 +22,18 @@
 // come close to this, so these cannot collide with a map's own NPCs.
 #define MMO_LOCAL_ID_BASE 200
 
+// How many frames to keep trying a refused step before giving up and placing them where
+// the server says. Long enough for someone to walk out of the way, short enough that a
+// remote player never lingers visibly behind where they really are.
+#define MMO_MAX_STALLED_STEPS 16
+
 struct MmoSlot
 {
     u32 playerId;      // 0 when the slot is free
-    s16 x;             // last position we applied
-    s16 y;
-    u8 facing;
     bool8 spawned;
+    // Consecutive frames a one-tile step has been refused. Deliberately the only position
+    // state kept here: the object event itself is where the sprite actually is.
+    u8 stalledSteps;
 };
 
 static struct MmoSlot sSlots[NET_MAX_REMOTE_PLAYERS];
@@ -154,9 +159,7 @@ static void ApplyRemote(u8 slot, const struct NetRemotePlayer *remote)
             return;
 
         state->spawned = TRUE;
-        state->x = remote->x;
-        state->y = remote->y;
-        state->facing = remote->facing;
+        state->stalledSteps = 0;
         ObjectEventTurn(&gObjectEvents[objectEventId], remote->facing);
         return;
     }
@@ -176,31 +179,48 @@ static void ApplyRemote(u8 slot, const struct NetRemotePlayer *remote)
      && !ObjectEventClearHeldMovementIfFinished(object))
         return;
 
-    dx = remote->x - state->x;
-    dy = remote->y - state->y;
+    // Measure against where the sprite actually is, not against a copy of where it was
+    // last told to go. The engine is what moves it, and a step can be refused -- by a
+    // collision, or by the movement being overridden -- so any private idea of its
+    // position drifts the moment one does not happen. Reading the object back makes every
+    // frame self-correcting instead.
+    dx = remote->x - object->currentCoords.x;
+    dy = remote->y - object->currentCoords.y;
     direction = StepDirection(dx, dy);
 
     if (direction != DIR_NONE)
     {
         // One tile: walk it, so observers see the same animation the owner does.
+        //
+        // ObjectEventSetHeldMovement returns TRUE when it could *not* set the movement.
+        // Reading that as success is what made remote players walk forever: the step
+        // succeeded, the recorded position was left behind, and every later snapshot
+        // measured the same difference again and reissued the same step.
         if (ObjectEventSetHeldMovement(object, GetWalkNormalMovementAction(direction)))
         {
-            state->x = remote->x;
-            state->y = remote->y;
-            state->facing = direction;
+            // Refused, most likely something standing in the way. Give it a few frames to
+            // clear, then put them where the server says rather than sliding further out
+            // of step with everyone else.
+            if (++state->stalledSteps > MMO_MAX_STALLED_STEPS)
+            {
+                MoveObjectEventToMapCoords(object, remote->x, remote->y);
+                state->stalledSteps = 0;
+            }
+        }
+        else
+        {
+            state->stalledSteps = 0;
         }
     }
     else if (dx != 0 || dy != 0)
     {
         // Anything further is a warp, a dropped update, or a doorway. Snap.
         MoveObjectEventToMapCoords(object, remote->x, remote->y);
-        state->x = remote->x;
-        state->y = remote->y;
+        state->stalledSteps = 0;
     }
-    else if (remote->facing != state->facing && remote->facing != DIR_NONE)
+    else if (remote->facing != DIR_NONE && object->facingDirection != remote->facing)
     {
         ObjectEventTurn(object, remote->facing);
-        state->facing = remote->facing;
     }
 }
 

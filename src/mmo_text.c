@@ -77,6 +77,19 @@ const u8 *MmoText_PlayerDisplayName(void)
     return sEncoded;
 }
 
+// The signed-in player's name if there is one, otherwise whatever the caller already had.
+//
+// For the screens that print the player's own name straight out of a fixed-width record
+// rather than through the {PLAYER} placeholder -- the trainer card most visibly. Those
+// records are seven characters wide and cannot hold a longer name, so the substitution
+// happens where the text is drawn, not where it is stored.
+const u8 *MmoText_PlayerNameOr(const u8 *fallback)
+{
+    const u8 *displayName = MmoText_PlayerDisplayName();
+
+    return displayName != NULL ? displayName : fallback;
+}
+
 u8 MmoText_FromAscii(u8 *dest, const char *src, u8 destSize)
 {
     u8 written = 0;

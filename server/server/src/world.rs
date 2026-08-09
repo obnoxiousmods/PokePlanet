@@ -267,11 +267,30 @@ impl World {
             .map(|p| p.name.clone())
             .unwrap_or_default();
         let inviter = players.get(&from).ok_or("They are no longer online.")?;
+        let inviter_name = inviter.name.clone();
         let _ = inviter.control.try_send(ServerControl::BattleInvitationAnswered {
             from: responder,
-            from_name: responder_name,
+            from_name: responder_name.clone(),
             accepted,
         });
+
+        if accepted {
+            // Assign the slots here rather than letting the clients decide. The one who
+            // issued the challenge takes slot 0, which is the slot the game treats as the
+            // master; left to themselves both machines would claim it.
+            let _ = inviter.control.try_send(ServerControl::BattleStarting {
+                opponent: responder,
+                opponent_name: responder_name,
+                link_id: 0,
+            });
+            if let Some(me) = players.get(&responder) {
+                let _ = me.control.try_send(ServerControl::BattleStarting {
+                    opponent: from,
+                    opponent_name: inviter_name,
+                    link_id: 1,
+                });
+            }
+        }
         Ok(())
     }
 
@@ -318,6 +337,57 @@ mod tests {
             },
             rx,
         )
+    }
+
+    #[tokio::test]
+    async fn accepting_gives_each_side_a_different_battle_slot() {
+        let world = World::new();
+        let (a, mut ra) = presence(1, "Ash", 0, 0);
+        let (b, mut rb) = presence(2, "Misty", 1, 0);
+        world.join(1, a).await;
+        world.join(2, b).await;
+
+        world.invite_to_battle(1, 2).await.unwrap();
+        world.answer_battle(2, 1, true).await.unwrap();
+
+        let slot_of = |rx: &mut mpsc::Receiver<ServerControl>| {
+            let mut found = None;
+            while let Ok(msg) = rx.try_recv() {
+                if let ServerControl::BattleStarting { link_id, .. } = msg {
+                    found = Some(link_id);
+                }
+            }
+            found
+        };
+
+        let challenger = slot_of(&mut ra).expect("the challenger was not told to battle");
+        let accepter = slot_of(&mut rb).expect("the accepter was not told to battle");
+
+        // The whole point: exactly one of them runs the battle engine.
+        assert_eq!(challenger, 0, "the challenger should hold the master slot");
+        assert_ne!(
+            challenger, accepter,
+            "both sides were given the same slot, so both would claim to be master"
+        );
+    }
+
+    #[tokio::test]
+    async fn declining_starts_no_battle() {
+        let world = World::new();
+        let (a, mut ra) = presence(1, "Ash", 0, 0);
+        let (b, _rb) = presence(2, "Misty", 1, 0);
+        world.join(1, a).await;
+        world.join(2, b).await;
+
+        world.invite_to_battle(1, 2).await.unwrap();
+        world.answer_battle(2, 1, false).await.unwrap();
+
+        while let Ok(msg) = ra.try_recv() {
+            assert!(
+                !matches!(msg, ServerControl::BattleStarting { .. }),
+                "a declined challenge still started a battle"
+            );
+        }
     }
 
     #[tokio::test]
