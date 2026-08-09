@@ -1,5 +1,6 @@
 #include "global.h"
 #include "string_util.h"
+#include "mmo_text.h"
 #include "text.h"
 #include "strings.h"
 
@@ -427,6 +428,15 @@ static const u8 *ExpandPlaceholder_UnknownStringVar(void)
 
 static const u8 *ExpandPlaceholder_PlayerName(void)
 {
+    // Signed in, so show the name the account actually has rather than the seven characters
+    // the save format can hold. Every {PLAYER} in the game passes through here, which is why
+    // the long name lives at the point of display instead of in the save -- see
+    // PLAYER_NAME_LENGTH.
+    const u8 *displayName = MmoText_PlayerDisplayName();
+
+    if (displayName != NULL)
+        return displayName;
+
     return gSaveBlock2Ptr->playerName;
 }
 

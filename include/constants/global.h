@@ -94,6 +94,18 @@
 #define ITEM_NAME_LENGTH 14
 #define POKEMON_NAME_LENGTH 10
 #define POKEMON_NAME_BUFFER_SIZE max(20, POKEMON_NAME_LENGTH + 1) // Frequently used buffer size. Larger than necessary
+// The width of a trainer name as the save format stores it. Deliberately still 7.
+//
+// Widening this looks like the way to show a full Discord name, but it is the width of a
+// *record*, not of a name: it sizes the player's own name and every copy other systems keep
+// of one -- Frontier tower records, apprentices, mail, secret bases, storyteller tales, link
+// players. Raising it to 16 pushes SaveBlock1, SaveBlock2 and the recorded-battle sector
+// past their sector budgets, which the static assertions in save.c catch, and it would
+// change the on-disk format of a dozen unrelated subsystems.
+//
+// The display name is a presentation concern instead: see MmoText_PlayerDisplayName, which
+// the {PLAYER} placeholder and the multiplayer screens use. Text expands into gStringVar4,
+// which is large, so a long name is safe there in a way it is not in a save record.
 #define PLAYER_NAME_LENGTH 7
 #define MAIL_WORDS_COUNT 9
 #define EASY_CHAT_BATTLE_WORDS_COUNT 6

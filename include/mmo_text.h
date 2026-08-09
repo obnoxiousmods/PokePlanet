@@ -17,4 +17,8 @@
 // Returns the number of characters written, excluding the terminator.
 u8 MmoText_FromAscii(u8 *dest, const char *src, u8 destSize);
 
+// The signed-in player's full-length name in the game's charmap, or NULL when offline.
+// The save format cannot hold a name this long; this is substituted at display time.
+const u8 *MmoText_PlayerDisplayName(void);
+
 #endif // GUARD_MMO_TEXT_H

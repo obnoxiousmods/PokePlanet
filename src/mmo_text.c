@@ -6,6 +6,7 @@
 
 #include "global.h"
 #include "mmo_text.h"
+#include "net_client.h"
 #include "constants/characters.h"
 
 static u8 EncodeChar(char c)
@@ -32,6 +33,48 @@ static u8 EncodeChar(char c)
     // arbitrary charmap bytes would be visual noise.
     default:   return CHAR_SPACE;
     }
+}
+
+// The signed-in player's name at full length, in the game's charmap, or NULL when playing
+// offline.
+//
+// The save format stores a trainer name seven characters wide and cannot be widened without
+// changing the layout of a dozen unrelated subsystems -- see PLAYER_NAME_LENGTH. So the long
+// name is never stored; it is substituted at the point of display, where the destination is
+// gStringVar4 and length costs nothing.
+//
+// Rebuilt whenever the name changes rather than on every call, since {PLAYER} is expanded
+// for practically every line of dialogue in the game.
+const u8 *MmoText_PlayerDisplayName(void)
+{
+    static u8 sEncoded[NET_NAME_LEN + 1];
+    static char sCachedFrom[NET_NAME_LEN];
+    const char *name = Net_GetPlayerName();
+    u8 i;
+
+    if (name == NULL || name[0] == '\0')
+        return NULL;
+
+    // Re-encode only when the name actually changed, since {PLAYER} is expanded for
+    // practically every line of dialogue in the game.
+    for (i = 0; i < NET_NAME_LEN - 1; i++)
+    {
+        if (sCachedFrom[i] != name[i])
+            break;
+        if (name[i] == '\0')
+            return sEncoded; // Matched all the way to the terminator.
+    }
+
+    if (i < NET_NAME_LEN - 1)
+    {
+        u8 j;
+
+        for (j = 0; j < NET_NAME_LEN - 1 && name[j] != '\0'; j++)
+            sCachedFrom[j] = name[j];
+        sCachedFrom[j] = '\0';
+        MmoText_FromAscii(sEncoded, sCachedFrom, sizeof(sEncoded));
+    }
+    return sEncoded;
 }
 
 u8 MmoText_FromAscii(u8 *dest, const char *src, u8 destSize)
