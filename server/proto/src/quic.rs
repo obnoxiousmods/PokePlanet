@@ -34,6 +34,10 @@ pub enum ClientControl {
     /// The player walked onto a different map; the server rescopes their snapshot feed.
     EnterMap { map: MapId },
     Chat { target: ChatTarget, text: String },
+    /// Ask another player for a battle. They answer with `RespondToBattle`.
+    RequestBattle { target: PlayerId },
+    /// Answer an outstanding invitation.
+    RespondToBattle { from: PlayerId, accepted: bool },
     Goodbye,
 }
 
@@ -79,6 +83,12 @@ pub enum ServerControl {
     PlayerJoined { player_id: PlayerId, name: String, graphics_id: u8 },
     PlayerLeft { player_id: PlayerId },
     Chat { from: String, target: ChatTarget, text: String },
+    /// Someone wants to battle you. Answer with `ClientControl::RespondToBattle`.
+    BattleInvitation { from: PlayerId, from_name: String },
+    /// The outcome of an invitation you sent.
+    BattleInvitationAnswered { from: PlayerId, from_name: String, accepted: bool },
+    /// An invitation could not be delivered -- they left, or are already busy.
+    BattleInvitationFailed { reason: String },
     /// Terminal error; the sidecar drops to offline and reports `reason` to the game.
     Rejected { reason: String },
 }

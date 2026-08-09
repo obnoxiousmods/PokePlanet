@@ -184,6 +184,18 @@ impl Session {
                             };
                             self.link.send(wire::encode_chat(kind, &from, &text)).await;
                         }
+                        // Battle invitations are relayed to the game once the client-side
+                        // UI exists; until then they are logged rather than dropped
+                        // silently, so the server flow can be exercised end to end.
+                        ServerControl::BattleInvitation { from, from_name } => {
+                            tracing::info!(from, %from_name, "battle invitation received");
+                        }
+                        ServerControl::BattleInvitationAnswered { from_name, accepted, .. } => {
+                            tracing::info!(%from_name, accepted, "battle invitation answered");
+                        }
+                        ServerControl::BattleInvitationFailed { reason } => {
+                            tracing::info!(%reason, "battle invitation failed");
+                        }
                         ServerControl::Rejected { reason } => {
                             tracing::error!(%reason, "server rejected this client");
                             // A stale token is the common cause; drop it so the next

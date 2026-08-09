@@ -250,6 +250,7 @@ async fn run_session(
             player_id,
             Presence {
                 session,
+                pending_invite: None,
                 character_id: character.id,
                 name: name.clone(),
                 graphics_id: character.graphics_id,
@@ -312,6 +313,22 @@ async fn control_loop(
                 if let Some(mut pose) = server.world.pose_of(player_id).await {
                     pose.map = map;
                     server.world.update_pose(player_id, session, pose).await;
+                }
+            }
+            ClientControl::RequestBattle { target } => {
+                if let Err(reason) = server.world.invite_to_battle(player_id, target).await {
+                    server
+                        .world
+                        .tell(player_id, ServerControl::BattleInvitationFailed { reason })
+                        .await;
+                }
+            }
+            ClientControl::RespondToBattle { from, accepted } => {
+                if let Err(reason) = server.world.answer_battle(player_id, from, accepted).await {
+                    server
+                        .world
+                        .tell(player_id, ServerControl::BattleInvitationFailed { reason })
+                        .await;
                 }
             }
             ClientControl::Goodbye => break,

@@ -30,6 +30,8 @@ pub struct Presence {
     pub pose: Pose,
     /// Control-stream sink for this connection.
     pub control: mpsc::Sender<ServerControl>,
+    /// Who has challenged this player and is awaiting an answer.
+    pub pending_invite: Option<PlayerId>,
 }
 
 #[derive(Default)]
@@ -187,6 +189,85 @@ impl World {
         }
     }
 
+    /// Offer a battle to another player.
+    ///
+    /// Returns Err with a player-facing reason when it cannot be delivered. Invitations
+    /// are refused across maps because the two avatars must be standing together for the
+    /// battle to make sense in the overworld, and refused when either side already has one
+    /// outstanding so a player cannot be spammed into a battle they did not choose.
+    pub async fn invite_to_battle(
+        &self,
+        from: PlayerId,
+        target: PlayerId,
+    ) -> Result<(), String> {
+        if from == target {
+            return Err("You can't battle yourself.".into());
+        }
+        let players = self.players.read().await;
+        let inviter = players.get(&from).ok_or("You are not online.")?;
+        let invitee = players.get(&target).ok_or("They are no longer online.")?;
+
+        if inviter.pose.map != invitee.pose.map {
+            return Err("They have left this area.".into());
+        }
+        if invitee.pending_invite.is_some() {
+            return Err("They are already being challenged.".into());
+        }
+
+        invitee
+            .control
+            .try_send(ServerControl::BattleInvitation {
+                from,
+                from_name: inviter.name.clone(),
+            })
+            .map_err(|_| "They aren't responding.".to_string())?;
+        drop(players);
+
+        if let Some(p) = self.players.write().await.get_mut(&target) {
+            p.pending_invite = Some(from);
+        }
+        Ok(())
+    }
+
+    /// Answer an invitation. Returns Err if it is no longer outstanding.
+    pub async fn answer_battle(
+        &self,
+        responder: PlayerId,
+        from: PlayerId,
+        accepted: bool,
+    ) -> Result<(), String> {
+        {
+            let mut players = self.players.write().await;
+            let me = players.get_mut(&responder).ok_or("You are not online.")?;
+            // Only clear an invitation that is actually the one being answered, so a
+            // stale reply cannot cancel a newer challenge from someone else.
+            if me.pending_invite != Some(from) {
+                return Err("That invitation has expired.".into());
+            }
+            me.pending_invite = None;
+        }
+
+        let players = self.players.read().await;
+        let responder_name = players
+            .get(&responder)
+            .map(|p| p.name.clone())
+            .unwrap_or_default();
+        let inviter = players.get(&from).ok_or("They are no longer online.")?;
+        let _ = inviter.control.try_send(ServerControl::BattleInvitationAnswered {
+            from: responder,
+            from_name: responder_name,
+            accepted,
+        });
+        Ok(())
+    }
+
+    /// Send one control message to a single player.
+    pub async fn tell(&self, id: PlayerId, msg: ServerControl) {
+        if let Some(p) = self.players.read().await.get(&id) {
+            let _ = p.control.try_send(msg);
+        }
+    }
+
     /// Deliver a message that originated outside the game, e.g. from IRC.
     pub async fn inject_chat(&self, from: &str, text: &str) {
         let msg = ServerControl::Chat {
@@ -219,6 +300,7 @@ mod tests {
                     ..Default::default()
                 },
                 control: tx,
+                pending_invite: None,
             },
             rx,
         )
@@ -342,6 +424,80 @@ mod tests {
         assert_eq!(world.online_count().await, 1, "live session must survive");
         assert!(world.session_is_current(1, live_session).await);
         assert!(!world.session_is_current(1, stale_session).await);
+    }
+
+    #[tokio::test]
+    async fn a_battle_invitation_reaches_the_target_and_can_be_accepted() {
+        let world = World::new();
+        let (a, mut ra) = presence(1, "Ash", 0, 0);
+        let (b, mut rb) = presence(2, "Misty", 1, 0);
+        world.join(1, a).await;
+        world.join(2, b).await;
+        while ra.try_recv().is_ok() {}
+        while rb.try_recv().is_ok() {}
+
+        world.invite_to_battle(1, 2).await.unwrap();
+        match rb.try_recv() {
+            Ok(ServerControl::BattleInvitation { from, from_name }) => {
+                assert_eq!(from, 1);
+                assert_eq!(from_name, "Ash");
+            }
+            other => panic!("expected BattleInvitation, got {other:?}"),
+        }
+
+        world.answer_battle(2, 1, true).await.unwrap();
+        match ra.try_recv() {
+            Ok(ServerControl::BattleInvitationAnswered { accepted, from_name, .. }) => {
+                assert!(accepted);
+                assert_eq!(from_name, "Misty");
+            }
+            other => panic!("expected BattleInvitationAnswered, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn battle_invitations_are_refused_across_maps_and_to_yourself() {
+        let world = World::new();
+        let (a, _ra) = presence(1, "Ash", 0, 0);
+        let (mut b, _rb) = presence(2, "Misty", 0, 0);
+        b.pose.map = MapId::new(9, 9);
+        world.join(1, a).await;
+        world.join(2, b).await;
+
+        assert!(world.invite_to_battle(1, 1).await.is_err(), "self-challenge");
+        assert!(world.invite_to_battle(1, 2).await.is_err(), "different map");
+        assert!(world.invite_to_battle(1, 99).await.is_err(), "not online");
+    }
+
+    #[tokio::test]
+    async fn a_player_cannot_be_challenged_twice_at_once() {
+        let world = World::new();
+        let (a, _ra) = presence(1, "Ash", 0, 0);
+        let (b, _rb) = presence(2, "Misty", 1, 0);
+        let (c, _rc) = presence(3, "Brock", 2, 0);
+        world.join(1, a).await;
+        world.join(2, b).await;
+        world.join(3, c).await;
+
+        world.invite_to_battle(1, 2).await.unwrap();
+        assert!(
+            world.invite_to_battle(3, 2).await.is_err(),
+            "a second challenger must be refused while one is outstanding"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_stale_answer_cannot_cancel_a_newer_challenge() {
+        let world = World::new();
+        let (a, _ra) = presence(1, "Ash", 0, 0);
+        let (b, _rb) = presence(2, "Misty", 1, 0);
+        world.join(1, a).await;
+        world.join(2, b).await;
+
+        world.invite_to_battle(1, 2).await.unwrap();
+        // Answering an invitation that was never sent must not clear the real one.
+        assert!(world.answer_battle(2, 99, true).await.is_err());
+        assert!(world.answer_battle(2, 1, true).await.is_ok(), "real one survives");
     }
 
     #[tokio::test]
