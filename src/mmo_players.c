@@ -12,7 +12,9 @@
 #include "event_object_movement.h"
 #include "field_player_avatar.h"
 #include "mmo_players.h"
+#include "mmo_text.h"
 #include "net_client.h"
+#include "string_util.h"
 #include "constants/event_object_movement.h"
 
 // Local IDs for remote players. Real maps number their object events from 1 and never
@@ -72,16 +74,39 @@ static struct ObjectEvent *FindSlotObject(u8 slot)
 {
     u8 objectEventId;
 
-    if (!TryGetObjectEventIdByLocalIdAndMap(LocalIdForSlot(slot), sCurrentMapNum,
-                                            sCurrentMapGroup, &objectEventId))
+    // Note the inverted convention: TryGetObjectEventIdByLocalIdAndMap returns TRUE when
+    // the object was NOT found. Reading it the other way round made every spawned player
+    // look missing, so the next frame tried to spawn them again and hit the duplicate
+    // localId check forever.
+    if (TryGetObjectEventIdByLocalIdAndMap(LocalIdForSlot(slot), sCurrentMapNum,
+                                           sCurrentMapGroup, &objectEventId))
         return NULL;
     return &gObjectEvents[objectEventId];
 }
 
 static void DespawnSlot(u8 slot)
 {
-    if (sSlots[slot].spawned)
-        RemoveObjectEventByLocalIdAndMap(LocalIdForSlot(slot), sCurrentMapNum, sCurrentMapGroup);
+    struct ObjectEvent *object = sSlots[slot].spawned ? FindSlotObject(slot) : NULL;
+
+    if (object != NULL)
+    {
+        // Deliberately not RemoveObjectEventByLocalIdAndMap: that calls
+        // FlagSet(GetObjectEventFlagIdByObjectEventId(...)), and the template built by
+        // SpawnSpecialObjectEventParameterized never initialises flagId, so it would set
+        // an arbitrary story flag from stack garbage. Tear the sprite down directly.
+        //
+        // spriteId is only meaningful while the object is active and can be MAX_SPRITES
+        // if creation failed, so it must be range checked before indexing gSprites.
+        if (object->active && object->spriteId < MAX_SPRITES)
+        {
+            struct SpriteFrameImage image;
+
+            image.size = GetObjectEventGraphicsInfo(object->graphicsId)->size;
+            gSprites[object->spriteId].images = &image;
+            DestroySprite(&gSprites[object->spriteId]);
+        }
+        object->active = FALSE;
+    }
     sSlots[slot].playerId = 0;
     sSlots[slot].spawned = FALSE;
 }
@@ -141,9 +166,21 @@ static void ApplyRemote(u8 slot, const struct NetRemotePlayer *remote)
 
         if (objectEventId == OBJECT_EVENTS_COUNT)
         {
-            MmoDebug("spawn FAILED slot=%u gfx=%u at %d,%d", slot,
-                     remote->graphicsId, remote->x, remote->y);
-            return; // No free object event slot this frame; try again next frame.
+            u8 activeObjects = 0;
+            u8 activeSprites = 0;
+            u8 k;
+
+            for (k = 0; k < OBJECT_EVENTS_COUNT; k++)
+                if (gObjectEvents[k].active)
+                    activeObjects++;
+            for (k = 0; k < MAX_SPRITES; k++)
+                if (gSprites[k].inUse)
+                    activeSprites++;
+
+            MmoDebug("spawn FAILED slot=%u gfx=%u at %d,%d objs=%u/%u sprites=%u/%u",
+                     slot, remote->graphicsId, remote->x, remote->y,
+                     activeObjects, OBJECT_EVENTS_COUNT, activeSprites, MAX_SPRITES);
+            return; // Try again next frame.
         }
         MmoDebug("spawned slot=%u obj=%u gfx=%u at %d,%d", slot, objectEventId,
                  remote->graphicsId, remote->x, remote->y);
@@ -197,6 +234,47 @@ static void ApplyRemote(u8 slot, const struct NetRemotePlayer *remote)
         ObjectEventTurn(object, remote->facing);
         state->facing = remote->facing;
     }
+}
+
+// Names of the players currently occupying each slot, kept so an interaction can address
+// the player by name without another round trip.
+static char sSlotNames[NET_MAX_REMOTE_PLAYERS][NET_NAME_LEN];
+
+bool8 MmoPlayers_IsRemoteObject(u8 objectEventId)
+{
+    if (objectEventId >= OBJECT_EVENTS_COUNT)
+        return FALSE;
+    return gObjectEvents[objectEventId].localId >= MMO_LOCAL_ID_BASE
+        && gObjectEvents[objectEventId].localId < MMO_LOCAL_ID_BASE + NET_MAX_REMOTE_PLAYERS;
+}
+
+const char *MmoPlayers_GetRemoteName(u8 objectEventId)
+{
+    u8 slot;
+
+    if (!MmoPlayers_IsRemoteObject(objectEventId))
+        return NULL;
+    slot = gObjectEvents[objectEventId].localId - MMO_LOCAL_ID_BASE;
+    if (sSlots[slot].playerId == 0)
+        return NULL;
+    return sSlotNames[slot];
+}
+
+const u8 *MmoPlayers_GetInteractionScript(u8 objectEventId)
+{
+    const char *name = MmoPlayers_GetRemoteName(objectEventId);
+    u8 encoded[NET_NAME_LEN + 1];
+
+    // Publish the name so the battle-request prompt can address them directly once that
+    // script exists. Returning NULL makes talking to another player a no-op for now,
+    // which is the correct behaviour until the request flow is built -- and unlike the
+    // engine's template lookup, it cannot crash.
+    if (name != NULL)
+    {
+        MmoText_FromAscii(encoded, name, sizeof(encoded));
+        StringCopy(gStringVar1, encoded);
+    }
+    return NULL;
 }
 
 void MmoPlayers_Update(void)
@@ -266,6 +344,8 @@ void MmoPlayers_Update(void)
         }
 
         slotSeen[slot] = TRUE;
+        memcpy(sSlotNames[slot], remote->name, NET_NAME_LEN);
+        sSlotNames[slot][NET_NAME_LEN - 1] = '\0';
         ApplyRemote(slot, remote);
     }
 
