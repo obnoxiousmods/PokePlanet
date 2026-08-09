@@ -66,6 +66,7 @@
 #include "constants/songs.h"
 #include "constants/trainer_hill.h"
 #include "constants/weather.h"
+#include "mmo_autosave.h"
 #include "mmo_chat.h"
 #include "mmo_players.h"
 
@@ -1480,6 +1481,7 @@ static void OverworldBasic(void)
     // Before AnimateSprites, so a remote player spawned or moved this frame is animated
     // in the same frame rather than lagging one behind.
     MmoPlayers_Update();
+    MmoAutosave_Update();
     MmoChat_Update();
     AnimateSprites();
     CameraUpdate();

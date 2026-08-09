@@ -1,5 +1,6 @@
 #include "global.h"
 #include "event_data.h"
+#include "mmo_autosave.h"
 #include "pokedex.h"
 
 #define SPECIAL_FLAGS_SIZE  (NUM_SPECIAL_FLAGS / 8)  // 8 flags per byte
@@ -185,6 +186,10 @@ bool8 VarSet(u16 id, u16 value)
     if (!ptr)
         return FALSE;
     *ptr = value;
+    // Script temporaries live in gSpecialVars and are not saved, so they are not
+    // worth writing 128KB over.
+    if (id < SPECIAL_VARS_START)
+        MmoAutosave_NoteChange();
     return TRUE;
 }
 
@@ -207,7 +212,13 @@ u8 FlagSet(u16 id)
 {
     u8 *ptr = GetFlagPointer(id);
     if (ptr)
+    {
         *ptr |= 1 << (id & 7);
+        // Story progress. Only the saved flags matter; the special ones above
+        // SPECIAL_FLAGS_START live in EWRAM and are never written out.
+        if (id < SPECIAL_FLAGS_START)
+            MmoAutosave_NoteChange();
+    }
     return 0;
 }
 
@@ -215,7 +226,11 @@ u8 FlagClear(u16 id)
 {
     u8 *ptr = GetFlagPointer(id);
     if (ptr)
+    {
         *ptr &= ~(1 << (id & 7));
+        if (id < SPECIAL_FLAGS_START)
+            MmoAutosave_NoteChange();
+    }
     return 0;
 }
 
