@@ -181,7 +181,19 @@ static void ApplyCorrection(void)
     if (!player->active)
         return;
 
-    MoveObjectEventToMapCoords(player, correction.x, correction.y);
+    // Deliberately not moved.
+    //
+    // MoveObjectEventToMapCoords works for remote players because they are ordinary object
+    // events. The player is not: the camera is a separate object tied to them, and moving
+    // the avatar out from under it leaves the two disagreeing -- the map scrolls on its own
+    // and the scenery slides past a player who is standing still. Warping properly is a
+    // whole field-control sequence, not a coordinate assignment.
+    //
+    // Refusing the step server-side is what actually matters: the server keeps its own
+    // position, so everyone else sees the cheat fail even if the cheater's own screen lies
+    // to them. Yanking their avatar is cosmetic by comparison and not worth breaking
+    // rendering for honest players who hit a correction for any other reason.
+    (void)correction;
 }
 
 // Bring one slot in line with what the server says about that player.

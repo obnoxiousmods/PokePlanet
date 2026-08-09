@@ -32,6 +32,14 @@ pub struct Presence {
     pub control: mpsc::Sender<ServerControl>,
     /// Who has challenged this player and is awaiting an answer.
     pub pending_invite: Option<PlayerId>,
+    /// The next reported position is taken as given rather than checked.
+    ///
+    /// True on joining and after a map change, because a warp legitimately puts the
+    /// player anywhere on the new map: a door leads to a specific tile, not to the one
+    /// adjacent to where they were standing. Without this, walking into a building is
+    /// a map change followed by a report from wherever the door leads, which looks
+    /// exactly like a teleport and gets refused.
+    pub position_unknown: bool,
 }
 
 #[derive(Default)]
@@ -146,18 +154,32 @@ impl World {
             return None;
         }
 
+        // Nothing to continue from yet, so there is nothing to check against.
+        if p.position_unknown {
+            // Read the old map before overwriting it, or the reindex below moves the player
+            // from the map they are already on to itself and leaves them listed on the one
+            // they left -- a ghost standing somewhere nobody is.
+            let was = p.pose.map;
+            p.position_unknown = false;
+            p.pose = pose;
+            drop(players);
+            if was != pose.map {
+                self.reindex(id, was, pose.map).await;
+            }
+            return Some(pose);
+        }
+
         // A map change is the one legitimate way to appear somewhere unrelated. Warps are
         // still the client's call for now, so this trusts it; once warps are server-side
         // this becomes the check that they were adjacent to a real door.
         if pose.map != p.pose.map {
             let was = p.pose.map;
             p.pose = pose;
+            // The tile they arrive on is decided by the door, and the report carrying it
+            // may not be this one, so take the next report as given too.
+            p.position_unknown = true;
             drop(players);
-            let mut by_map = self.by_map.write().await;
-            if let Some(set) = by_map.get_mut(&was) {
-                set.remove(&id);
-            }
-            by_map.entry(pose.map).or_default().insert(id);
+            self.reindex(id, was, pose.map).await;
             return Some(pose);
         }
 
@@ -178,6 +200,15 @@ impl World {
             // Refused. Hand back where they actually are so the client can put them there.
             Some(p.pose)
         }
+    }
+
+    /// Move a player between the per-map sets.
+    async fn reindex(&self, id: PlayerId, from: MapId, to: MapId) {
+        let mut by_map = self.by_map.write().await;
+        if let Some(set) = by_map.get_mut(&from) {
+            set.remove(&id);
+        }
+        by_map.entry(to).or_default().insert(id);
     }
 
     /// True while this session is still the live one for its character.
@@ -418,9 +449,41 @@ mod tests {
                 },
                 control: tx,
                 pending_invite: None,
+                position_unknown: true,
             },
             rx,
         )
+    }
+
+    #[tokio::test]
+    async fn arriving_through_a_door_is_not_mistaken_for_a_teleport() {
+        let world = World::new();
+        let (a, _ra) = presence(1, "Ash", 5, 5);
+        world.join(1, a).await;
+        let session = world.players.read().await[&1].session;
+
+        // Settle in: the join grace is used up by the first report.
+        let start = Pose { map: MapId::new(1, 4), x: 5, y: 5, ..Default::default() };
+        world.update_pose(1, session, start).await;
+
+        // Walk into a building. The map changes, and the tile arrived on is wherever the
+        // door leads -- nowhere near the tile outside it.
+        let doorway = Pose { map: MapId::new(9, 1), x: 4, y: 8, ..Default::default() };
+        assert_eq!(world.update_pose(1, session, doorway).await, Some(doorway));
+
+        // The report that actually carries the arrival tile can be the next one, and it
+        // must not be read as a teleport across the new map.
+        let inside = Pose { map: MapId::new(9, 1), x: 12, y: 2, ..Default::default() };
+        assert_eq!(
+            world.update_pose(1, session, inside).await,
+            Some(inside),
+            "arriving through a door was refused as a teleport"
+        );
+
+        // Once settled, the rules apply again on the new map.
+        let jump = Pose { map: MapId::new(9, 1), x: 40, y: 40, ..Default::default() };
+        let answer = world.update_pose(1, session, jump).await.unwrap();
+        assert_ne!(answer, jump, "a teleport inside the building was accepted");
     }
 
     #[tokio::test]
@@ -481,6 +544,11 @@ mod tests {
         let (a, _ra) = presence(1, "Ash", 5, 5);
         world.join(1, a).await;
         let session = world.players.read().await[&1].session;
+
+        // Settle first: the report right after joining is taken as given, because that is
+        // the client telling the server where its save puts it.
+        let start = Pose { map: MapId::new(1, 4), x: 5, y: 5, ..Default::default() };
+        world.update_pose(1, session, start).await;
 
         // The player avatar cannot move diagonally, so one report covering both axes is
         // two steps' worth of distance in one tick.

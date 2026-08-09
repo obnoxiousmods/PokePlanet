@@ -291,6 +291,7 @@ async fn run_session(
             Presence {
                 session,
                 pending_invite: None,
+                position_unknown: true,
                 character_id: character.id,
                 name: name.clone(),
                 graphics_id: character.graphics_id,

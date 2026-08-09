@@ -3,6 +3,7 @@
 #include "battle_anim.h"
 #include "battle_controllers.h"
 #include "battle_message.h"
+#include "mmo_text.h"
 #include "battle_setup.h"
 #include "battle_tower.h"
 #include "data.h"
@@ -2595,7 +2596,9 @@ u32 BattleStringExpandPlaceholders(const u8 *src, u8 *dst)
                 if (gBattleTypeFlags & BATTLE_TYPE_RECORDED)
                     toCpy = gLinkPlayers[0].name;
                 else
-                    toCpy = gSaveBlock2Ptr->playerName;
+                    // Show the whole name, as {PLAYER} does elsewhere. A replay keeps
+                    // the name it was recorded with, which belongs to whoever played it.
+                    toCpy = MmoText_PlayerNameOr(gSaveBlock2Ptr->playerName);
                 break;
             case B_TXT_TRAINER1_LOSE_TEXT: // trainerA lose text
                 if (gBattleTypeFlags & BATTLE_TYPE_FRONTIER)
