@@ -26,8 +26,8 @@ sleep 4
 
 export SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
 # title -> gate (already signed in, falls through) -> CONTINUE -> walk down -> A -> YES
-export POKEPLANET_AUTOKEYS=enter,a,a,down,right,a,a,a
-export POKEPLANET_AUTOKEY_FRAMES=90
+export POKEPLANET_AUTOKEYS=enter,enter,enter,enter,enter,enter,enter,enter,enter,enter,enter,enter,a,a,a,down,right,a,a,a,a
+export POKEPLANET_AUTOKEY_FRAMES=110
 timeout 150 ./pokeemerald > /tmp/game-invite.log 2>&1 || true
 
 kill $GHOST $SIDE 2>/dev/null || true
