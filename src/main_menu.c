@@ -37,6 +37,8 @@
 #include "title_screen.h"
 #include "window.h"
 #include "mystery_gift_menu.h"
+#include "net_client.h"
+#include "mmo_text.h"
 
 /*
  * Main menu state machine
@@ -176,6 +178,7 @@ static u8 sBirchSpeechMainTaskId;
 // Static ROM declarations
 
 static u32 InitMainMenu(bool8);
+static void Task_PokePlanetConnect(u8);
 static void Task_MainMenuCheckSaveFile(u8);
 static void Task_MainMenuCheckBattery(u8);
 static void Task_WaitForSaveFileErrorWindow(u8);
@@ -608,10 +611,140 @@ static u32 InitMainMenu(bool8 returningFromOptionsMenu)
     SetGpuReg(REG_OFFSET_DISPCNT, DISPCNT_WIN0_ON | DISPCNT_OBJ_ON | DISPCNT_OBJ_1D_MAP);
     ShowBg(0);
     HideBg(1);
-    CreateTask(Task_MainMenuCheckSaveFile, 0);
+    // Sign in before anything else: the account decides which save the player resumes.
+    CreateTask(Task_PokePlanetConnect, 0);
 
     return 0;
 }
+
+// ---------------------------------------------------------------------------
+// PokePlanet sign-in gate
+//
+// Shown before the ordinary main menu. It waits for the network sidecar to report an
+// authentication state and reflects it to the player. Signing in is not mandatory --
+// B drops straight through to offline single-player -- because a network outage must
+// never stop someone playing.
+// ---------------------------------------------------------------------------
+
+static const u8 sText_PokePlanetConnecting[] = _("Connecting to PokePlanet...\nPress B to play offline.");
+static const u8 sText_PokePlanetSignIn[] = _("Sign in with Discord in your browser.\nA: open again   B: play offline");
+static const u8 sText_PokePlanetOffline[] = _("Can't reach PokePlanet.\nA: try again   B: play offline");
+static const u8 sText_PokePlanetSignedIn[] = _("Signed in as {STR_VAR_1}!");
+
+#define tLastAuthState data[2]
+#define tHoldTimer     data[3]
+#define tHasDrawn      data[4]
+
+// How long the "signed in" confirmation stays up before the menu appears.
+#define SIGNED_IN_HOLD_FRAMES 45
+
+static void ShowAuthMessage(u8 authState)
+{
+    switch (authState)
+    {
+    case NET_AUTH_ONLINE:
+    {
+        u8 name[NET_NAME_LEN + 1];
+        MmoText_FromAscii(name, Net_GetPlayerName(), sizeof(name));
+        StringCopy(gStringVar1, name);
+        StringExpandPlaceholders(gStringVar4, sText_PokePlanetSignedIn);
+        CreateMainMenuErrorWindow(gStringVar4);
+        break;
+    }
+    case NET_AUTH_NEEDS_LOGIN:
+    case NET_AUTH_AWAITING_BROWSER:
+        CreateMainMenuErrorWindow(sText_PokePlanetSignIn);
+        break;
+    case NET_AUTH_CONNECTING:
+        CreateMainMenuErrorWindow(sText_PokePlanetConnecting);
+        break;
+    default:
+        CreateMainMenuErrorWindow(sText_PokePlanetOffline);
+        break;
+    }
+}
+
+// Leave the gate and continue into the normal save-file checks.
+static void EnterMainMenu(u8 taskId)
+{
+    s16 *data = gTasks[taskId].data;
+
+    ClearWindowTilemap(7);
+    ClearMainMenuWindowTilemap(&sWindowTemplates_MainMenu[7]);
+    SetGpuReg(REG_OFFSET_WIN0H, 0);
+    SetGpuReg(REG_OFFSET_WIN0V, 0);
+
+    // The menu tasks reuse this task's data slots, so leave them clean.
+    tLastAuthState = 0;
+    tHoldTimer = 0;
+    tHasDrawn = 0;
+
+    gTasks[taskId].func = Task_MainMenuCheckSaveFile;
+}
+
+static void Task_PokePlanetConnect(u8 taskId)
+{
+    s16 *data = gTasks[taskId].data;
+    u8 authState;
+
+    if (gPaletteFade.active)
+        return;
+
+    if (!tHasDrawn)
+    {
+        // The same window and blending setup the vanilla first task performs. Without
+        // it WIN0 masks everything and the message box never becomes visible.
+        SetGpuReg(REG_OFFSET_WIN0H, 0);
+        SetGpuReg(REG_OFFSET_WIN0V, 0);
+        SetGpuReg(REG_OFFSET_WININ, WININ_WIN0_BG0 | WININ_WIN0_OBJ);
+        SetGpuReg(REG_OFFSET_WINOUT, WINOUT_WIN01_BG0 | WINOUT_WIN01_OBJ | WINOUT_WIN01_CLR);
+        SetGpuReg(REG_OFFSET_BLDCNT, BLDCNT_EFFECT_DARKEN | BLDCNT_TGT1_BG0);
+        SetGpuReg(REG_OFFSET_BLDALPHA, 0);
+        SetGpuReg(REG_OFFSET_BLDY, 7);
+    }
+
+    // Text is drawn incrementally; without this the box stays empty.
+    RunTextPrinters();
+
+    authState = Net_GetAuthState();
+
+    // Task data starts zeroed, which is a valid auth state, so track "drawn" separately
+    // rather than relying on a sentinel value.
+    if (tHoldTimer == 0 && (!tHasDrawn || (u8)tLastAuthState != authState))
+    {
+        tHasDrawn = TRUE;
+        tLastAuthState = authState;
+        ShowAuthMessage(authState);
+        if (authState == NET_AUTH_ONLINE)
+            tHoldTimer = 1; // start the confirmation hold
+    }
+
+    if (tHoldTimer != 0)
+    {
+        // Let the player read "Signed in as ..." before the menu replaces it.
+        if (++tHoldTimer > SIGNED_IN_HOLD_FRAMES)
+            EnterMainMenu(taskId);
+        return;
+    }
+
+    if (JOY_NEW(B_BUTTON))
+    {
+        // Offline play. The sidecar keeps trying in the background, so a late
+        // connection still lights up multiplayer once the player is in the overworld.
+        EnterMainMenu(taskId);
+    }
+    else if (JOY_NEW(A_BUTTON)
+          && (authState == NET_AUTH_OFFLINE
+           || authState == NET_AUTH_NEEDS_LOGIN
+           || authState == NET_AUTH_AWAITING_BROWSER))
+    {
+        Net_BeginLogin();
+    }
+}
+
+#undef tLastAuthState
+#undef tHoldTimer
+#undef tHasDrawn
 
 #define tMenuType data[0]
 #define tCurrItem data[1]
