@@ -10,7 +10,7 @@
 //!                    [--at X,Y] [--still] [--challenge PLAYER_ID]
 
 use pokeplanet_proto::quic::{
-    self, ClientControl, ClientMovement, ServerControl, ServerSnapshot,
+    self, ChatTarget, ClientControl, ClientMovement, ServerControl, ServerSnapshot,
 };
 use pokeplanet_proto::{MapId, Pose, PROTOCOL_VERSION};
 use std::sync::Arc;
@@ -27,6 +27,9 @@ struct Options {
     /// Challenge this player id a few seconds after signing in, so the receiving side of
     /// the invitation flow can be exercised without a second human.
     challenge: Option<u32>,
+    /// Say something in global chat shortly after signing in, so the receiving
+    /// client's chat display can be exercised.
+    say: Option<String>,
 }
 
 fn parse_options() -> anyhow::Result<Options> {
@@ -39,6 +42,7 @@ fn parse_options() -> anyhow::Result<Options> {
         y: 18,
         still: false,
         challenge: None,
+        say: None,
     };
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -75,6 +79,7 @@ fn parse_options() -> anyhow::Result<Options> {
             }
             "--still" => opts.still = true,
             "--challenge" => opts.challenge = Some(next()?.parse()?),
+            "--say" => opts.say = Some(next()?),
             other => anyhow::bail!("unrecognised argument {other}"),
         }
     }
@@ -185,6 +190,8 @@ async fn main() -> anyhow::Result<()> {
     // world and able to be interrupted.
     let mut challenge_at = tokio::time::interval(Duration::from_secs(6));
     challenge_at.tick().await;
+    let mut say_at = tokio::time::interval(Duration::from_secs(8));
+    say_at.tick().await;
 
     let mut movement = tokio::time::interval(Duration::from_millis(100));
     let mut walk = tokio::time::interval(Duration::from_millis(500));
@@ -219,6 +226,17 @@ async fn main() -> anyhow::Result<()> {
             _ = movement.tick() => {
                 let bytes = quic::encode(&ClientMovement { pose })?;
                 let _ = conn.send_datagram(bytes.into());
+            }
+            _ = say_at.tick(), if opts.say.is_some() => {
+                if let Some(text) = opts.say.take() {
+                    let msg = quic::encode(&ClientControl::Chat {
+                        target: ChatTarget::Global,
+                        text: text.clone(),
+                    })?;
+                    send.write_all(&(msg.len() as u32).to_le_bytes()).await?;
+                    send.write_all(&msg).await?;
+                    tracing::info!(%text, "said");
+                }
             }
             _ = challenge_at.tick(), if opts.challenge.is_some() => {
                 if let Some(target) = opts.challenge.take() {

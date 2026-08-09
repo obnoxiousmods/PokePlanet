@@ -10,6 +10,7 @@
 #include "global.h"
 #include "event_object_movement.h"
 #include "field_player_avatar.h"
+#include "mmo_chat.h"
 #include "mmo_players.h"
 #include "mmo_text.h"
 #include "net_client.h"
@@ -361,6 +362,8 @@ void MmoPlayers_Update(void)
      || gSaveBlock1Ptr->location.mapNum != sCurrentMapNum)
     {
         MmoPlayers_Reset();
+        // Every window went with the old map, including chat's.
+        MmoChat_Reset();
         sCurrentMapGroup = gSaveBlock1Ptr->location.mapGroup;
         sCurrentMapNum = gSaveBlock1Ptr->location.mapNum;
     }
