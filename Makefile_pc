@@ -352,6 +352,10 @@ $(OBJ_DIR)/ld_script.ld: $(LD_SCRIPT) $(LD_SCRIPT_DEPS)
 $(OBJ_DIR)/pokemon_emerald_icon.o: resources/pokemon_emerald.rc resources/pokemon_emerald.ico
 	$(WINDRES) $< -O coff -o $@
 
+# A pattern rule's stem must be nonempty, so BG%.bmp never matches plain BG.bmp.
+BG.bmp: BG.png
+	magick $< -define bmp:format=bmp4 $@
+
 BG%.bmp: BG%.png
 	magick $< -define bmp:format=bmp4 $@
 

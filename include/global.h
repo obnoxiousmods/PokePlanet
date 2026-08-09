@@ -5,10 +5,14 @@
 #include <string.h>
 #include <limits.h>
 
-#ifndef NO_STD_LIB_ENABLED
+// DBGPRINTF is per-call tracing (every flash read, every RTC query), so leaving it
+// on writes thousands of lines a second to the Windows console. Console writes are
+// synchronous and slow, which stalls the frame it is called from. Opt in with
+// PLATFORM_DEBUG_PRINT=1 when tracing; genuine failures use SDL_Log instead.
+#if !defined(NO_STD_LIB_ENABLED) && defined(PLATFORM_DEBUG_PRINT)
 #define DBGPRINTF(...) printf(__VA_ARGS__)
 #else
-#define DBGPRINTF(...)
+#define DBGPRINTF(...) ((void)0)
 #endif
 
 #include "config.h" // we need to define config before gba headers as print stuff needs the functions nulled before defines.

@@ -2,6 +2,7 @@
 #include <assert.h>
 #include <stdbool.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <time.h>
 
 #ifdef _WIN32
@@ -30,6 +31,22 @@
 #include "platform/framedraw.h"
 
 extern void (*const gIntrTable[])(void);
+
+// SDL_Log output is mirrored to pymerald.log so diagnostics survive when the game
+// owns its own console window (which vanishes with the process) or is launched
+// with no console at all.
+static FILE *sLogFile = NULL;
+
+static void PymeraldLogOutput(void *userdata, int category, SDL_LogPriority priority, const char *message)
+{
+    if (sLogFile != NULL)
+    {
+        fprintf(sLogFile, "%s\n", message);
+        fflush(sLogFile);
+    }
+    fprintf(stderr, "%s\n", message);
+    fflush(stderr);
+}
 
 SDL_Thread *mainLoopThread;
 SDL_Window *sdlWindow;
@@ -89,12 +106,25 @@ static void DrawTouchControls(void);
 
 int main(int argc, char **argv)
 {
-    // Open an output console on Windows
+    // Open an output console on Windows.
+    // Detach from any inherited console first. When the game is launched from an
+    // existing console (or a ConPTY), AllocConsole fails and we keep sharing the
+    // launcher's console -- so when that launcher exits, its console teardown sends
+    // us a Ctrl-Close event, SDL turns it into SDL_QUIT, and the game dies on its
+    // own. FreeConsole guarantees we always own the console we log to.
 #ifdef _WIN32
-    AllocConsole() ;
-    AttachConsole( GetCurrentProcessId() ) ;
-    freopen( "CON", "w", stdout ) ;
+    FreeConsole();
+    if (AllocConsole())
+    {
+        freopen("CONOUT$", "w", stdout);
+        freopen("CONOUT$", "w", stderr);
+    }
 #endif
+
+    sLogFile = fopen("pymerald.log", "w");
+    SDL_LogSetOutputFunction(PymeraldLogOutput, NULL);
+    SDL_LogSetAllPriority(SDL_LOG_PRIORITY_INFO);
+    SDL_Log("Pymerald starting up");
 
 #ifdef __ANDROID__
     SDL_setenv("SDL_AUDIODRIVER", "openslES", 1);
@@ -107,7 +137,7 @@ int main(int argc, char **argv)
 #endif
                 ) < 0)
     {
-        DBGPRINTF("SDL could not initialize! SDL_Error: %s\n", SDL_GetError());
+        SDL_Log("SDL could not initialize! SDL_Error: %s", SDL_GetError());
         return 1;
     }
 
@@ -141,7 +171,7 @@ int main(int argc, char **argv)
 #endif
     if (sdlWindow == NULL)
     {
-        DBGPRINTF("Window could not be created! SDL_Error: %s\n", SDL_GetError());
+        SDL_Log("Window could not be created! SDL_Error: %s", SDL_GetError());
         return 1;
     }
 
@@ -152,7 +182,7 @@ int main(int argc, char **argv)
 #endif
     if (sdlRenderer == NULL)
     {
-        DBGPRINTF("Renderer could not be created! SDL_Error: %s\n", SDL_GetError());
+        SDL_Log("Renderer could not be created! SDL_Error: %s", SDL_GetError());
         return 1;
     }
 
@@ -242,7 +272,7 @@ int main(int argc, char **argv)
                                    DISPLAY_WIDTH, DISPLAY_HEIGHT);
     if (sdlTexture == NULL)
     {
-        DBGPRINTF("Texture could not be created! SDL_Error: %s\n", SDL_GetError());
+        SDL_Log("Texture could not be created! SDL_Error: %s", SDL_GetError());
         return 1;
     }
     SDL_SetTextureBlendMode(sdlTexture, SDL_BLENDMODE_NONE);
@@ -378,6 +408,7 @@ int main(int argc, char **argv)
 #endif
     }
 
+    SDL_Log("main loop exited, closing save file");
     //StoreSaveFile();
     CloseSaveFile();
 
@@ -391,7 +422,13 @@ int main(int argc, char **argv)
 #endif
     SDL_DestroyWindow(sdlWindow);
     SDL_Quit();
-    return 0;
+
+    // The AgbMain worker thread is never joined; it parks indefinitely in
+    // VBlankIntrWait waiting on vBlankSemaphore, which nothing will post again.
+    // Returning from main here runs the CRT exit path while that thread still holds
+    // SDL/CRT state, which deadlocks and leaves a running, windowless process behind.
+    // The save file is flushed and closed above, so terminating outright is safe.
+    _Exit(0);
 }
 
 static void ReadSaveFile(const char *path)
@@ -899,7 +936,12 @@ void ProcessEvents(void)
         switch (event.type)
         {
         case SDL_QUIT:
+            SDL_Log("SDL_QUIT received, shutting down");
             isRunning = false;
+            break;
+        case SDL_WINDOWEVENT:
+            if (event.window.event == SDL_WINDOWEVENT_CLOSE)
+                SDL_Log("SDL_WINDOWEVENT_CLOSE for window %u", event.window.windowID);
             break;
 #ifdef __ANDROID__
         case SDL_CONTROLLERDEVICEADDED:

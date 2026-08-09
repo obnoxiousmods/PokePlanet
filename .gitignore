@@ -48,3 +48,9 @@ prefabs.json
 /pokeemerald_modern-*.png
 /pc-border-template-1280x720.png
 /pokeemerald.cfg
+# Generated from the tracked PNGs by ImageMagick during the Windows build
+/BG.bmp
+/BG[0-9].bmp
+/BG[0-9][0-9].bmp
+/Border.bmp
+/pymerald.log
