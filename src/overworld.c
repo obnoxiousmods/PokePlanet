@@ -1555,11 +1555,17 @@ void CB2_NewGame(void)
     gFieldCallback = ExecuteTruckSequence;
     gFieldCallback2 = NULL;
 
-    // TODO: PokePlanet characters should start in Littleroot rather than the truck.
-    // Overriding the warp here (SetWarpDestination + WarpIntoMap + clearing
-    // gFieldCallback) crashed on map load -- DoMapLoadLoop below re-enters the warp
-    // machinery and does not expect the destination to have been consumed already.
-    // Needs doing via the field callback instead, with a debugger attached.
+    // A PokePlanet character already exists on the server before this client ever ran, so
+    // there is no moving-truck arrival to introduce. NewGameInitData sets the truck warp
+    // itself, so the override has to happen after it rather than before.
+    // SetWarpDestination followed by WarpIntoMap is the same idiom DoWhiteOut uses.
+    if (MmoPlayers_ShouldSkipIntro())
+    {
+        SetWarpDestination(MAP_GROUP(MAP_LITTLEROOT_TOWN), MAP_NUM(MAP_LITTLEROOT_TOWN),
+                           WARP_ID_NONE, MMO_SPAWN_X, MMO_SPAWN_Y);
+        WarpIntoMap();
+        gFieldCallback = NULL;
+    }
     DoMapLoadLoop(&gMain.state);
     SetFieldVBlankCallback();
     SetMainCallback1(CB1_Overworld);
