@@ -925,9 +925,11 @@ dependencies = [
  "quinn",
  "rustls",
  "serde",
+ "serde_json",
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "webpki-roots 0.26.11",
 ]
 
 [[package]]

@@ -7,6 +7,13 @@ version = "0.1.0"
 edition = "2021"
 license = "MIT"
 
+[profile.release]
+# The sidecar ships next to the game, so size and startup cost matter. Deliberately not
+# panic="abort": the server must survive one connection's panic without dropping the rest.
+lto = "thin"
+codegen-units = 1
+strip = true
+
 [workspace.dependencies]
 pokeplanet-proto = { path = "proto" }
 
