@@ -7,6 +7,7 @@
 #include "graphics.h"
 #include "main.h"
 #include "menu.h"
+#include "mmo_text.h"
 #include "menu_helpers.h"
 #include "palette.h"
 #include "pokedex.h"
@@ -2117,7 +2118,9 @@ void BufferSaveMenuText(u8 textId, u8 *dest, u8 color)
     switch (textId)
     {
         case SAVE_MENU_NAME:
-            StringCopy(string, gSaveBlock2Ptr->playerName);
+            // The account's name rather than the save's seven-character one. This box is
+            // the most frequently read place the player sees their own name.
+            StringCopy(string, MmoText_PlayerNameOr(gSaveBlock2Ptr->playerName));
             break;
         case SAVE_MENU_CAUGHT:
             if (IsNationalPokedexEnabled())

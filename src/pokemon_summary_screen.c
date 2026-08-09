@@ -22,6 +22,7 @@
 #include "m4a.h"
 #include "malloc.h"
 #include "menu.h"
+#include "mmo_text.h"
 #include "menu_helpers.h"
 #include "mon_markings.h"
 #include "party_menu.h"
@@ -3047,18 +3048,38 @@ static void Task_PrintInfoPage(u8 taskId)
     data[0]++;
 }
 
+// Draw a trainer name in the room that is left, narrowing the font rather than running off
+// the edge of the window.
+//
+// This window was laid out for a seven-character name and an account name can be sixteen.
+// Clipping it would be the same bug this is meant to fix, and widening the window would
+// push into the ID beside it, so the name gets smaller instead.
+static void PrintOTNameFitted(u8 windowId, const u8 *name, u8 x, u8 colorId)
+{
+    u16 room = sPageInfoTemplate[PSS_DATA_WINDOW_INFO_ORIGINAL_TRAINER].width * 8 - x;
+    u8 font = GetStringWidth(FONT_NORMAL, name, 0) > room ? FONT_NARROW : FONT_NORMAL;
+
+    AddTextPrinterParameterized4(windowId, font, x, 1, 0, 0, sTextColors[colorId], 0, name);
+}
+
 static void PrintMonOTName(void)
 {
     int x, windowId;
     if (InBattleFactory() != TRUE && InSlateportBattleTent() != TRUE)
     {
+        // A Pokemon caught by this player carries the save's seven-character name as its
+        // OT. Shown, that reads as a different trainer to the one whose name is on the
+        // trainer card, so substitute here too -- but only when it really is them.
+        const u8 *name = sMonSummaryScreen->summary.OTName;
+
+        if (DoesMonOTMatchOwner() == TRUE)
+            name = MmoText_PlayerNameOr(name);
+
         windowId = AddWindowFromTemplateList(sPageInfoTemplate, PSS_DATA_WINDOW_INFO_ORIGINAL_TRAINER);
         PrintTextOnWindow(windowId, gText_OTSlash, 0, 1, 0, 1);
         x = GetStringWidth(FONT_NORMAL, gText_OTSlash, 0);
-        if (sMonSummaryScreen->summary.OTGender == 0)
-            PrintTextOnWindow(windowId, sMonSummaryScreen->summary.OTName, x, 1, 0, 5);
-        else
-            PrintTextOnWindow(windowId, sMonSummaryScreen->summary.OTName, x, 1, 0, 6);
+        PrintOTNameFitted(windowId, name, x,
+                          sMonSummaryScreen->summary.OTGender == 0 ? 5 : 6);
     }
 }
 
