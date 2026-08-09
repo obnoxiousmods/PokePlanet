@@ -39,6 +39,8 @@
 #include "mystery_gift_menu.h"
 #include "net_client.h"
 #include "mmo_text.h"
+#include "new_game.h"
+#include "constants/map_groups.h"
 
 /*
  * Main menu state machine
@@ -635,8 +637,13 @@ static const u8 sText_PokePlanetSignedIn[] = _("Signed in as {STR_VAR_1}!");
 #define tHoldTimer     data[3]
 #define tHasDrawn      data[4]
 
-// How long the "signed in" confirmation stays up before the menu appears.
+// How long the "signed in" confirmation stays up before the world loads.
 #define SIGNED_IN_HOLD_FRAMES 45
+
+// Centre of Littleroot Town, in map template coordinates. SetWarpDestination takes the
+// template space, unlike the runtime coordinates the server stores.
+#define POKEPLANET_SPAWN_X 10
+#define POKEPLANET_SPAWN_Y 11
 
 static void ShowAuthMessage(u8 authState)
 {
@@ -662,6 +669,41 @@ static void ShowAuthMessage(u8 authState)
         CreateMainMenuErrorWindow(sText_PokePlanetOffline);
         break;
     }
+}
+
+// Drop the player straight into the world once they are signed in.
+//
+// The account is the identity, so there is nothing to choose: either there is a game in
+// progress to resume, or the server has just created this character and we start one.
+// Either way the player never sees NEW GAME / CONTINUE.
+static void EnterWorldSignedIn(u8 taskId)
+{
+    ClearWindowTilemap(7);
+    ClearMainMenuWindowTilemap(&sWindowTemplates_MainMenu[7]);
+    SetGpuReg(REG_OFFSET_WIN0H, 0);
+    SetGpuReg(REG_OFFSET_WIN0V, 0);
+    gPlttBufferUnfaded[0] = RGB_BLACK;
+    gPlttBufferFaded[0] = RGB_BLACK;
+
+    if (gSaveFileStatus == SAVE_STATUS_OK)
+    {
+        SetMainCallback2(CB2_ContinueSavedGame);
+    }
+    else
+    {
+        // A character the server already knows about but this machine has never run.
+        // Skip the Birch introduction entirely and begin in Littleroot, which is where
+        // the server places new characters.
+        u8 name[PLAYER_NAME_LENGTH + 1];
+
+        NewGameInitData();
+        MmoText_FromAscii(name, Net_GetPlayerName(), sizeof(name));
+        StringCopy(gSaveBlock2Ptr->playerName, name);
+        SetWarpDestination(MAP_GROUP(MAP_LITTLEROOT_TOWN), MAP_NUM(MAP_LITTLEROOT_TOWN),
+                           WARP_ID_NONE, POKEPLANET_SPAWN_X, POKEPLANET_SPAWN_Y);
+        SetMainCallback2(CB2_NewGame);
+    }
+    DestroyTask(taskId);
 }
 
 // Leave the gate and continue into the normal save-file checks.
@@ -721,9 +763,9 @@ static void Task_PokePlanetConnect(u8 taskId)
 
     if (tHoldTimer != 0)
     {
-        // Let the player read "Signed in as ..." before the menu replaces it.
+        // Let the player read "Signed in as ..." before the world loads.
         if (++tHoldTimer > SIGNED_IN_HOLD_FRAMES)
-            EnterMainMenu(taskId);
+            EnterWorldSignedIn(taskId);
         return;
     }
 
