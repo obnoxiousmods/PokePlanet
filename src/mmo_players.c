@@ -7,7 +7,6 @@
 //
 // Ticked once per overworld frame from OverworldBasic().
 
-#include <stdarg.h>
 #include "global.h"
 #include "event_object_movement.h"
 #include "field_player_avatar.h"
@@ -21,21 +20,6 @@
 // Local IDs for remote players. Real maps number their object events from 1 and never
 // come close to this, so these cannot collide with a map's own NPCs.
 #define MMO_LOCAL_ID_BASE 200
-
-// Diagnostics for the multiplayer path, mirrored into pokeplanet.log. Rate limited by
-// the caller; never called every frame.
-extern void Platform_LogMultiplayer(const char *line);
-
-static void MmoDebug(const char *format, ...)
-{
-    char line[160];
-    va_list args;
-
-    va_start(args, format);
-    vsnprintf(line, sizeof(line), format, args);
-    va_end(args);
-    Platform_LogMultiplayer(line);
-}
 
 struct MmoSlot
 {
