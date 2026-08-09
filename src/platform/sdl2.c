@@ -32,12 +32,12 @@
 
 extern void (*const gIntrTable[])(void);
 
-// SDL_Log output is mirrored to pymerald.log so diagnostics survive when the game
+// SDL_Log output is mirrored to pokeplanet.log so diagnostics survive when the game
 // owns its own console window (which vanishes with the process) or is launched
 // with no console at all.
 static FILE *sLogFile = NULL;
 
-static void PymeraldLogOutput(void *userdata, int category, SDL_LogPriority priority, const char *message)
+static void PokePlanetLogOutput(void *userdata, int category, SDL_LogPriority priority, const char *message)
 {
     if (sLogFile != NULL)
     {
@@ -121,10 +121,10 @@ int main(int argc, char **argv)
     }
 #endif
 
-    sLogFile = fopen("pymerald.log", "w");
-    SDL_LogSetOutputFunction(PymeraldLogOutput, NULL);
+    sLogFile = fopen("pokeplanet.log", "w");
+    SDL_LogSetOutputFunction(PokePlanetLogOutput, NULL);
     SDL_LogSetAllPriority(SDL_LOG_PRIORITY_INFO);
-    SDL_Log("Pymerald starting up");
+    SDL_Log("PokePlanet starting up");
 
 #ifdef __ANDROID__
     SDL_setenv("SDL_AUDIODRIVER", "openslES", 1);

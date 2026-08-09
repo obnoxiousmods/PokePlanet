@@ -1,11 +1,11 @@
 [package]
-name = "pymerald-net"
+name = "pokeplanet-net"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
-pymerald-proto.workspace = true
+pokeplanet-proto.workspace = true
 anyhow.workspace = true
 quinn.workspace = true
 rustls.workspace = true

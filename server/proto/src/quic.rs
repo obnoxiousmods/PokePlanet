@@ -39,7 +39,7 @@ pub enum ClientControl {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ChatTarget {
-    /// The default in-game channel, bridged to IRC `#pymerald`.
+    /// The default in-game channel, bridged to IRC `#pokeplanet`.
     Global,
     /// Everyone standing on the same map.
     Local,

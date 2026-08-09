@@ -53,6 +53,6 @@ prefabs.json
 /BG[0-9].bmp
 /BG[0-9][0-9].bmp
 /Border.bmp
-/pymerald.log
+/pokeplanet.log
 /server/target/
-/pymerald-net.exe
+/pokeplanet-net.exe

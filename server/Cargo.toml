@@ -8,7 +8,7 @@ edition = "2021"
 license = "MIT"
 
 [workspace.dependencies]
-pymerald-proto = { path = "proto" }
+pokeplanet-proto = { path = "proto" }
 
 anyhow = "1"
 bincode = "1.3"

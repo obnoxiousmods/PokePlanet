@@ -1,4 +1,4 @@
-//! Wire types shared by `pymerald-server` and the `pymerald-net` client sidecar.
+//! Wire types shared by `pokeplanet-server` and the `pokeplanet-net` client sidecar.
 //!
 //! Two distinct encodings live here on purpose:
 //!

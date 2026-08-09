@@ -1,4 +1,4 @@
-//! Loopback framing between the `pymerald-net` sidecar and the game client.
+//! Loopback framing between the `pokeplanet-net` sidecar and the game client.
 //!
 //! The game side is 32-bit C compiled through the decomp's preprocessor, so this format is
 //! deliberately dumb: every record is fixed size, little-endian, with no varints, no
