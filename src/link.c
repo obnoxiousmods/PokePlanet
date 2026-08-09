@@ -24,6 +24,7 @@
 #include "trade.h"
 #include "battle.h"
 #include "link.h"
+#include "mmo_link.h"
 #include "link_rfu.h"
 #include "constants/rgb.h"
 #include "constants/trade.h"
@@ -1069,6 +1070,14 @@ u8 BitmaskAllOtherLinkPlayers(void)
 
 bool8 SendBlock(u8 unused, const void *src, u16 size)
 {
+#ifdef PORTABLE
+    // A battle against another player goes over the network. The cable path below cannot
+    // carry it: HandleLinkConnection is stubbed out on this port, so a block handed to
+    // InitBlockSend is queued and never transmitted, and the battle waits forever.
+    if (MmoLink_InBattle())
+        return MmoLink_SendBlock(src, size);
+#endif
+
     if (gWirelessCommType == TRUE)
         return Rfu_InitBlockSend(src, size);
 
@@ -1111,6 +1120,17 @@ static void SetBlockReceivedFlag(u8 who)
         Rfu_SetBlockReceivedFlag(who);
     else
         gBlockReceivedStatus[who] = TRUE;
+}
+
+// Mark a block as arrived for one player.
+//
+// The serial interrupt does this on hardware, through LinkMain2, which is unreachable on
+// this port -- so the network link needs a way in. Deliberately a thin wrapper rather than
+// making the flag itself public: the flag's representation differs between the wireless and
+// cable paths, and only SetBlockReceivedFlag knows which is in use.
+void Link_SetBlockReceived(u8 who)
+{
+    SetBlockReceivedFlag(who);
 }
 
 void ResetBlockReceivedFlags(void)

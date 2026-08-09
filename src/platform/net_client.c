@@ -42,6 +42,7 @@
 #define MSG_SAVE_IMAGE      0x08
 #define MSG_BATTLE_STARTING 0x09
 #define MSG_CORRECTION      0x0A
+#define MSG_LINK_BLOCK      0x0B
 // Game -> sidecar
 #define MSG_SELF_STATE   0x81
 #define MSG_BEGIN_LOGIN  0x82
@@ -51,6 +52,7 @@
 #define MSG_BATTLE_REQUEST 0x86
 #define MSG_BATTLE_RESPOND 0x87
 #define MSG_SAVE_CHUNK     0x88
+#define MSG_LINK_BLOCK_SEND 0x89
 
 // Big enough that the 128KB image is a few hundred frames rather than thousands, small
 // enough to sit on the stack.
@@ -77,6 +79,12 @@
 #define TX_FRAME_MAX     256
 #define CHAT_INBOX_LINES 16
 
+// Blocks arrive faster than the game reads them: the battle engine sends one and then waits
+// several frames before looking, and the handshake alone is a short burst. Deep enough that
+// a burst is never dropped, which would hang the battle waiting for something that came and
+// went.
+#define LINK_BLOCK_INBOX 8
+
 struct NetState
 {
     SDL_mutex *lock;
@@ -94,6 +102,10 @@ struct NetState
     struct NetProfile profile;
     bool8 hasProfile;
 
+    struct NetLinkBlock blockInbox[LINK_BLOCK_INBOX];
+    u8 blockHead;
+    u8 blockTail;
+    u8 blockCount;
     struct NetChatLine chatInbox[CHAT_INBOX_LINES];
     u8 chatHead;   // next slot to write
     u8 chatTail;   // next slot to read
@@ -295,6 +307,32 @@ static void HandleProfile(const u8 *payload, u32 len)
     SDL_UnlockMutex(sNet.lock);
 }
 
+static void HandleLinkBlock(const u8 *payload, u32 len)
+{
+    struct NetLinkBlock *slot;
+    u16 size;
+
+    if (len < 3)
+        return;
+
+    size = (u16)(payload[1] | (payload[2] << 8));
+    if (size > NET_LINK_BLOCK_MAX || len < 3u + size)
+        return;
+
+    SDL_LockMutex(sNet.lock);
+    slot = &sNet.blockInbox[sNet.blockHead];
+    slot->fromSlot = payload[0];
+    slot->len = size;
+    if (size != 0)
+        memcpy(slot->bytes, payload + 3, size);
+    sNet.blockHead = (sNet.blockHead + 1) % LINK_BLOCK_INBOX;
+    if (sNet.blockCount < LINK_BLOCK_INBOX)
+        sNet.blockCount++;
+    else
+        sNet.blockTail = (sNet.blockTail + 1) % LINK_BLOCK_INBOX; // oldest falls off
+    SDL_UnlockMutex(sNet.lock);
+}
+
 static void HandleChat(const u8 *payload, u32 len)
 {
     struct NetChatLine *line;
@@ -442,6 +480,9 @@ static void DispatchFrame(const u8 *body, u32 len)
         break;
     case MSG_SAVE_IMAGE:
         HandleSaveImage(body + 1, len - 1);
+        break;
+    case MSG_LINK_BLOCK:
+        HandleLinkBlock(body + 1, len - 1);
         break;
     case MSG_CORRECTION:
         HandleCorrection(body + 1, len - 1);
@@ -931,6 +972,38 @@ void Net_SendChat(u8 kind, const char *target, const char *text)
     WriteField(body + 2, target, NET_SENDER_LEN);
     WriteField(body + 2 + NET_SENDER_LEN, text, NET_TEXT_LEN);
     Enqueue(body, sizeof(body));
+}
+
+void Net_SendLinkBlock(const void *src, u16 size)
+{
+    u8 body[3 + NET_LINK_BLOCK_MAX];
+
+    if (!sInitialised || src == NULL || size == 0 || size > NET_LINK_BLOCK_MAX)
+        return;
+
+    body[0] = MSG_LINK_BLOCK_SEND;
+    body[1] = (u8)(size & 0xFF);
+    body[2] = (u8)(size >> 8);
+    memcpy(body + 3, src, size);
+    Enqueue(body, 3 + size);
+}
+
+bool8 Net_PopLinkBlock(struct NetLinkBlock *out)
+{
+    if (!sInitialised || out == NULL)
+        return FALSE;
+
+    SDL_LockMutex(sNet.lock);
+    if (sNet.blockCount == 0)
+    {
+        SDL_UnlockMutex(sNet.lock);
+        return FALSE;
+    }
+    *out = sNet.blockInbox[sNet.blockTail];
+    sNet.blockTail = (sNet.blockTail + 1) % LINK_BLOCK_INBOX;
+    sNet.blockCount--;
+    SDL_UnlockMutex(sNet.lock);
+    return TRUE;
 }
 
 bool8 Net_PopBattleInvite(struct NetBattleInvite *out)

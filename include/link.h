@@ -267,6 +267,7 @@ void ResetLinkPlayers(void);
 u8 GetMultiplayerId(void);
 // The battle slot the server assigned, which decides who runs the battle engine.
 void Link_SetAssignedMultiplayerId(u8 id);
+void Link_SetBlockReceived(u8 who);
 void Link_ClearAssignedMultiplayerId(void);
 u8 BitmaskAllOtherLinkPlayers(void);
 bool8 SendBlock(u8 unused, const void *src, u16 size);

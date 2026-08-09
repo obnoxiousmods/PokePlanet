@@ -177,4 +177,25 @@ void Net_SendChat(u8 kind, const char *target, const char *text);
 // Pop the oldest unread chat line. Returns FALSE when nothing is queued.
 bool8 Net_PopChatLine(struct NetChatLine *out);
 
+// One block of link-battle traffic from the opponent.
+//
+// BLOCK_BUFFER_SIZE in the battle code is 256 bytes and the server refuses anything larger,
+// so this holds any block that can legitimately arrive.
+#define NET_LINK_BLOCK_MAX 256
+
+struct NetLinkBlock
+{
+    // The sender's link slot, which is the index the game files the block under.
+    u8 fromSlot;
+    u16 len;
+    u8 bytes[NET_LINK_BLOCK_MAX];
+};
+
+// Send one block to whoever this player is battling. Silently dropped when not in a battle,
+// which the server decides rather than the client.
+void Net_SendLinkBlock(const void *src, u16 size);
+
+// Take the oldest block the opponent sent, if there is one.
+bool8 Net_PopLinkBlock(struct NetLinkBlock *out);
+
 #endif // GUARD_NET_CLIENT_H
