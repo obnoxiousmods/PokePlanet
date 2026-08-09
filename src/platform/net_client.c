@@ -16,6 +16,12 @@
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#else
+#include <errno.h>
+#include <netinet/in.h>
+#include <sys/select.h>
+#include <sys/socket.h>
+#include <unistd.h>
 #endif
 
 #include <SDL2/SDL.h>
@@ -273,7 +279,27 @@ static void DispatchFrame(const u8 *body, u32 len)
 // Worker thread.
 // ---------------------------------------------------------------------------
 
+// The link is plain BSD sockets on both platforms; only the spellings differ. Keeping one
+// implementation behind these shims means the headless Linux build talks to the sidecar
+// exactly like the shipped Windows one, so multiplayer can be tested without a desktop.
 #ifdef _WIN32
+typedef SOCKET NetSocket;
+#define NET_INVALID_SOCKET INVALID_SOCKET
+#define NetCloseSocket(s)  closesocket(s)
+// Winsock ignores nfds; POSIX requires the highest descriptor plus one.
+#define NET_SELECT_NFDS(s) 0
+#define NET_SEND_FLAGS     0
+#define NetCallInterrupted() (WSAGetLastError() == WSAEINTR)
+#else
+typedef int NetSocket;
+#define NET_INVALID_SOCKET (-1)
+#define NetCloseSocket(s)  close(s)
+#define NET_SELECT_NFDS(s) ((int)(s) + 1)
+// Without this a send() to a sidecar that has exited raises SIGPIPE, whose default
+// disposition kills the game. Windows has no such signal.
+#define NET_SEND_FLAGS     MSG_NOSIGNAL
+#define NetCallInterrupted() (errno == EINTR)
+#endif
 
 static void ResetLinkState(void)
 {
@@ -285,14 +311,14 @@ static void ResetLinkState(void)
     SDL_UnlockMutex(sNet.lock);
 }
 
-static SOCKET ConnectToSidecar(void)
+static NetSocket ConnectToSidecar(void)
 {
-    SOCKET sock;
+    NetSocket sock;
     struct sockaddr_in addr;
 
     sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
-    if (sock == INVALID_SOCKET)
-        return INVALID_SOCKET;
+    if (sock == NET_INVALID_SOCKET)
+        return NET_INVALID_SOCKET;
 
     memset(&addr, 0, sizeof(addr));
     addr.sin_family = AF_INET;
@@ -301,14 +327,14 @@ static SOCKET ConnectToSidecar(void)
 
     if (connect(sock, (struct sockaddr *)&addr, sizeof(addr)) != 0)
     {
-        closesocket(sock);
-        return INVALID_SOCKET;
+        NetCloseSocket(sock);
+        return NET_INVALID_SOCKET;
     }
     return sock;
 }
 
 // Push everything queued. Returns FALSE if the socket died.
-static bool8 FlushTxQueue(SOCKET sock)
+static bool8 FlushTxQueue(NetSocket sock)
 {
     u8 frame[TX_FRAME_MAX];
     u16 length;
@@ -331,7 +357,9 @@ static bool8 FlushTxQueue(SOCKET sock)
             int sent = 0;
             while (sent < (int)length)
             {
-                int n = send(sock, (const char *)frame + sent, length - sent, 0);
+                int n = send(sock, (const char *)frame + sent, length - sent, NET_SEND_FLAGS);
+                if (n < 0 && NetCallInterrupted())
+                    continue;
                 if (n <= 0)
                     return FALSE;
                 sent += n;
@@ -342,20 +370,22 @@ static bool8 FlushTxQueue(SOCKET sock)
 
 static int NetThreadMain(void *unused)
 {
-    WSADATA wsa;
     u8 rx[RX_BUFFER_SIZE];
     u32 rxUsed = 0;
 
+#ifdef _WIN32
+    WSADATA wsa;
     if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0)
     {
         SDL_Log("net: WSAStartup failed; multiplayer disabled");
         return 0;
     }
+#endif
 
     while (sNet.running)
     {
-        SOCKET sock = ConnectToSidecar();
-        if (sock == INVALID_SOCKET)
+        NetSocket sock = ConnectToSidecar();
+        if (sock == NET_INVALID_SOCKET)
         {
             SDL_Delay(RECONNECT_DELAY_MS);
             continue;
@@ -382,14 +412,20 @@ static int NetThreadMain(void *unused)
             timeout.tv_sec = 0;
             timeout.tv_usec = 20000;
 
-            ready = select(0, &readable, NULL, NULL, &timeout);
-            if (ready == SOCKET_ERROR)
+            ready = select(NET_SELECT_NFDS(sock), &readable, NULL, NULL, &timeout);
+            if (ready < 0)
+            {
+                if (NetCallInterrupted())
+                    continue;
                 break;
+            }
             if (ready == 0)
                 continue;
 
             {
                 int n = recv(sock, (char *)rx + rxUsed, RX_BUFFER_SIZE - rxUsed, 0);
+                if (n < 0 && NetCallInterrupted())
+                    continue;
                 if (n <= 0)
                     break; // sidecar closed or errored
                 rxUsed += n;
@@ -419,26 +455,18 @@ static int NetThreadMain(void *unused)
         }
 
     linkBroken:
-        closesocket(sock);
+        NetCloseSocket(sock);
         ResetLinkState();
         SDL_Log("net: sidecar link lost");
         if (sNet.running)
             SDL_Delay(RECONNECT_DELAY_MS);
     }
 
+#ifdef _WIN32
     WSACleanup();
-    return 0;
-}
-
-#else // !_WIN32
-
-// Non-Windows builds have no sidecar yet; the game runs single-player.
-static int NetThreadMain(void *unused)
-{
-    return 0;
-}
-
 #endif
+    return 0;
+}
 
 // ---------------------------------------------------------------------------
 // Public API.
