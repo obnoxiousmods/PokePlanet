@@ -654,34 +654,10 @@ static void ShowAuthMessage(u8 authState)
     switch (authState)
     {
     case NET_AUTH_ONLINE:
-    {
-        struct NetProfile profile;
-        u8 name[NET_NAME_LEN + 1];
-
-        if (!Net_GetProfile(&profile))
-        {
-            // Signed in but the summary has not landed yet; it arrives in the same
-            // burst, so this is at most a frame or two.
-            CreateMainMenuErrorWindow(sText_PokePlanetConnecting);
-            break;
-        }
-
-        MmoText_FromAscii(name, profile.name, sizeof(name));
-        StringCopy(gStringVar1, name);
-        // Play time is authoritative on the server, so format its seconds rather than
-        // reading the local counter.
-        ConvertIntToDecimalStringN(gStringVar2, profile.playTimeSeconds / 3600,
-                                   STR_CONV_MODE_LEFT_ALIGN, 4);
-        StringAppend(gStringVar2, gText_Colon2);
-        ConvertIntToDecimalStringN(gStringVar2 + StringLength(gStringVar2),
-                                   (profile.playTimeSeconds / 60) % 60,
-                                   STR_CONV_MODE_LEADING_ZEROS, 2);
-        ConvertIntToDecimalStringN(gStringVar3, profile.badges,
-                                   STR_CONV_MODE_LEFT_ALIGN, 2);
-        StringExpandPlaceholders(gStringVar4, sText_PokePlanetSaveSummary);
-        CreateMainMenuErrorWindow(gStringVar4);
+        // Nothing drawn here: the signed-in case hands over to the ordinary main menu,
+        // whose CONTINUE panel renders the server's save summary in the game's own
+        // layout.
         break;
-    }
     case NET_AUTH_NEEDS_LOGIN:
     case NET_AUTH_AWAITING_BROWSER:
         CreateMainMenuErrorWindow(sText_PokePlanetSignIn);
@@ -785,9 +761,9 @@ static void Task_PokePlanetConnect(u8 taskId)
 
     if (authState == NET_AUTH_ONLINE)
     {
-        // The save summary is showing. A loads it; there is nothing else to choose.
-        if (JOY_NEW(A_BUTTON))
-            EnterWorldSignedIn(taskId);
+        // Signed in: hand straight over to the normal menu, which draws the CONTINUE
+        // panel from the server's save summary.
+        EnterMainMenu(taskId);
         return;
     }
 
@@ -832,6 +808,18 @@ static void Task_MainMenuCheckSaveFile(u8 taskId)
 
         if (IsWirelessAdapterConnected())
             tWirelessAdapterConnected = TRUE;
+
+        // Signed in: the save lives on the server, so there is always a game to
+        // continue regardless of what this machine has on disk.
+        if (Net_GetAuthState() == NET_AUTH_ONLINE)
+        {
+            tMenuType = HAS_SAVED_GAME;
+            tCurrItem = 0;
+            tItemCount = tMenuType + 2;
+            gTasks[taskId].func = Task_MainMenuCheckBattery;
+            return;
+        }
+
         switch (gSaveFileStatus)
         {
             case SAVE_STATUS_OK:
@@ -2330,11 +2318,29 @@ static void MainMenu_FormatSavegameText(void)
     MainMenu_FormatSavegameBadges();
 }
 
+// The CONTINUE panel below is the vanilla layout, but every figure in it comes from the
+// server when signed in. The save lives on the server, so the local save block is only
+// consulted when playing offline.
+static bool8 ServerProfile(struct NetProfile *out)
+{
+    return Net_GetAuthState() == NET_AUTH_ONLINE && Net_GetProfile(out);
+}
+
 static void MainMenu_FormatSavegamePlayer(void)
 {
+    struct NetProfile profile;
+    u8 name[NET_NAME_LEN + 1];
+    const u8 *displayName = gSaveBlock2Ptr->playerName;
+
+    if (ServerProfile(&profile))
+    {
+        MmoText_FromAscii(name, profile.name, sizeof(name));
+        displayName = name;
+    }
+
     StringExpandPlaceholders(gStringVar4, gText_ContinueMenuPlayer);
     AddTextPrinterParameterized3(2, FONT_NORMAL, 0, 17, sTextColor_MenuInfo, TEXT_SKIP_DRAW, gStringVar4);
-    AddTextPrinterParameterized3(2, FONT_NORMAL, GetStringRightAlignXOffset(FONT_NORMAL, gSaveBlock2Ptr->playerName, 100), 17, sTextColor_MenuInfo, TEXT_SKIP_DRAW, gSaveBlock2Ptr->playerName);
+    AddTextPrinterParameterized3(2, FONT_NORMAL, GetStringRightAlignXOffset(FONT_NORMAL, displayName, 100), 17, sTextColor_MenuInfo, TEXT_SKIP_DRAW, displayName);
 }
 
 static void MainMenu_FormatSavegameTime(void)
@@ -2344,9 +2350,20 @@ static void MainMenu_FormatSavegameTime(void)
 
     StringExpandPlaceholders(gStringVar4, gText_ContinueMenuTime);
     AddTextPrinterParameterized3(2, FONT_NORMAL, 0x6C, 17, sTextColor_MenuInfo, TEXT_SKIP_DRAW, gStringVar4);
-    ptr = ConvertIntToDecimalStringN(str, gSaveBlock2Ptr->playTimeHours, STR_CONV_MODE_LEFT_ALIGN, 3);
-    *ptr = 0xF0;
-    ConvertIntToDecimalStringN(ptr + 1, gSaveBlock2Ptr->playTimeMinutes, STR_CONV_MODE_LEADING_ZEROS, 2);
+    {
+        struct NetProfile profile;
+        u16 hours = gSaveBlock2Ptr->playTimeHours;
+        u8 minutes = gSaveBlock2Ptr->playTimeMinutes;
+
+        if (ServerProfile(&profile))
+        {
+            hours = profile.playTimeSeconds / 3600;
+            minutes = (profile.playTimeSeconds / 60) % 60;
+        }
+        ptr = ConvertIntToDecimalStringN(str, hours, STR_CONV_MODE_LEFT_ALIGN, 3);
+        *ptr = 0xF0;
+        ConvertIntToDecimalStringN(ptr + 1, minutes, STR_CONV_MODE_LEADING_ZEROS, 2);
+    }
     AddTextPrinterParameterized3(2, FONT_NORMAL, GetStringRightAlignXOffset(FONT_NORMAL, str, 0xD0), 17, sTextColor_MenuInfo, TEXT_SKIP_DRAW, str);
 }
 
@@ -2354,10 +2371,16 @@ static void MainMenu_FormatSavegamePokedex(void)
 {
     u8 str[0x20];
     u16 dexCount;
+    struct NetProfile profile;
+    bool8 online = ServerProfile(&profile);
 
-    if (FlagGet(FLAG_SYS_POKEDEX_GET) == TRUE)
+    // Offline the pokedex line is hidden until the dex is obtained; online the server
+    // already knows the count, so show whatever it reports.
+    if (online || FlagGet(FLAG_SYS_POKEDEX_GET) == TRUE)
     {
-        if (IsNationalPokedexEnabled())
+        if (online)
+            dexCount = profile.pokedexCaught;
+        else if (IsNationalPokedexEnabled())
             dexCount = GetNationalPokedexCount(FLAG_GET_CAUGHT);
         else
             dexCount = GetHoennPokedexCount(FLAG_GET_CAUGHT);
@@ -2373,11 +2396,19 @@ static void MainMenu_FormatSavegameBadges(void)
     u8 str[0x20];
     u8 badgeCount = 0;
     u32 i;
+    struct NetProfile profile;
 
-    for (i = FLAG_BADGE01_GET; i < FLAG_BADGE01_GET + NUM_BADGES; i++)
+    if (ServerProfile(&profile))
     {
-        if (FlagGet(i))
-            badgeCount++;
+        badgeCount = profile.badges;
+    }
+    else
+    {
+        for (i = FLAG_BADGE01_GET; i < FLAG_BADGE01_GET + NUM_BADGES; i++)
+        {
+            if (FlagGet(i))
+                badgeCount++;
+        }
     }
     StringExpandPlaceholders(gStringVar4, gText_ContinueMenuBadges);
     AddTextPrinterParameterized3(2, FONT_NORMAL, 0x6C, 33, sTextColor_MenuInfo, TEXT_SKIP_DRAW, gStringVar4);
