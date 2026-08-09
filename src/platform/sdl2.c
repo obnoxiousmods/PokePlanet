@@ -76,6 +76,16 @@ struct SiiRtcInfo internalClock;
 static FILE *sSaveFile = NULL;
 static char sSavePath[1024] = "pokeemerald.sav";
 static char sConfigPath[1024] = "pokeemerald.cfg";
+static char sLogPath[1024] = "pokeplanet.log";
+static char sTokenPath[1024] = "pokeplanet-auth.json";
+
+// Which instance this is, taken from the executable's own name: pokeplanet.exe runs the
+// default profile and pokeplanet_tester.exe runs "tester".
+//
+// Two clients on one machine would otherwise fight over the same save, config, log, token
+// cache and sidecar port, so each profile gets its own copy of all five. That makes testing
+// multiplayer a matter of double-clicking two icons rather than juggling directories.
+static char sProfile[64] = "";
 
 // Multiplayer endpoint. The game itself only needs the sidecar port; the server address
 // is kept here so the two processes read one config file and so StoreConfigFile can write
@@ -90,6 +100,55 @@ static unsigned int sSidecarPort = DEFAULT_SIDECAR_PORT;
 u16 Platform_GetSidecarPort(void)
 {
     return (u16)sSidecarPort;
+}
+
+// Work out which instance we are from argv[0], and give it its own files.
+//
+// The name is everything after the first underscore in the executable's basename, so
+// pokeplanet.exe is the default profile and pokeplanet_tester.exe is "tester". Naming the
+// copy is the whole configuration step; there is nothing else to set up.
+//
+// A named profile also moves off the default sidecar port so two clients do not try to
+// share one sidecar, which would sign them both in as the same account. Beyond a second
+// instance, give each profile its own sidecarPort in its own config file.
+static void DeriveProfile(const char *argv0)
+{
+    const char *base;
+    const char *slash;
+    const char *underscore;
+
+    if (argv0 == NULL || *argv0 == '\0')
+        return;
+
+    base = argv0;
+    for (slash = argv0; *slash != '\0'; slash++)
+    {
+        if (*slash == '/' || *slash == '\\')
+            base = slash + 1;
+    }
+
+    underscore = SDL_strchr(base, '_');
+    if (underscore == NULL || underscore[1] == '\0')
+        return;
+
+    // Truncates safely if someone names a copy something absurd.
+    SDL_strlcpy(sProfile, underscore + 1, sizeof(sProfile));
+
+    // Drop the extension, so "pokeplanet_tester.exe" yields "tester" rather than
+    // "tester.exe" and the files it opens are not named after one.
+    {
+        char *dot = SDL_strrchr(sProfile, '.');
+        if (dot != NULL)
+            *dot = '\0';
+    }
+    if (sProfile[0] == '\0')
+        return;
+
+    SDL_snprintf(sSavePath, sizeof(sSavePath), "pokeemerald-%s.sav", sProfile);
+    SDL_snprintf(sConfigPath, sizeof(sConfigPath), "pokeemerald-%s.cfg", sProfile);
+    SDL_snprintf(sLogPath, sizeof(sLogPath), "pokeplanet-%s.log", sProfile);
+    SDL_snprintf(sTokenPath, sizeof(sTokenPath), "pokeplanet-auth-%s.json", sProfile);
+    sSidecarPort = DEFAULT_SIDECAR_PORT + 1;
 }
 
 // Game-side multiplayer diagnostics land in pokeplanet.log alongside the platform's own.
@@ -138,9 +197,11 @@ static void LaunchSidecar(void)
     // A sidecar may already be running -- a second copy of the game on this machine, or
     // one started by hand for debugging. It owns the IPC port, so ours would just fail
     // to bind; connecting to the existing one is the correct behaviour either way.
+    // The token cache is per profile too, so a second instance signs in as its own
+    // account instead of silently reusing the first one's session.
     snprintf(commandLine, sizeof(commandLine),
-             "pokeplanet-net.exe --server %s --port %u --ipc-port %u",
-             sServerHost, sServerPort, sSidecarPort);
+             "pokeplanet-net.exe --server %s --port %u --ipc-port %u --token %s",
+             sServerHost, sServerPort, sSidecarPort, sTokenPath);
 
     memset(&startup, 0, sizeof(startup));
     startup.cb = sizeof(startup);
@@ -193,10 +254,15 @@ int main(int argc, char **argv)
     }
 #endif
 
-    sLogFile = fopen("pokeplanet.log", "w");
+    // Before anything opens a file: this decides which set of files we use.
+    DeriveProfile(argc > 0 ? argv[0] : NULL);
+
+    sLogFile = fopen(sLogPath, "w");
     SDL_LogSetOutputFunction(PokePlanetLogOutput, NULL);
     SDL_LogSetAllPriority(SDL_LOG_PRIORITY_INFO);
     SDL_Log("PokePlanet starting up");
+    if (sProfile[0] != '\0')
+        SDL_Log("profile: %s (save %s, sidecar port %u)", sProfile, sSavePath, sSidecarPort);
 
     // ReadConfigFile is called later during video setup, but the sidecar needs the
     // server address before it launches, so read the file once up front.

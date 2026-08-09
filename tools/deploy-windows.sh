@@ -34,12 +34,18 @@ copy_or_explain() {
     fi
 }
 
+# The same binary ships twice under two names. The game reads its profile from argv[0], so
+# pokeplanet.exe runs the normal account and pokeplanet_tester.exe gets its own save, config,
+# log, token cache and sidecar port -- which is what makes it possible to run both at once
+# and actually test multiplayer on one machine.
 failed=0
-copy_or_explain "$SRC/pokeemerald.exe" "$DEST/" || failed=1
+copy_or_explain "$SRC/pokeemerald.exe" "$DEST/pokeplanet.exe" || failed=1
+copy_or_explain "$SRC/pokeemerald.exe" "$DEST/pokeplanet_tester.exe" || failed=1
 copy_or_explain "$SRC/server/target/x86_64-pc-windows-gnu/release/pokeplanet-net.exe" "$DEST/" || failed=1
 cp -v "$SRC"/*.bmp "$DEST/"
 cp -v /usr/i686-w64-mingw32/bin/SDL2.dll "$DEST/"
 [ "$failed" -eq 0 ] || exit 1
 
 echo "== deployed =="
-ls -la --time-style=+%H:%M "$DEST"/pokeemerald.exe "$DEST"/pokeplanet-net.exe
+ls -la --time-style=+%H:%M "$DEST"/pokeplanet.exe "$DEST"/pokeplanet_tester.exe \
+    "$DEST"/pokeplanet-net.exe
