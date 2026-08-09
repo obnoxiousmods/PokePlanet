@@ -717,6 +717,19 @@ static void StoreSaveFile()
 
 void Platform_StoreSaveFile(void)
 {
+    // Signed in, the character lives on the server and nowhere else.
+    //
+    // Writing a copy here would not make it safer -- the server's copy overwrites this one
+    // at every sign-in, so a file edited between sessions is discarded rather than obeyed --
+    // but it would leave a stale character on the disk that looks authoritative and is not.
+    // The save still exists in FLASH_BASE and still goes to the server; it simply stops
+    // being written to a file that nothing should ever read again.
+    //
+    // Offline play is the exception and keeps the old behaviour, because there is no server
+    // to hold anything and a file is all there is.
+    if (Net_GetAuthState() == NET_AUTH_ONLINE)
+        return;
+
     StoreSaveFile();
 }
 

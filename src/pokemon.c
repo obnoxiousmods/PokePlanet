@@ -22,6 +22,7 @@
 #include "pokedex.h"
 #include "pokeblock.h"
 #include "pokemon.h"
+#include "mmo_autosave.h"
 #include "pokemon_animation.h"
 #include "pokemon_summary_screen.h"
 #include "pokemon_storage_system.h"
@@ -4077,6 +4078,16 @@ u32 GetBoxMonData2(struct BoxPokemon *boxMon, s32 field) __attribute__((alias("G
 
 void SetMonData(struct Pokemon *mon, s32 field, const void *dataArg)
 {
+    // Deliberately unconditional, including for Pokemon that are not the player's.
+    //
+    // This is the funnel every change to a Pokemon passes through -- experience, levels,
+    // moves, held items, HP -- and without it a battle could be fought and won with nothing
+    // marked as worth saving, because none of it touches a flag, a variable or the bag.
+    // Telling the player's Pokemon from an opponent's here would mean a range check on a
+    // function called many times a turn, to save a boolean store; and being too eager costs
+    // nothing, because the save itself is debounced and only runs once the field is idle.
+    // The worst case is one save shortly after a battle, which is what should happen anyway.
+    MmoAutosave_NoteChange();
     const u8 *data = dataArg;
 
     switch (field)
@@ -4121,6 +4132,7 @@ void SetMonData(struct Pokemon *mon, s32 field, const void *dataArg)
 
 void SetBoxMonData(struct BoxPokemon *boxMon, s32 field, const void *dataArg)
 {
+    MmoAutosave_NoteChange();
     const u8 *data = dataArg;
 
     struct PokemonSubstruct0 *substruct0 = NULL;
@@ -4397,6 +4409,7 @@ void CopyMon(void *dest, void *src, size_t size)
 
 u8 GiveMonToPlayer(struct Pokemon *mon)
 {
+    MmoAutosave_NoteChange();
     s32 i;
 
     SetMonData(mon, MON_DATA_OT_NAME, gSaveBlock2Ptr->playerName);

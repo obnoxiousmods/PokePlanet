@@ -1,5 +1,6 @@
 #include "global.h"
 #include "item.h"
+#include "mmo_autosave.h"
 #include "berry.h"
 #include "string_util.h"
 #include "text.h"
@@ -237,6 +238,7 @@ bool8 CheckBagHasSpace(u16 itemId, u16 count)
 
 bool8 AddBagItem(u16 itemId, u16 count)
 {
+    MmoAutosave_NoteChange();
     u8 i;
 
     if (GetItemPocket(itemId) == POCKET_NONE)
@@ -344,6 +346,7 @@ bool8 AddBagItem(u16 itemId, u16 count)
 
 bool8 RemoveBagItem(u16 itemId, u16 count)
 {
+    MmoAutosave_NoteChange();
     u8 i;
     u16 totalQuantity = 0;
 
@@ -485,6 +488,7 @@ bool8 CheckPCHasItem(u16 itemId, u16 count)
 
 bool8 AddPCItem(u16 itemId, u16 count)
 {
+    MmoAutosave_NoteChange();
     u8 i;
     s8 freeSlot;
     u16 ownedCount;

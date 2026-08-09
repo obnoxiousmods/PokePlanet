@@ -10,6 +10,7 @@
 #include "global.h"
 #include "event_object_movement.h"
 #include "field_player_avatar.h"
+#include "mmo_autosave.h"
 #include "mmo_chat.h"
 #include "mmo_players.h"
 #include "mmo_text.h"
@@ -443,6 +444,10 @@ void MmoPlayers_Update(void)
         MmoPlayers_Reset();
         // Every window went with the old map, including chat's.
         MmoChat_Reset();
+        // Do not sit on unsaved progress across a door. The next thing to happen is a whole
+        // new set of object events, and a player who closes the game in a building should
+        // not reappear outside it having lost what they did inside.
+        MmoAutosave_Flush();
         sCurrentMapGroup = gSaveBlock1Ptr->location.mapGroup;
         sCurrentMapNum = gSaveBlock1Ptr->location.mapNum;
     }

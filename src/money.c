@@ -1,5 +1,6 @@
 #include "global.h"
 #include "money.h"
+#include "mmo_autosave.h"
 #include "graphics.h"
 #include "event_data.h"
 #include "string_util.h"
@@ -76,6 +77,7 @@ u32 GetMoney(u32 *moneyPtr)
 
 void SetMoney(u32 *moneyPtr, u32 newValue)
 {
+    MmoAutosave_NoteChange();
     *moneyPtr = gSaveBlock2Ptr->encryptionKey ^ newValue;
 }
 
@@ -89,6 +91,7 @@ bool8 IsEnoughMoney(u32 *moneyPtr, u32 cost)
 
 void AddMoney(u32 *moneyPtr, u32 toAdd)
 {
+    MmoAutosave_NoteChange();
     u32 toSet = GetMoney(moneyPtr);
 
     // can't have more money than MAX
@@ -109,6 +112,7 @@ void AddMoney(u32 *moneyPtr, u32 toAdd)
 
 void RemoveMoney(u32 *moneyPtr, u32 toSub)
 {
+    MmoAutosave_NoteChange();
     u32 toSet = GetMoney(moneyPtr);
 
     // can't subtract more than you already have
