@@ -48,8 +48,6 @@ struct MmoSlot
 static struct MmoSlot sSlots[NET_MAX_REMOTE_PLAYERS];
 static u8 sCurrentMapGroup = 0xFF;
 static u8 sCurrentMapNum = 0xFF;
-static u16 sDebugTimer;
-static struct NetRemotePlayer sDebugScratch[NET_MAX_REMOTE_PLAYERS];
 
 static u8 LocalIdForSlot(u8 slot)
 {
@@ -164,26 +162,10 @@ static void ApplyRemote(u8 slot, const struct NetRemotePlayer *remote)
             remote->graphicsId, MOVEMENT_TYPE_NONE, LocalIdForSlot(slot),
             remote->x, remote->y, remote->elevation);
 
+        // No free object event slot this frame -- the map's own NPCs have them all.
+        // Try again next frame rather than dropping the player.
         if (objectEventId == OBJECT_EVENTS_COUNT)
-        {
-            u8 activeObjects = 0;
-            u8 activeSprites = 0;
-            u8 k;
-
-            for (k = 0; k < OBJECT_EVENTS_COUNT; k++)
-                if (gObjectEvents[k].active)
-                    activeObjects++;
-            for (k = 0; k < MAX_SPRITES; k++)
-                if (gSprites[k].inUse)
-                    activeSprites++;
-
-            MmoDebug("spawn FAILED slot=%u gfx=%u at %d,%d objs=%u/%u sprites=%u/%u",
-                     slot, remote->graphicsId, remote->x, remote->y,
-                     activeObjects, OBJECT_EVENTS_COUNT, activeSprites, MAX_SPRITES);
-            return; // Try again next frame.
-        }
-        MmoDebug("spawned slot=%u obj=%u gfx=%u at %d,%d", slot, objectEventId,
-                 remote->graphicsId, remote->x, remote->y);
+            return;
 
         state->spawned = TRUE;
         state->x = remote->x;
@@ -240,6 +222,11 @@ static void ApplyRemote(u8 slot, const struct NetRemotePlayer *remote)
 // the player by name without another round trip.
 static char sSlotNames[NET_MAX_REMOTE_PLAYERS][NET_NAME_LEN];
 
+bool8 MmoPlayers_ShouldSkipIntro(void)
+{
+    return Net_GetAuthState() == NET_AUTH_ONLINE;
+}
+
 bool8 MmoPlayers_IsRemoteObject(u8 objectEventId)
 {
     if (objectEventId >= OBJECT_EVENTS_COUNT)
@@ -260,21 +247,23 @@ const char *MmoPlayers_GetRemoteName(u8 objectEventId)
     return sSlotNames[slot];
 }
 
+extern const u8 PokePlanet_EventScript_PlayerInteract[];
+extern const u8 PokePlanet_EventScript_PlayerGone[];
+
 const u8 *MmoPlayers_GetInteractionScript(u8 objectEventId)
 {
     const char *name = MmoPlayers_GetRemoteName(objectEventId);
     u8 encoded[NET_NAME_LEN + 1];
 
-    // Publish the name so the battle-request prompt can address them directly once that
-    // script exists. Returning NULL makes talking to another player a no-op for now,
-    // which is the correct behaviour until the request flow is built -- and unlike the
-    // engine's template lookup, it cannot crash.
-    if (name != NULL)
-    {
-        MmoText_FromAscii(encoded, name, sizeof(encoded));
-        StringCopy(gStringVar1, encoded);
-    }
-    return NULL;
+    // They left between the A press and this call.
+    if (name == NULL)
+        return PokePlanet_EventScript_PlayerGone;
+
+    // The script addresses them by name, which is also how a player tells another trainer
+    // apart from one of the map's own NPCs.
+    MmoText_FromAscii(encoded, name, sizeof(encoded));
+    StringCopy(gStringVar1, encoded);
+    return PokePlanet_EventScript_PlayerInteract;
 }
 
 void MmoPlayers_Update(void)
@@ -284,18 +273,6 @@ void MmoPlayers_Update(void)
     u8 count;
     u8 i;
     u8 slot;
-
-    // Once a second, record what this client believes about the world. Without it the
-    // difference between "no snapshot arrived", "snapshot arrived but the map did not
-    // match" and "spawn was refused" is invisible.
-    if (++sDebugTimer >= 60)
-    {
-        sDebugTimer = 0;
-        MmoDebug("tick linked=%u auth=%u map=%u:%u remotes=%u",
-                 Net_IsLinked(), Net_GetAuthState(),
-                 gSaveBlock1Ptr->location.mapGroup, gSaveBlock1Ptr->location.mapNum,
-                 Net_GetRemotePlayers(sDebugScratch));
-    }
 
     if (!Net_IsLinked() || Net_GetAuthState() != NET_AUTH_ONLINE)
         return;

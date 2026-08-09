@@ -696,12 +696,14 @@ static void EnterWorldSignedIn(u8 taskId)
         // the server places new characters.
         u8 name[PLAYER_NAME_LENGTH + 1];
 
-        NewGameInitData();
+        // CB2_NewGame runs NewGameInitData itself, which sets the truck warp, so the
+        // Littleroot override has to happen inside it -- see MmoPlayers_ShouldSkipIntro.
+        // Only the trainer name is set here, and it is still bounded by the save block's
+        // 7-character field; the full display name comes from the server profile.
         MmoText_FromAscii(name, Net_GetPlayerName(), sizeof(name));
-        StringCopy(gSaveBlock2Ptr->playerName, name);
-        SetWarpDestination(MAP_GROUP(MAP_LITTLEROOT_TOWN), MAP_NUM(MAP_LITTLEROOT_TOWN),
-                           WARP_ID_NONE, POKEPLANET_SPAWN_X, POKEPLANET_SPAWN_Y);
         SetMainCallback2(CB2_NewGame);
+        gMain.savedCallback = NULL;
+        StringCopy(gSaveBlock2Ptr->playerName, name);
     }
     DestroyTask(taskId);
 }

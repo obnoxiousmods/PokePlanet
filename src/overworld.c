@@ -1554,6 +1554,17 @@ void CB2_NewGame(void)
     UnlockPlayerFieldControls();
     gFieldCallback = ExecuteTruckSequence;
     gFieldCallback2 = NULL;
+
+    // A PokePlanet character already exists on the server before the client ever runs, so
+    // there is no moving-truck arrival to play. NewGameInitData sets the truck warp
+    // itself, which is why this has to override it here rather than before the call.
+    if (MmoPlayers_ShouldSkipIntro())
+    {
+        SetWarpDestination(MAP_GROUP(MAP_LITTLEROOT_TOWN), MAP_NUM(MAP_LITTLEROOT_TOWN),
+                           WARP_ID_NONE, MMO_SPAWN_X, MMO_SPAWN_Y);
+        WarpIntoMap();
+        gFieldCallback = NULL;
+    }
     DoMapLoadLoop(&gMain.state);
     SetFieldVBlankCallback();
     SetMainCallback1(CB1_Overworld);

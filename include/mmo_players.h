@@ -3,6 +3,16 @@
 
 // Other players, drawn as ordinary overworld object events.
 
+// Centre of Littleroot Town, in map template coordinates (SetWarpDestination's space,
+// which is the runtime coordinate minus MAP_OFFSET).
+#define MMO_SPAWN_X 10
+#define MMO_SPAWN_Y 11
+
+// True when a brand-new character should start in Littleroot rather than the moving truck.
+// The character already exists on the server before this client ever ran, so the arrival
+// sequence has nothing to introduce.
+bool8 MmoPlayers_ShouldSkipIntro(void);
+
 // Called once per overworld frame. Reports where we are and reconciles everyone else
 // against the server's latest snapshot.
 void MmoPlayers_Update(void);

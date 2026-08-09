@@ -281,13 +281,6 @@ const u8 *GetInteractedLinkPlayerScript(struct MapPosition *position, u8 metatil
     gSelectedObjectEvent = objectEventId;
     gSpecialVar_LastTalked = gObjectEvents[objectEventId].localId;
     gSpecialVar_Facing = direction;
-
-    // Other players are spawned dynamically and have no entry in the map's template
-    // list, so the usual lookup below would dereference a NULL template and crash.
-    // Hand them to the multiplayer interaction handler instead.
-    if (MmoPlayers_IsRemoteObject(objectEventId))
-        return MmoPlayers_GetInteractionScript(objectEventId);
-
     return GetObjectEventScriptPointerByObjectEventId(objectEventId);
 }
 
@@ -311,6 +304,13 @@ static const u8 *GetInteractedObjectEventScript(struct MapPosition *position, u8
     gSelectedObjectEvent = objectEventId;
     gSpecialVar_LastTalked = gObjectEvents[objectEventId].localId;
     gSpecialVar_Facing = direction;
+
+    // Other players are spawned dynamically and have no entry in the map's template list.
+    // GetObjectEventScriptPointerByObjectEventId resolves a script *through* that list, so
+    // for them it dereferences a NULL template and crashes. GetRamScript below would then
+    // be handed a bogus localId as well. Divert to the multiplayer handler before either.
+    if (MmoPlayers_IsRemoteObject(objectEventId))
+        return MmoPlayers_GetInteractionScript(objectEventId);
 
     if (InTrainerHill() == TRUE)
         script = GetTrainerHillTrainerScript();

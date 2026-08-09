@@ -1,146 +1,195 @@
-# pokeemerald-multiplatform
+# PokePlanet
 
-An experimental Windows, Linux, and Android port of the [Pokemon Emerald decompilation](https://github.com/pret/pokeemerald).
+A massively-multiplayer Pokémon Emerald, built on the [pret decompilation][pret] and the
+[pokeemerald-multiplatform][upstream] native port.
 
-The project runs the decompiled game code directly. It is not a bundled GBA emulator and does not include a commercial ROM.
+PokePlanet runs the decompiled game code directly — it is not an emulator and ships no
+commercial ROM or game assets. What it adds is a real MMO spine: Discord sign-in, a QUIC
+server, a shared overworld where you see other trainers walking around, and server-held
+progression.
 
-## Platform Status
+> **Status: early.** Sign-in, the shared overworld and other visible players work today.
+> Chat UI, server-authoritative saves and player-vs-player battles are in progress. See
+> [Roadmap](#roadmap).
 
-| Platform | Status | Output |
-| --- | --- | --- |
-| Windows | Working through the SDL2 backend | `pokeemerald.exe` |
-| Linux | Working native 32-bit SDL2 build | `pokeemerald` |
-| Android | Working experimental ARMv7 SDL2 build | `android/app/build/outputs/apk/debug/app-debug.apk` |
-| GBA ROM | Upstream target | `pokeemerald.gba` |
+---
 
-## Port Changes
+## How it fits together
 
-- Repaired the portable MP2K/M4A music player and sound mixer build.
-- Added SDL2 float audio output at 42060 Hz.
-- Sanitized invalid floating-point samples independently in the M4A and CGB audio paths, eliminating loud buzzing without discarding valid audio.
-- Added output headroom and clipping protection.
-- Fixed structure and pointer conversions required by the portable audio engine.
-- Fixed portable BIOS, DMA, flash-save, trainer-card, and sound-related compilation errors.
-- Added working save-file access through `pokeemerald.sav`.
-- Added a Wine launcher for the Windows build.
-- Added native 32-bit Linux compilation and SDL2 linkage.
-- Added aspect-ratio-preserving 3:2 rendering with independently scaled background artwork and a transparent frame.
-- Added persistent display settings with automatic support for additional numbered background images.
-- Added an experimental Android SDL2/Gradle project and an ARMv7 cross-compilation pipeline.
-- Added Android rendering, frame pacing, audio output, writable save storage, and lifecycle handling.
-- Added an Android-native labeled multitouch overlay and SDL game-controller input.
-- Added launcher icons on Android and an embedded multi-resolution icon on Windows.
+```
+┌──────────────────┐   loopback    ┌──────────────────┐    QUIC/TLS    ┌──────────────────┐
+│  pokeemerald.exe │◄─────────────►│ pokeplanet-net   │◄──────────────►│ pokeplanet-server│
+│  32-bit, SDL2    │  fixed-layout │ sidecar, 64-bit  │    UDP 4433    │  Rust, on lucy   │
+│  the game itself │    frames     │ QUIC · TLS · auth│                │                  │
+└──────────────────┘               └──────────────────┘                └────────┬─────────┘
+                                                                                │
+                                                          ┌─────────────────────┼──────────────┐
+                                                     PostgreSQL              Valkey        Solanum IRC
+                                                   characters, party,      presence,      #pokeplanet
+                                                   inventory, story        sessions        chat bridge
+```
 
-## Controls
+**Why a sidecar?** The game is a 32-bit binary whose C is run through the decomp's
+charmap preprocessor. Linking QUIC and TLS into it would be painful and fragile. Instead a
+separate 64-bit Rust process owns the network and speaks a tiny fixed-layout protocol to the
+game over loopback, so the game itself needs nothing beyond winsock. It also means the
+netcode can be iterated without a full game rebuild.
 
-| GBA control | Keyboard |
+### Repository layout
+
+| Path | What it is |
 | --- | --- |
-| A | `Z` |
-| B | `X` |
-| Start | `Enter` |
-| Select | `Backslash` |
-| L | `A` |
-| R | `S` |
+| `src/`, `include/`, `data/` | The game. Upstream decomp plus PokePlanet's additions. |
+| `src/mmo_players.c` | Other players, drawn as ordinary overworld object events. |
+| `src/platform/net_client.c` | Winsock link to the sidecar, on its own thread. |
+| `src/mmo_text.c` | Converts network text into the game's own charmap. |
+| `server/proto/` | Wire protocol shared by server and sidecar. |
+| `server/server/` | The authoritative server. |
+| `server/net/` | The client sidecar, plus the `ghost` headless test player. |
+
+---
+
+## Playing
+
+Download a release, unzip it, and run `pokeemerald.exe`. The sidecar starts automatically.
+
+On first launch you will be asked to sign in with Discord; a browser opens, you approve, and
+the game picks it up. The token is cached, so later launches sign in silently.
+
+Signing in is optional — press **B** at the prompt to play offline single-player.
+
+### Controls
+
+| GBA | Key |
+| --- | --- |
+| A / B | `Z` / `X` |
+| Start / Select | `Enter` / `\` |
+| L / R | `A` / `S` |
 | D-pad | Arrow keys |
 | Fast-forward | `Space` |
-| Pause | `Ctrl+P` |
-| Soft reset | `Ctrl+R` |
+| Pause / Soft reset | `Ctrl+P` / `Ctrl+R` |
 
-Windows XInput controllers are supported by the SDL2 backend. Android supports SDL-compatible gamepads, including D-pad and left analog-stick movement. Native Linux currently uses keyboard input.
+XInput controllers work through the SDL2 backend.
 
-## Windows Build
+### Configuration
 
-The Windows target uses the 32-bit MinGW toolchain, SDL2, and ImageMagick. ImageMagick converts the PNG border assets to alpha-preserving BMP files supported by the Windows SDL2 build:
+`pokeemerald.cfg` sits next to the executable and is shared by the game and the sidecar:
+
+```ini
+server=pokeplanet.obby.ca
+serverPort=4433
+sidecarPort=38400
+```
+
+Point `server` elsewhere to play on a different server. Display settings live in the same
+file and are written back by the in-game **Options → Display** page.
+
+---
+
+## Building
+
+The Windows client is cross-compiled from Linux (or WSL). You need a 32-bit MinGW
+toolchain, the SDL2 MinGW development tree, ImageMagick, and a host C toolchain with libpng.
+
+On Arch:
 
 ```sh
-make -f Makefile_pc -j4
+pacman -S --needed base-devel mingw-w64-gcc mingw-w64-binutils libpng imagemagick
+# SDL2 for the i686 target, from libsdl.org's MinGW development tarball
+curl -LO https://github.com/libsdl-org/SDL/releases/download/release-2.30.7/SDL2-devel-2.30.7-mingw.tar.gz
+tar xzf SDL2-devel-2.30.7-mingw.tar.gz
+sudo cp -a SDL2-2.30.7/i686-w64-mingw32/include/SDL2 /usr/i686-w64-mingw32/include/
+sudo cp -a SDL2-2.30.7/i686-w64-mingw32/lib/.      /usr/i686-w64-mingw32/lib/
+sudo cp -a SDL2-2.30.7/i686-w64-mingw32/bin/.      /usr/i686-w64-mingw32/bin/
 ```
 
-Place `SDL2.dll` beside `pokeemerald.exe`. On Linux, the Windows build can be launched through Wine with:
+Then:
 
 ```sh
-./launch.sh
+make -f Makefile_pc -j$(nproc)          # → pokeemerald.exe
 ```
 
-## Linux Build
+Ship `pokeemerald.exe` alongside `SDL2.dll` (the 32-bit one), `Border.bmp` and `BG*.bmp`.
 
-The game data contains 32-bit pointers, so the native Linux target must currently be built as a 32-bit executable. Install a multilib C toolchain plus 32-bit SDL2 and SDL2_image development files, then run:
+### Server and sidecar
 
 ```sh
-make -f Makefile_pc linux -j4
-./pokeemerald
+cd server
+cargo build --release                                     # server, for this host
+rustup target add x86_64-pc-windows-gnu
+CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc \
+  cargo build --release -p pokeplanet-net --target x86_64-pc-windows-gnu
+cargo test                                                # 13 tests
 ```
 
-Linux objects are kept separately under `build/linux`, so they do not interfere with the Windows build.
+The server reads its configuration from the environment; see `server/server/src/config.rs`.
+Secrets belong in a root-only systemd `EnvironmentFile`, never the repository.
 
-The resulting executable is `pokeemerald` in the repository root.
+### Testing multiplayer without a second account
 
-## Display Settings
-
-The in-game Options menu includes a `DISPLAY` page. Settings apply immediately and are written to `pokeemerald.cfg`; Android stores the same config in the app's private storage.
-
-Desktop builds support fullscreen, window size, integer scaling, VSync, border frame visibility, background selection, and volume. Android supports border frame visibility, background selection, and volume.
-
-## Border Artwork
-
-Windows, Linux, and Android use the same border assets from the repository root:
-
-- `Border.png` is the transparent frame fitted around the centered 3:2 gameplay viewport.
-- `BG.png` is the default background and scales independently to fill the complete output.
-- `BG1.png`, `BG2.png`, and subsequent sequentially numbered files add selectable backgrounds after the default `BG` entry.
-
-The background selector order is `BG`, `BG 1`, `BG 2`, and so on, followed by `OFF` for a plain black background. Numbered files must be contiguous; for example, `BG2.png` is only detected when `BG1.png` is also present.
-
-Backgrounds and the frame should use a 1280x720 canvas. Keep the frame opening centered at the same location and dimensions as `Border.png` so it remains aligned at different output aspect ratios.
-
-## Saving
-
-Save data is read from and written to:
-
-```text
-pokeemerald.sav
-```
-
-Keep this file if you clean or move the build.
-
-## Android Build
-
-The Android project targets API 36 and `armeabi-v7a`. The 32-bit ABI is required by the game's current pointer layout. Android SDK 36, NDK `26.3.11579264`, CMake 3.22.1, and a compatible JDK are required.
-
-Initialize SDL2 and apply the Android lifecycle patch once after cloning:
+`ghost` is a headless player that signs in with an existing session token and walks a loop,
+printing every snapshot it receives:
 
 ```sh
-git submodule update --init --recursive
-git -C android/SDL2 apply ../patches/sdl2-android-lifecycle.patch
+cargo run -p pokeplanet-net --bin ghost -- \
+  --token <session-token> --map 0:9 --at 18,17
 ```
 
-Set `JAVA_HOME` and `ANDROID_HOME`, then build with SDL2's Gradle wrapper:
+---
 
-```sh
-android/SDL2/android-project/gradlew -p android :app:assembleDebug
-```
+## Roadmap
 
-Install the debug APK on a connected device with:
+| | Status |
+| --- | --- |
+| Discord OAuth2 sign-in, session tokens | **Done** |
+| QUIC transport, presence, reconnection | **Done** |
+| Other players visible and animated in the overworld | **Done** |
+| Random overworld sprite per character | **Done** |
+| Server-held save summary on the sign-in screen | **Done** |
+| Server-side chat routing + IRC bridge | **Done** (no in-game UI yet) |
+| In-game chat: global, per-map, private | In progress |
+| Friends, PMs and battle invitations in the PokéNav | In progress |
+| Server-authoritative saves — no local save file | Planned |
+| Player-vs-player battles, simulated server-side | Planned |
 
-```sh
-adb install -r android/app/build/outputs/apk/debug/app-debug.apk
-```
+The full architectural plan, including why server-side battles reuse the game's own engine
+rather than reimplementing it, is tracked in the project's masterplan.
 
-Android saves are stored in the app's writable private storage. Windows and Linux continue to use `pokeemerald.sav` in the working directory.
+---
 
-Android includes a labeled multitouch overlay for the D-pad, A, B, Start, Select, L, and R.
+## Design notes
 
-## Upstream Project
+A few decisions worth knowing if you are reading the code.
 
-This repository is based on the Pokémon Emerald decompilation. The upstream project builds the following ROM:
+**Other players are ordinary object events.** They spawn through
+`SpawnSpecialObjectEventParameterized` with reserved local IDs from 200 up, so they inherit
+sprites, elevation, reflections and walk animations for free. A one-tile move is played as a
+real walk; anything larger snaps.
 
-- `pokeemerald.gba`
-- SHA-1: `f3ae088181bf583e55daf962a92bb46f4f1d07b7`
+**Movement rides QUIC datagrams, not streams.** A dropped position is superseded 100ms
+later, so retransmitting it would only add latency. Control traffic — auth, chat, invitations
+— uses a reliable stream.
 
-See [INSTALL.md](INSTALL.md) for the original decompilation setup and [pret.github.io](https://pret.github.io/) for other pret projects.
+**Two encodings, on purpose.** Server↔sidecar is bincode and free to evolve.
+Sidecar↔game is fixed-layout little-endian, so the 32-bit C side can read a record without a
+parser or an allocator.
 
-## Legal
+**Presence is keyed by connection, not character.** A player can briefly hold two
+connections during a reconnect; without session epochs the older one's teardown would evict
+the live session and silently stop its updates.
 
-Pokémon and Pokémon Emerald are trademarks of Nintendo, Creatures Inc., and GAME FREAK inc. This is an unofficial fan project and is not affiliated with or endorsed by those companies.
+---
 
-The scoped license in [LICENSE](LICENSE) applies only to original multiplatform-port modifications contributed through this fork. It does not relicense upstream code, third-party components, or copyrighted game assets.
+## Credits and legal
+
+Built on [pret/pokeemerald][pret] and [gradenGnostic/pokeemerald-multiplatform][upstream].
+The enormous work of decompiling and porting the game belongs to those projects.
+
+Pokémon and Pokémon Emerald are trademarks of Nintendo, Creatures Inc. and GAME FREAK inc.
+This is an unofficial fan project, not affiliated with or endorsed by them. No copyrighted
+game assets or ROM data are distributed here; you supply your own. The scoped licence in
+[LICENSE](LICENSE) covers only original modifications contributed through this fork and does
+not relicense upstream code or third-party components.
+
+[pret]: https://github.com/pret/pokeemerald
+[upstream]: https://github.com/gradenGnostic/pokeemerald-multiplatform
