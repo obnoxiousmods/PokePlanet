@@ -27,10 +27,13 @@ CREATE TABLE IF NOT EXISTS characters (
     name        TEXT NOT NULL,
     -- Overworld sprite, picked at random from the NPC set when the character is made.
     graphics_id SMALLINT NOT NULL,
-    map_group   SMALLINT NOT NULL DEFAULT 1,
-    map_num     SMALLINT NOT NULL DEFAULT 4,
-    pos_x       SMALLINT NOT NULL DEFAULT 8,
-    pos_y       SMALLINT NOT NULL DEFAULT 8,
+    -- Littleroot Town, the centre of the map. Positions are in the game's runtime
+    -- coordinate space (ObjectEvent::currentCoords), which is the map template
+    -- coordinate plus MAP_OFFSET, because that is what the client reports.
+    map_group   SMALLINT NOT NULL DEFAULT 0,
+    map_num     SMALLINT NOT NULL DEFAULT 9,
+    pos_x       SMALLINT NOT NULL DEFAULT 17,
+    pos_y       SMALLINT NOT NULL DEFAULT 18,
     facing      SMALLINT NOT NULL DEFAULT 1,
     elevation   SMALLINT NOT NULL DEFAULT 3,
     money       INTEGER NOT NULL DEFAULT 3000,
@@ -97,6 +100,22 @@ CREATE TABLE IF NOT EXISTS pokemon (
     UNIQUE (character_id, box_id, slot)
 );
 CREATE INDEX IF NOT EXISTS pokemon_character_idx ON pokemon(character_id);
+
+-- Story progression. The game tracks quests as a flag bitfield and a var array in
+-- SaveBlock1; mirroring them verbatim keeps the server authoritative over where a player
+-- is in the story without reinterpreting every script in the game.
+CREATE TABLE IF NOT EXISTS story_state (
+    character_id BIGINT PRIMARY KEY REFERENCES characters(id) ON DELETE CASCADE,
+    flags        BYTEA NOT NULL DEFAULT ''::bytea,
+    vars         BYTEA NOT NULL DEFAULT ''::bytea,
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- Existing deployments were created before Littleroot became the default spawn.
+ALTER TABLE characters ALTER COLUMN map_group SET DEFAULT 0;
+ALTER TABLE characters ALTER COLUMN map_num   SET DEFAULT 9;
+ALTER TABLE characters ALTER COLUMN pos_x     SET DEFAULT 17;
+ALTER TABLE characters ALTER COLUMN pos_y     SET DEFAULT 18;
 "#;
 
 pub async fn connect(url: &str) -> anyhow::Result<Db> {
