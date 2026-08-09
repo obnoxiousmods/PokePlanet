@@ -93,11 +93,45 @@ impl World {
     }
 
     /// Update a pose, ignoring reports from a connection that has been superseded.
-    pub async fn update_pose(&self, id: PlayerId, session: SessionId, pose: Pose) {
-        if let Some(p) = self.players.write().await.get_mut(&id) {
-            if p.session == session {
-                p.pose = pose;
-            }
+    ///
+    /// Returns the pose the server considers real. When that differs from what was
+    /// reported, the client is out of step and has to be corrected.
+    ///
+    /// The client used to be believed outright, which made position the easiest thing in
+    /// the game to cheat: a patched client could stand anywhere, on any map, instantly.
+    /// A step is now only accepted if it continues from the position the server already
+    /// accepted, which needs no knowledge of the map at all and still rules out teleporting
+    /// and moving faster than the game can walk.
+    ///
+    /// It does not yet rule out walking through a wall -- that needs the map's collision,
+    /// which the server does not have yet.
+    pub async fn update_pose(&self, id: PlayerId, session: SessionId, pose: Pose) -> Option<Pose> {
+        let mut players = self.players.write().await;
+        let p = players.get_mut(&id)?;
+        if p.session != session {
+            return None;
+        }
+
+        // A map change is the one legitimate way to appear somewhere unrelated. Warps are
+        // still the client's call for now, so this trusts it; once warps are server-side
+        // this becomes the check that they were adjacent to a real door.
+        if pose.map != p.pose.map {
+            p.pose = pose;
+            return Some(pose);
+        }
+
+        let dx = (pose.x - p.pose.x).abs();
+        let dy = (pose.y - p.pose.y).abs();
+
+        // Standing still, turning, or a single step along one axis. Diagonals are not a
+        // thing the player avatar can do.
+        let legal = (dx == 0 && dy == 0) || (dx + dy == 1);
+        if legal {
+            p.pose = pose;
+            Some(pose)
+        } else {
+            // Refused. Hand back where they actually are so the client can put them there.
+            Some(p.pose)
         }
     }
 
@@ -337,6 +371,48 @@ mod tests {
             },
             rx,
         )
+    }
+
+    #[tokio::test]
+    async fn a_single_step_is_accepted_and_a_teleport_is_not() {
+        let world = World::new();
+        let (a, _ra) = presence(1, "Ash", 10, 10);
+        world.join(1, a).await;
+        let session = world.players.read().await[&1].session;
+
+        let step = Pose { map: MapId::new(1, 4), x: 10, y: 11, ..Default::default() };
+        assert_eq!(
+            world.update_pose(1, session, step).await,
+            Some(step),
+            "a one-tile step should be accepted"
+        );
+
+        // Across the map in one report: the classic teleport.
+        let jump = Pose { map: MapId::new(1, 4), x: 40, y: 60, ..Default::default() };
+        let answer = world.update_pose(1, session, jump).await.unwrap();
+        assert_ne!(answer, jump, "a teleport was accepted");
+        assert_eq!(
+            (answer.x, answer.y),
+            (10, 11),
+            "the refusal should hand back the last position the server accepted"
+        );
+
+        // And the refusal must not have moved them either.
+        assert_eq!(world.pose_of(1).await.map(|p| (p.x, p.y)), Some((10, 11)));
+    }
+
+    #[tokio::test]
+    async fn a_diagonal_step_is_refused() {
+        let world = World::new();
+        let (a, _ra) = presence(1, "Ash", 5, 5);
+        world.join(1, a).await;
+        let session = world.players.read().await[&1].session;
+
+        // The player avatar cannot move diagonally, so one report covering both axes is
+        // two steps' worth of distance in one tick.
+        let diagonal = Pose { map: MapId::new(1, 4), x: 6, y: 6, ..Default::default() };
+        let answer = world.update_pose(1, session, diagonal).await.unwrap();
+        assert_ne!(answer, diagonal, "a diagonal step was accepted");
     }
 
     #[tokio::test]

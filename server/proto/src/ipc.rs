@@ -37,6 +37,8 @@ pub const MSG_SAVE_IMAGE: u8 = 0x08;
 /// Both players agreed to battle. Carries the opponent and the slot the server assigned
 /// this player, which is what decides who runs the battle engine.
 pub const MSG_BATTLE_STARTING: u8 = 0x09;
+/// The server refused a step and this is where the player really is.
+pub const MSG_CORRECTION: u8 = 0x0A;
 
 // Game -> sidecar
 pub const MSG_SELF_STATE: u8 = 0x81;
@@ -162,6 +164,19 @@ pub fn encode_battle_starting(opponent: PlayerId, opponent_name: &str, link_id: 
     b.push(link_id);
     b.extend_from_slice(&opponent.to_le_bytes());
     put_str(&mut b, opponent_name, NAME_LEN);
+    frame(b)
+}
+
+/// Put the player back where the server says they are.
+pub fn encode_correction(pose: &Pose) -> Vec<u8> {
+    let mut b = Vec::with_capacity(8);
+    b.push(MSG_CORRECTION);
+    b.push(pose.map.group);
+    b.push(pose.map.num);
+    b.extend_from_slice(&pose.x.to_le_bytes());
+    b.extend_from_slice(&pose.y.to_le_bytes());
+    b.push(pose.facing);
+    b.push(pose.elevation);
     frame(b)
 }
 

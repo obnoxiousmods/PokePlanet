@@ -437,7 +437,26 @@ async fn movement_loop(
             datagram = conn.read_datagram() => {
                 let Ok(bytes) = datagram else { return };
                 match quic::decode::<ClientMovement>(&bytes) {
-                    Ok(m) => server.world.update_pose(player_id, session, m.pose).await,
+                    Ok(m) => {
+                        let accepted = server.world.update_pose(player_id, session, m.pose).await;
+                        // Only speak up when the client is somewhere the server does not
+                        // agree with. Saying nothing the rest of the time keeps this at
+                        // zero cost for everyone playing honestly.
+                        if let Some(truth) = accepted {
+                            if truth != m.pose {
+                                tracing::debug!(
+                                    player = player_id,
+                                    claimed = ?(m.pose.x, m.pose.y),
+                                    actual = ?(truth.x, truth.y),
+                                    "refused an impossible step"
+                                );
+                                server
+                                    .world
+                                    .tell(player_id, ServerControl::Correction { pose: truth })
+                                    .await;
+                            }
+                        }
+                    }
                     Err(e) => tracing::debug!(player = player_id, error = %e, "bad movement datagram"),
                 }
             }

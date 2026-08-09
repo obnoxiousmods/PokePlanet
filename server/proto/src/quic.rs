@@ -115,6 +115,11 @@ pub enum ServerControl {
     /// returns 0 on both machines -- leaving both convinced they are the master. An
     /// externally assigned id is what makes exactly one of them right.
     BattleStarting { opponent: PlayerId, opponent_name: String, link_id: u8 },
+    /// The client is somewhere the server does not agree with, and this is where it really
+    /// is. Sent only when a reported step was refused, so an honest client never sees one.
+    ///
+    /// Appended, like every variant after Rejected, so numbering never shifts.
+    Correction { pose: Pose },
 }
 
 /// Position report, sent by the client at roughly 10Hz on a datagram.

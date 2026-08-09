@@ -292,6 +292,10 @@ impl Session {
                                 ))
                                 .await;
                         }
+                        ServerControl::Correction { pose } => {
+                            tracing::debug!(x = pose.x, y = pose.y, "corrected");
+                            self.link.send(wire::encode_correction(&pose)).await;
+                        }
                         ServerControl::Superseded { reason } => {
                             tracing::warn!(%reason, "signed in elsewhere; shutting down");
                             self.report(wire::AUTH_SUPERSEDED, "", &reason).await;
