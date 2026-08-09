@@ -293,6 +293,11 @@ impl Session {
                                 ))
                                 .await;
                         }
+                        ServerControl::LinkBlock { from_slot, bytes } => {
+                            self.link
+                                .send(wire::encode_link_block(from_slot, &bytes))
+                                .await;
+                        }
                         ServerControl::Correction { pose } => {
                             tracing::debug!(x = pose.x, y = pose.y, "corrected");
                             self.link.send(wire::encode_correction(&pose)).await;
@@ -407,6 +412,9 @@ impl Session {
                                     save_image.clear();
                                 }
                             }
+                        }
+                        wire::GameMessage::LinkBlock { bytes } => {
+                            write_control(&mut send, &ClientControl::LinkBlock { bytes }).await?;
                         }
                         wire::GameMessage::Attached => {
                             // Only worth asking once signed in. Before that the sign-in

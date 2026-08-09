@@ -32,6 +32,12 @@ pub struct Presence {
     pub control: mpsc::Sender<ServerControl>,
     /// Who has challenged this player and is awaiting an answer.
     pub pending_invite: Option<PlayerId>,
+    /// The battle this player is in, if any.
+    ///
+    /// Battle traffic is forwarded rather than broadcast, and this is the only thing that
+    /// says where to. Recorded on both sides when an invitation is accepted, so a block
+    /// can never reach someone who is not in the battle it belongs to.
+    pub battle: Option<BattleSeat>,
     /// The next reported position is taken as given rather than checked.
     ///
     /// True on joining and after a map change, because a warp legitimately puts the
@@ -40,6 +46,19 @@ pub struct Presence {
     /// a map change followed by a report from wherever the door leads, which looks
     /// exactly like a teleport and gets refused.
     pub position_unknown: bool,
+}
+
+/// A player's place in a battle.
+///
+/// One value rather than two fields, because a peer without a slot (or the wrong slot) is
+/// not a state that should be representable: the slot decides which machine runs the battle
+/// engine, and getting it wrong means either both do or neither does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BattleSeat {
+    /// The other player.
+    pub peer: PlayerId,
+    /// This player's link id. Slot 0 runs the engine; slot 1 follows it.
+    pub slot: u8,
 }
 
 #[derive(Default)]
@@ -117,10 +136,22 @@ impl World {
             match players.get(&id) {
                 Some(p) if p.session == session => {
                     let map = p.pose.map;
+                    // Read who they were battling before removing them, or their opponent
+                    // is left seated in a battle against somebody who no longer exists.
+                    let peer = p.battle.map(|s| s.peer);
                     let gone = players.remove(&id).is_some();
                     if gone {
                         if let Some(set) = self.by_map.write().await.get_mut(&map) {
                             set.remove(&id);
+                        }
+                        if let Some(peer) = peer {
+                            if let Some(other) = players.get_mut(&peer) {
+                                // Only if they still name this player, since they may
+                                // already have started another battle.
+                                if other.battle.map(|s| s.peer) == Some(id) {
+                                    other.battle = None;
+                                }
+                            }
                         }
                     }
                     gone
@@ -422,8 +453,50 @@ impl World {
                 });
             }
         }
+        drop(players);
+
+        // Seat them only after both have been told, and with the same slots they were told,
+        // so what the server forwards by can never disagree with what the clients believe.
+        if accepted {
+            let mut players = self.players.write().await;
+            if let Some(p) = players.get_mut(&from) {
+                p.battle = Some(BattleSeat { peer: responder, slot: 0 });
+            }
+            if let Some(p) = players.get_mut(&responder) {
+                p.battle = Some(BattleSeat { peer: from, slot: 1 });
+            }
+        }
         Ok(())
     }
+
+    /// Forward one block of battle traffic to whoever the sender is battling.
+    ///
+    /// Returns false when there is nobody to forward to, which is the normal answer for a
+    /// client that keeps sending after its opponent has gone. The bytes are not interpreted:
+    /// the battle engine's blocks mean nothing to the server, and it only has to know who
+    /// they belong to.
+    pub async fn route_link_block(&self, from: PlayerId, bytes: Vec<u8>) -> bool {
+        let players = self.players.read().await;
+        let Some(me) = players.get(&from) else {
+            return false;
+        };
+        let Some(seat) = me.battle else {
+            return false;
+        };
+        let Some(peer) = players.get(&seat.peer) else {
+            return false;
+        };
+        // Peers must agree they are in the same battle. Without this a stale seat left by a
+        // player who has already started another battle would leak blocks into it.
+        if peer.battle.map(|s| s.peer) != Some(from) {
+            return false;
+        }
+        peer.control
+            .try_send(ServerControl::LinkBlock { from_slot: seat.slot, bytes })
+            .is_ok()
+    }
+
+
 
     /// Send one control message to a single player.
     pub async fn tell(&self, id: PlayerId, msg: ServerControl) {
@@ -465,6 +538,7 @@ mod tests {
                 },
                 control: tx,
                 pending_invite: None,
+                battle: None,
                 position_unknown: true,
             },
             rx,
@@ -796,6 +870,86 @@ mod tests {
             .route_chat(1, "Ash", &ChatTarget::Private("Nobody".into()), "hey")
             .await;
         assert!(!ok);
+    }
+
+    /// Accepting seats both players, and a block reaches the opponent tagged with the
+    /// sender's slot -- which is what the game files it under.
+    #[tokio::test]
+    async fn a_block_reaches_the_opponent_with_the_senders_slot() {
+        let world = World::new();
+        let (a, mut ra) = presence(1, "Ash", 0, 0);
+        let (b, mut rb) = presence(2, "Misty", 0, 0);
+        world.join(1, a).await;
+        world.join(2, b).await;
+        world.invite_to_battle(1, 2).await.unwrap();
+        world.answer_battle(2, 1, true).await.unwrap();
+        while ra.try_recv().is_ok() {}
+        while rb.try_recv().is_ok() {}
+
+        assert!(world.route_link_block(1, vec![7, 8, 9]).await);
+        match rb.try_recv() {
+            Ok(ServerControl::LinkBlock { from_slot, bytes }) => {
+                assert_eq!(from_slot, 0, "the challenger is slot 0");
+                assert_eq!(bytes, vec![7, 8, 9]);
+            }
+            other => panic!("expected a block, got {other:?}"),
+        }
+
+        // And the other way, from slot 1.
+        assert!(world.route_link_block(2, vec![1]).await);
+        match ra.try_recv() {
+            Ok(ServerControl::LinkBlock { from_slot, .. }) => assert_eq!(from_slot, 1),
+            other => panic!("expected a block, got {other:?}"),
+        }
+    }
+
+    /// Blocks from someone who is not in a battle go nowhere. Without this a client could
+    /// push traffic at anyone by inventing it.
+    #[tokio::test]
+    async fn a_block_from_nobodys_battle_is_dropped() {
+        let world = World::new();
+        let (a, _ra) = presence(1, "Ash", 0, 0);
+        let (b, mut rb) = presence(2, "Misty", 0, 0);
+        world.join(1, a).await;
+        world.join(2, b).await;
+        while rb.try_recv().is_ok() {}
+
+        assert!(!world.route_link_block(1, vec![1, 2, 3]).await);
+        assert!(rb.try_recv().is_err(), "an unseated player must not reach anyone");
+    }
+
+    /// Declining seats nobody, so the battle traffic has nowhere to go.
+    #[tokio::test]
+    async fn declining_leaves_both_players_unseated() {
+        let world = World::new();
+        let (a, _ra) = presence(1, "Ash", 0, 0);
+        let (b, _rb) = presence(2, "Misty", 0, 0);
+        world.join(1, a).await;
+        world.join(2, b).await;
+        world.invite_to_battle(1, 2).await.unwrap();
+        world.answer_battle(2, 1, false).await.unwrap();
+
+        assert!(!world.route_link_block(1, vec![1]).await);
+        assert!(!world.route_link_block(2, vec![1]).await);
+    }
+
+    /// When one player drops, the other must not be left seated against a ghost.
+    #[tokio::test]
+    async fn leaving_unseats_the_opponent() {
+        let world = World::new();
+        let (a, _ra) = presence(1, "Ash", 0, 0);
+        let (b, _rb) = presence(2, "Misty", 0, 0);
+        let session_a = a.session;
+        world.join(1, a).await;
+        world.join(2, b).await;
+        world.invite_to_battle(1, 2).await.unwrap();
+        world.answer_battle(2, 1, true).await.unwrap();
+
+        world.leave(1, session_a).await;
+        assert!(
+            !world.route_link_block(2, vec![1]).await,
+            "the survivor should no longer be in a battle"
+        );
     }
 
     #[tokio::test]

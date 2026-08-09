@@ -24,6 +24,10 @@ const MAX_SAVE_BYTES: usize = 128 * 1024;
 /// Slice size for handing a stored save back to a client.
 const SAVE_STREAM_CHUNK: usize = 1024;
 
+/// The game's BLOCK_BUFFER_SIZE. A block larger than the buffer it is destined for cannot
+/// be anything the battle engine produced.
+const MAX_LINK_BLOCK: usize = 256;
+
 pub struct Server {
     pub cfg: Arc<Config>,
     pub db: Db,
@@ -266,6 +270,7 @@ async fn run_session(
             Presence {
                 session,
                 pending_invite: None,
+            battle: None,
                 position_unknown: true,
                 character_id: character.id,
                 name: name.clone(),
@@ -457,6 +462,17 @@ async fn control_loop(
                     )
                     .await;
                 hand_over_save(server, conn, character_id, player_id).await?;
+            }
+            ClientControl::LinkBlock { bytes } => {
+                // The game's own buffer is 256 bytes, so anything larger is a broken or
+                // hostile client rather than a battle.
+                if bytes.len() > MAX_LINK_BLOCK {
+                    tracing::warn!(
+                        player = player_id, len = bytes.len(), "refusing an oversized block"
+                    );
+                    break;
+                }
+                server.world.route_link_block(player_id, bytes).await;
             }
             ClientControl::Goodbye => break,
             ClientControl::Hello { .. } | ClientControl::BeginLogin | ClientControl::PollLogin { .. } => {

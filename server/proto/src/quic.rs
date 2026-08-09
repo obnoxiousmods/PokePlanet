@@ -54,6 +54,13 @@ pub enum ClientControl {
     ///
     /// Appended so the existing variant numbering does not shift.
     Resync,
+    /// One block of link-battle traffic, for whoever this player is battling.
+    ///
+    /// The battle engine exchanges fixed-size blocks -- party data, chosen moves, the
+    /// handshake -- and this carries them verbatim. The server does not interpret them
+    /// here; it knows who is battling whom and forwards. `BLOCK_BUFFER_SIZE` in the game
+    /// is 256 bytes, which is the ceiling this must respect.
+    LinkBlock { bytes: Vec<u8> },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -135,6 +142,11 @@ pub enum ServerControl {
     ///
     /// Appended, like every variant after Rejected, so numbering never shifts.
     Correction { pose: Pose },
+    /// One block of link-battle traffic from the player this one is battling.
+    ///
+    /// `from_slot` is the sender's link id, which is the index the game files the block
+    /// under in gBlockRecvBuffer.
+    LinkBlock { from_slot: u8, bytes: Vec<u8> },
 }
 
 /// Position report, sent by the client at roughly 10Hz on a datagram.

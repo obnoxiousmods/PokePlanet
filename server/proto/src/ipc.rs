@@ -39,6 +39,8 @@ pub const MSG_SAVE_IMAGE: u8 = 0x08;
 pub const MSG_BATTLE_STARTING: u8 = 0x09;
 /// The server refused a step and this is where the player really is.
 pub const MSG_CORRECTION: u8 = 0x0A;
+/// One block of link-battle traffic from the opponent: u8 from_slot, u16 len, bytes.
+pub const MSG_LINK_BLOCK: u8 = 0x0B;
 
 // Game -> sidecar
 pub const MSG_SELF_STATE: u8 = 0x81;
@@ -53,6 +55,8 @@ pub const MSG_BATTLE_RESPOND: u8 = 0x87;
 /// A slice of the save. Sent in pieces because the whole flash image is 128KB and the game
 /// must not sit in a single blocking write. Layout: u32 offset, u32 total, u16 len, bytes.
 pub const MSG_SAVE_CHUNK: u8 = 0x88;
+/// One block of link-battle traffic for the opponent: u16 len, bytes.
+pub const MSG_LINK_BLOCK_SEND: u8 = 0x89;
 
 /// Mirrors `enum NetAuthState` in the C header.
 pub const AUTH_OFFLINE: u8 = 0;
@@ -246,6 +250,14 @@ pub fn encode_chat(kind: u8, from: &str, text: &str) -> Vec<u8> {
     frame(b)
 }
 
+/// One block of battle traffic for the game, filed under the sender's link slot.
+pub fn encode_link_block(from_slot: u8, bytes: &[u8]) -> Vec<u8> {
+    let mut b = vec![MSG_LINK_BLOCK, from_slot];
+    b.extend_from_slice(&(bytes.len() as u16).to_le_bytes());
+    b.extend_from_slice(bytes);
+    frame(b)
+}
+
 /// A message the game sent us.
 #[derive(Debug, Clone)]
 pub enum GameMessage {
@@ -259,6 +271,8 @@ pub enum GameMessage {
     /// One slice of the save. `total` is the whole image, so the receiver knows when it
     /// has all of it without a separate end marker.
     SaveChunk { offset: u32, total: u32, bytes: Vec<u8> },
+    /// One block of link-battle traffic, bound for whoever this player is battling.
+    LinkBlock { bytes: Vec<u8> },
     /// A game process connected to the sidecar.
     ///
     /// Synthesised locally rather than decoded from a frame: the game cannot send this,
@@ -272,6 +286,18 @@ pub fn decode_game_message(body: &[u8]) -> anyhow::Result<GameMessage> {
         .split_first()
         .ok_or_else(|| anyhow::anyhow!("empty IPC frame"))?;
     match kind {
+        MSG_LINK_BLOCK_SEND => {
+            if rest.len() < 2 {
+                anyhow::bail!("short link block");
+            }
+            let len = u16::from_le_bytes([rest[0], rest[1]]) as usize;
+            if rest.len() < 2 + len {
+                anyhow::bail!("truncated link block");
+            }
+            Ok(GameMessage::LinkBlock {
+                bytes: rest[2..2 + len].to_vec(),
+            })
+        }
         MSG_SELF_STATE => {
             if rest.len() < 10 {
                 anyhow::bail!("short SELF_STATE frame ({} bytes)", rest.len());
