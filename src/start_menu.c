@@ -34,6 +34,7 @@
 #include "scanline_effect.h"
 #include "script.h"
 #include "sound.h"
+#include "net_client.h"
 #include "start_menu.h"
 #include "strings.h"
 #include "string_util.h"
@@ -331,7 +332,14 @@ static void BuildNormalStartMenu(void)
     }
 
     AddStartMenuAction(MENU_ACTION_PLAYER);
-    AddStartMenuAction(MENU_ACTION_SAVE);
+
+    // No SAVE. The character belongs to the server and the game writes it out by
+    // itself whenever anything changes, so offering the option would be offering a
+    // choice that does not exist -- and inviting the old habit of losing an afternoon
+    // by forgetting. Offline play has no server to save to, so it keeps the option.
+    if (Net_GetAuthState() != NET_AUTH_ONLINE)
+        AddStartMenuAction(MENU_ACTION_SAVE);
+
     AddStartMenuAction(MENU_ACTION_OPTION);
     AddStartMenuAction(MENU_ACTION_EXIT);
 }

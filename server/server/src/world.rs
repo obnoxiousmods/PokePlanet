@@ -5,7 +5,7 @@
 
 use pokeplanet_proto::quic::{ChatTarget, RemotePlayer, ServerControl};
 use pokeplanet_proto::{MapId, PlayerId, Pose, MAX_VISIBLE_PLAYERS};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 
@@ -37,6 +37,14 @@ pub struct Presence {
 #[derive(Default)]
 pub struct World {
     players: RwLock<HashMap<PlayerId, Presence>>,
+    /// Who is on which map.
+    ///
+    /// Snapshots go out to every player ten times a second, and each one only ever
+    /// concerns the handful of people sharing that map. Without this every snapshot
+    /// walks the entire player table, which is fine for five players and quadratic for
+    /// a thousand: at that size it is ten million comparisons a second, all of them
+    /// holding the same lock.
+    by_map: RwLock<HashMap<MapId, HashSet<PlayerId>>>,
     /// Where players may stand. Empty when the table could not be loaded, in which case
     /// steps are still checked for being single steps, just not for hitting walls.
     collision: crate::collision::Collision,
@@ -59,10 +67,20 @@ impl World {
             name: presence.name.clone(),
             graphics_id: presence.graphics_id,
         };
+        let map = presence.pose.map;
         let displaced = {
             let mut players = self.players.write().await;
             players.insert(id, presence)
         };
+        {
+            let mut by_map = self.by_map.write().await;
+            if let Some(old) = displaced.as_ref() {
+                if let Some(set) = by_map.get_mut(&old.pose.map) {
+                    set.remove(&id);
+                }
+            }
+            by_map.entry(map).or_default().insert(id);
+        }
 
         // One character cannot be in two places. The old connection was already being
         // ignored from here on -- update_pose and session_is_current both check the
@@ -89,7 +107,16 @@ impl World {
         let removed = {
             let mut players = self.players.write().await;
             match players.get(&id) {
-                Some(p) if p.session == session => players.remove(&id).is_some(),
+                Some(p) if p.session == session => {
+                    let map = p.pose.map;
+                    let gone = players.remove(&id).is_some();
+                    if gone {
+                        if let Some(set) = self.by_map.write().await.get_mut(&map) {
+                            set.remove(&id);
+                        }
+                    }
+                    gone
+                }
                 _ => false,
             }
         };
@@ -123,7 +150,14 @@ impl World {
         // still the client's call for now, so this trusts it; once warps are server-side
         // this becomes the check that they were adjacent to a real door.
         if pose.map != p.pose.map {
+            let was = p.pose.map;
             p.pose = pose;
+            drop(players);
+            let mut by_map = self.by_map.write().await;
+            if let Some(set) = by_map.get_mut(&was) {
+                set.remove(&id);
+            }
+            by_map.entry(pose.map).or_default().insert(id);
             return Some(pose);
         }
 
@@ -169,11 +203,16 @@ impl World {
     /// ones win — a crowd should thin out at the edges rather than pop in and out at
     /// random, which is what an arbitrary hash-order truncation would look like.
     pub async fn snapshot(&self, viewer: PlayerId, map: MapId, from: Pose) -> Vec<RemotePlayer> {
+        let here = match self.by_map.read().await.get(&map) {
+            Some(set) => set.clone(),
+            None => return Vec::new(),
+        };
+
         let players = self.players.read().await;
-        let mut visible: Vec<&Presence> = players
+        let mut visible: Vec<&Presence> = here
             .iter()
-            .filter(|(id, p)| **id != viewer && p.pose.map == map)
-            .map(|(_, p)| p)
+            .filter(|id| **id != viewer)
+            .filter_map(|id| players.get(id))
             .collect();
 
         if visible.len() > MAX_VISIBLE_PLAYERS {
@@ -382,6 +421,30 @@ mod tests {
             },
             rx,
         )
+    }
+
+    #[tokio::test]
+    async fn walking_to_another_map_moves_you_in_the_index() {
+        let world = World::new();
+        let (a, _ra) = presence(1, "Ash", 5, 5);
+        let (b, _rb) = presence(2, "Misty", 6, 5);
+        world.join(1, a).await;
+        world.join(2, b).await;
+        let session = world.players.read().await[&1].session;
+
+        let here = MapId::new(1, 4);
+        let there = MapId::new(2, 7);
+
+        // They start together and can see each other.
+        assert_eq!(world.snapshot(2, here, Pose::default()).await.len(), 1);
+
+        let moved = Pose { map: there, x: 5, y: 5, ..Default::default() };
+        world.update_pose(1, session, moved).await;
+
+        // Gone from the old map, present on the new one. An index left un-updated shows
+        // this as a ghost standing on a map nobody is on.
+        assert!(world.snapshot(2, here, Pose::default()).await.is_empty());
+        assert_eq!(world.snapshot(2, there, Pose::default()).await.len(), 1);
     }
 
     #[tokio::test]
