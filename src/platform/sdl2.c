@@ -1018,9 +1018,80 @@ static u16 ControllerButtonMask(Uint8 button)
 }
 #endif
 
+// Scripted input for automated testing.
+//
+// A headless run has no keyboard, so nothing drives the game past the title screen and
+// any code path behind a menu is unreachable. POKEPLANET_AUTOKEYS makes the build
+// self-driving: a comma-separated key list, one press every POKEPLANET_AUTOKEY_FRAMES
+// frames (default 45). That is what lets the whole client be exercised under gdb in a
+// terminal instead of by hand on a desktop.
+//
+//   POKEPLANET_AUTOKEYS=enter,enter,z,z,down,down,z ./pokeemerald
+//
+// Recognised: a b start select l r up down left right, and the key names z x enter.
+static void PumpScriptedInput(void)
+{
+    static const char *sScript = NULL;
+    static bool8 sChecked = FALSE;
+    static u32 sFrame = 0;
+    static u32 sIndex = 0;
+    static u32 sInterval = 45;
+    u32 step;
+    const char *cursor;
+    u32 i;
+
+    if (!sChecked)
+    {
+        const char *frames = SDL_getenv("POKEPLANET_AUTOKEY_FRAMES");
+        sScript = SDL_getenv("POKEPLANET_AUTOKEYS");
+        if (frames != NULL && SDL_atoi(frames) > 0)
+            sInterval = SDL_atoi(frames);
+        sChecked = TRUE;
+        if (sScript != NULL)
+            SDL_Log("autokeys: '%s' every %u frames", sScript, (unsigned)sInterval);
+    }
+    if (sScript == NULL)
+        return;
+
+    // Release last frame's press so each key registers as a discrete tap.
+    if (sFrame % sInterval == 1)
+        keyboardKeys = 0;
+
+    if (sFrame++ % sInterval != 0)
+        return;
+
+    // Walk to the sIndex'th comma-separated token.
+    cursor = sScript;
+    for (i = 0; i < sIndex && cursor != NULL; i++)
+    {
+        cursor = SDL_strchr(cursor, ',');
+        if (cursor != NULL)
+            cursor++;
+    }
+    if (cursor == NULL || *cursor == '\0')
+        return; // script exhausted; leave the game running for inspection
+    sIndex++;
+
+    step = 0;
+    if      (SDL_strncasecmp(cursor, "a", 1) == 0 || SDL_strncasecmp(cursor, "z", 1) == 0) step = A_BUTTON;
+    else if (SDL_strncasecmp(cursor, "b", 1) == 0 || SDL_strncasecmp(cursor, "x", 1) == 0) step = B_BUTTON;
+    else if (SDL_strncasecmp(cursor, "start", 5) == 0 || SDL_strncasecmp(cursor, "enter", 5) == 0) step = START_BUTTON;
+    else if (SDL_strncasecmp(cursor, "select", 6) == 0) step = SELECT_BUTTON;
+    else if (SDL_strncasecmp(cursor, "up", 2) == 0)    step = DPAD_UP;
+    else if (SDL_strncasecmp(cursor, "down", 4) == 0)  step = DPAD_DOWN;
+    else if (SDL_strncasecmp(cursor, "left", 4) == 0)  step = DPAD_LEFT;
+    else if (SDL_strncasecmp(cursor, "right", 5) == 0) step = DPAD_RIGHT;
+    else if (SDL_strncasecmp(cursor, "l", 1) == 0)     step = L_BUTTON;
+    else if (SDL_strncasecmp(cursor, "r", 1) == 0)     step = R_BUTTON;
+
+    keyboardKeys = step;
+}
+
 void ProcessEvents(void)
 {
     SDL_Event event;
+
+    PumpScriptedInput();
 
     while (SDL_PollEvent(&event))
     {
