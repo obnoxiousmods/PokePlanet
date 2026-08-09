@@ -422,6 +422,40 @@ async fn control_loop(
                         tracing::info!(
                             player = player_id, bytes = save_image.len(), "save stored"
                         );
+
+                        // Read the save rather than only filing it. This is what turns the
+                        // stored blob into something the server can reason about, and it is
+                        // deliberately done here rather than asked of the client: a summary
+                        // the client wrote would be one more thing to take on trust, whereas
+                        // this is the same bytes the game itself will read back.
+                        //
+                        // A save that will not parse is still kept. The client can already
+                        // play it -- it is the image the game wrote -- and refusing to store
+                        // it would lose real progress over a format this may simply not
+                        // understand yet.
+                        match crate::save_parse::parse(&save_image) {
+                            Some(state) => {
+                                let vars: Vec<u8> = state
+                                    .vars
+                                    .iter()
+                                    .flat_map(|v| v.to_le_bytes())
+                                    .collect();
+                                if let Err(e) = db::store_story_state(
+                                    &server.db, character_id, &state.flags, &vars,
+                                )
+                                .await
+                                {
+                                    tracing::warn!(error = %e, "could not store story state");
+                                }
+                                tracing::info!(
+                                    player = player_id, money = state.money(),
+                                    "progress read from the save"
+                                );
+                            }
+                            None => tracing::warn!(
+                                player = player_id, "could not read the uploaded save"
+                            ),
+                        }
                         save_image.clear();
                     }
                 }

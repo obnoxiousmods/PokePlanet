@@ -322,6 +322,30 @@ pub async fn ensure_character(
     anyhow::bail!("no free character name for {name} after 1000 attempts")
 }
 
+/// Record the story state read out of a character's save.
+///
+/// Kept as the game's own flag bitfield and var array rather than interpreted: the useful
+/// questions -- has this changed, could it have changed that way -- do not need to know what
+/// any individual flag means, and encoding that would mean encoding every script in the game.
+pub async fn store_story_state(
+    db: &Db,
+    character_id: i64,
+    flags: &[u8],
+    vars: &[u8],
+) -> anyhow::Result<()> {
+    let client = db.get().await?;
+    client
+        .execute(
+            "INSERT INTO story_state (character_id, flags, vars, updated_at)
+             VALUES ($1, $2, $3, now())
+             ON CONFLICT (character_id)
+             DO UPDATE SET flags = EXCLUDED.flags, vars = EXCLUDED.vars, updated_at = now()",
+            &[&character_id, &flags, &vars],
+        )
+        .await?;
+    Ok(())
+}
+
 /// Replace this character's save with `image`.
 pub async fn store_save(db: &Db, character_id: i64, image: &[u8]) -> anyhow::Result<()> {
     let client = db.get().await?;

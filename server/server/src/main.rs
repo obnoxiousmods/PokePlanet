@@ -14,6 +14,7 @@ mod db;
 mod http;
 mod irc;
 mod quic;
+mod save_parse;
 mod world;
 
 use anyhow::Context;
