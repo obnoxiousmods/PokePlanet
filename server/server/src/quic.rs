@@ -369,7 +369,7 @@ async fn control_loop(
                 if text.is_empty() {
                     continue;
                 }
-                server.world.route_chat(name, &target, &text).await;
+                server.world.route_chat(player_id, name, &target, &text).await;
                 crate::irc::relay_to_irc(name, &target, &text);
             }
             ClientControl::EnterMap { map } => {

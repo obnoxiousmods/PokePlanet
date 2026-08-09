@@ -128,6 +128,20 @@ ALTER TABLE characters ADD COLUMN IF NOT EXISTS badges         SMALLINT NOT NULL
 ALTER TABLE characters ADD COLUMN IF NOT EXISTS pokedex_caught INTEGER  NOT NULL DEFAULT 0;
 ALTER TABLE characters ADD COLUMN IF NOT EXISTS pokedex_seen   INTEGER  NOT NULL DEFAULT 0;
 
+-- A character name is how other players address someone in a whisper, so two players
+-- cannot share one: a private message would otherwise be delivered to both, and neither
+-- sender nor recipient would have any way to tell. Case-insensitively unique, so that
+-- addressing someone does not depend on reproducing their capitalisation.
+--
+-- Deployments predating this may already hold duplicates, and creating the index while
+-- they exist would fail and take the server down on startup. The earliest holder keeps the
+-- name and later ones are suffixed with their id, which is unique by construction.
+UPDATE characters c SET name = c.name || '#' || c.id
+WHERE EXISTS (
+    SELECT 1 FROM characters o WHERE lower(o.name) = lower(c.name) AND o.id < c.id
+);
+CREATE UNIQUE INDEX IF NOT EXISTS characters_name_key ON characters (lower(name));
+
 -- Existing deployments were created before Littleroot became the default spawn.
 ALTER TABLE characters ALTER COLUMN map_group SET DEFAULT 0;
 ALTER TABLE characters ALTER COLUMN map_num   SET DEFAULT 9;
@@ -248,6 +262,16 @@ pub async fn is_banned(db: &Db, account_id: i64) -> anyhow::Result<bool> {
 ///
 /// `graphics_id` is only used for a brand new character; an existing one keeps the sprite
 /// it was created with so other players see a stable avatar.
+/// True if this error is Postgres refusing a duplicate key.
+fn is_unique_violation(e: &tokio_postgres::Error) -> bool {
+    e.as_db_error().map(|d| d.code().code()) == Some("23505")
+}
+
+/// The character for this account, creating it on first sign-in.
+///
+/// Discord names are not unique and character names have to be, so a new player whose name
+/// is taken gets a number appended. Returning players keep whatever name they were given,
+/// which is why this looks for an existing character before trying to make one.
 pub async fn ensure_character(
     db: &Db,
     account_id: i64,
@@ -255,16 +279,47 @@ pub async fn ensure_character(
     graphics_id: u8,
 ) -> anyhow::Result<Character> {
     let client = db.get().await?;
-    let row = client
-        .query_one(
-            "INSERT INTO characters (account_id, name, graphics_id)
-             VALUES ($1, $2, $3)
-             ON CONFLICT (account_id) DO UPDATE SET name = characters.name
-             RETURNING *",
-            &[&account_id, &name, &(graphics_id as i16)],
-        )
-        .await?;
-    Ok(Character::from_row(&row))
+
+    if let Some(row) = client
+        .query_opt("SELECT * FROM characters WHERE account_id = $1", &[&account_id])
+        .await?
+    {
+        return Ok(Character::from_row(&row));
+    }
+
+    for suffix in 0..1000u32 {
+        let candidate = if suffix == 0 {
+            name.to_string()
+        } else {
+            format!("{name}{suffix}")
+        };
+        let result = client
+            .query_one(
+                "INSERT INTO characters (account_id, name, graphics_id)
+                 VALUES ($1, $2, $3)
+                 RETURNING *",
+                &[&account_id, &candidate, &(graphics_id as i16)],
+            )
+            .await;
+
+        match result {
+            Ok(row) => return Ok(Character::from_row(&row)),
+            Err(e) if is_unique_violation(&e) => {
+                // Either the name is taken or this account just got a character on another
+                // connection. Check the second before assuming the first, or two
+                // simultaneous sign-ins would spend a thousand attempts renaming nobody.
+                if let Some(row) = client
+                    .query_opt("SELECT * FROM characters WHERE account_id = $1", &[&account_id])
+                    .await?
+                {
+                    return Ok(Character::from_row(&row));
+                }
+            }
+            Err(e) => return Err(e.into()),
+        }
+    }
+
+    anyhow::bail!("no free character name for {name} after 1000 attempts")
 }
 
 /// Replace this character's save with `image`.

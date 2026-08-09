@@ -268,7 +268,15 @@ impl World {
 
     /// Deliver a chat message according to its target. Returns false if a private
     /// message had no recipient online.
-    pub async fn route_chat(&self, from: &str, target: &ChatTarget, text: &str) -> bool {
+    /// Deliver a line to whoever should see it. `from_id` identifies the sender; `from` is
+    /// only what recipients are shown.
+    pub async fn route_chat(
+        &self,
+        from_id: PlayerId,
+        from: &str,
+        target: &ChatTarget,
+        text: &str,
+    ) -> bool {
         let msg = ServerControl::Chat {
             from: from.to_string(),
             target: target.clone(),
@@ -284,9 +292,10 @@ impl World {
                 true
             }
             ChatTarget::Local => {
-                // Scope to the sender's own map.
-                let Some(origin) = players.values().find(|p| p.name == from).map(|p| p.pose.map)
-                else {
+                // Scope to the sender's own map, found by id rather than by name: names are
+                // unique, but looking one up to answer a question the caller already knows
+                // the answer to is both slower and a way for the two to disagree.
+                let Some(origin) = players.get(&from_id).map(|p| p.pose.map) else {
                     return false;
                 };
                 for p in players.values().filter(|p| p.pose.map == origin) {
@@ -295,10 +304,17 @@ impl World {
                 true
             }
             ChatTarget::Private(to) => {
+                // Case-insensitively, matching how names are kept unique, so addressing
+                // someone does not require reproducing their capitalisation.
                 let mut delivered = false;
-                for p in players.values().filter(|p| &p.name == to || p.name == from) {
+                for (id, p) in players.iter() {
+                    let is_recipient = p.name.eq_ignore_ascii_case(to);
+                    if !is_recipient && *id != from_id {
+                        continue;
+                    }
+                    // The sender gets a copy so their own whisper appears in their log.
                     let _ = p.control.try_send(msg.clone());
-                    if &p.name == to {
+                    if is_recipient {
                         delivered = true;
                     }
                 }
@@ -703,12 +719,72 @@ mod tests {
         while rc.try_recv().is_ok() {}
 
         let ok = world
-            .route_chat("Ash", &ChatTarget::Private("Misty".into()), "hey")
+            .route_chat(1, "Ash", &ChatTarget::Private("Misty".into()), "hey")
             .await;
         assert!(ok);
         assert!(ra.try_recv().is_ok(), "sender should see their own PM");
         assert!(rb.try_recv().is_ok(), "recipient should receive the PM");
         assert!(rc.try_recv().is_err(), "third party must not receive the PM");
+    }
+
+    /// Names are matched without regard to case, so addressing someone does not depend on
+    /// reproducing their capitalisation.
+    #[tokio::test]
+    async fn a_private_message_finds_its_recipient_whatever_the_case() {
+        let world = World::new();
+        let (a, mut ra) = presence(1, "Ash", 0, 0);
+        let (b, mut rb) = presence(2, "Misty", 0, 0);
+        world.join(1, a).await;
+        world.join(2, b).await;
+        while ra.try_recv().is_ok() {}
+        while rb.try_recv().is_ok() {}
+
+        let ok = world
+            .route_chat(1, "Ash", &ChatTarget::Private("mIsTy".into()), "hey")
+            .await;
+        assert!(ok);
+        assert!(rb.try_recv().is_ok(), "recipient should receive the PM");
+    }
+
+    /// Local chat reaches the sender's own map and stops there. The sender is identified by
+    /// id, so this holds even if someone else were somehow carrying the same name.
+    #[tokio::test]
+    async fn local_chat_stays_on_the_senders_map() {
+        let world = World::new();
+        let (a, mut ra) = presence(1, "Ash", 0, 0);
+        let (b, mut rb) = presence(2, "Misty", 0, 0);
+        let (mut c, mut rc) = presence(3, "Brock", 0, 0);
+        c.pose.map = MapId::new(0, 9); // somewhere else entirely
+        world.join(1, a).await;
+        world.join(2, b).await;
+        world.join(3, c).await;
+        while ra.try_recv().is_ok() {}
+        while rb.try_recv().is_ok() {}
+        while rc.try_recv().is_ok() {}
+
+        let ok = world.route_chat(1, "Ash", &ChatTarget::Local, "hello").await;
+        assert!(ok);
+        assert!(ra.try_recv().is_ok(), "sender should see their own line");
+        assert!(rb.try_recv().is_ok(), "someone on the same map should hear it");
+        assert!(rc.try_recv().is_err(), "someone on another map must not");
+    }
+
+    /// Global reaches everyone, wherever they are standing.
+    #[tokio::test]
+    async fn global_chat_reaches_other_maps() {
+        let world = World::new();
+        let (a, mut ra) = presence(1, "Ash", 0, 0);
+        let (mut b, mut rb) = presence(2, "Misty", 0, 0);
+        b.pose.map = MapId::new(0, 9);
+        world.join(1, a).await;
+        world.join(2, b).await;
+        while ra.try_recv().is_ok() {}
+        while rb.try_recv().is_ok() {}
+
+        let ok = world.route_chat(1, "Ash", &ChatTarget::Global, "hello").await;
+        assert!(ok);
+        assert!(ra.try_recv().is_ok());
+        assert!(rb.try_recv().is_ok(), "global must cross maps");
     }
 
     #[tokio::test]
@@ -717,7 +793,7 @@ mod tests {
         let (a, _ra) = presence(1, "Ash", 0, 0);
         world.join(1, a).await;
         let ok = world
-            .route_chat("Ash", &ChatTarget::Private("Nobody".into()), "hey")
+            .route_chat(1, "Ash", &ChatTarget::Private("Nobody".into()), "hey")
             .await;
         assert!(!ok);
     }

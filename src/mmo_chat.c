@@ -18,6 +18,7 @@
 #include "main.h"
 #include "menu.h"
 #include "mmo_chat.h"
+#include "mmo_chat_parse.h"
 #include "mmo_text.h"
 #include "net_client.h"
 #include "field_player_avatar.h"
@@ -54,7 +55,26 @@ static bool8 sComposing;
 // message at NET_TEXT_LEN and the server will not carry more.
 #define TEXT_INPUT_LIMIT 96
 
+// The prompt names the scope, so it is never a guess where a message is about to go.
 static const u8 sSayPrompt[] = _("Say: ");
+static const u8 sNearbyPrompt[] = _("Nearby: ");
+static const u8 sToPrompt[] = _("To ");
+static const u8 sToPromptEnd[] = _(": ");
+
+// Tags on arriving lines, for the same reason: a whisper must not read like something the
+// whole server saw. Global is untagged, being both the default and the common case.
+static const u8 sNearbyTag[] = _(" nearby");
+static const u8 sWhispersTag[] = _(" whispers");
+
+// The parser lives in mmo_chat_parse.c so it can be tested on the host; see that header.
+// Its scope values are written to match the wire's, and this is where that is checked
+// rather than trusted -- a silent mismatch would send private messages to everyone.
+STATIC_ASSERT(MMO_CHAT_SCOPE_GLOBAL == NET_CHAT_GLOBAL, ChatScopeGlobalAgrees);
+STATIC_ASSERT(MMO_CHAT_SCOPE_LOCAL == NET_CHAT_LOCAL, ChatScopeLocalAgrees);
+STATIC_ASSERT(MMO_CHAT_SCOPE_PRIVATE == NET_CHAT_PRIVATE, ChatScopePrivateAgrees);
+
+// Who last whispered, so /r can answer without retyping the name.
+static char sLastWhisper[NET_SENDER_LEN];
 
 static void HideChatWindow(void)
 {
@@ -77,7 +97,7 @@ void MmoChat_Reset(void)
 
 static void ShowLine(const struct NetChatLine *line)
 {
-    u8 text[NET_SENDER_LEN + NET_TEXT_LEN + 4];
+    u8 text[NET_SENDER_LEN + NET_TEXT_LEN + 16];
     u8 encoded[NET_TEXT_LEN + 1];
     u8 *end;
 
@@ -89,9 +109,14 @@ static void ShowLine(const struct NetChatLine *line)
         LoadMessageBoxAndBorderGfx();
     }
 
-    // "Name: what they said", both converted from the server's ASCII.
+    // "Name: what they said", both converted from the server's ASCII, with the scope named
+    // unless it is global.
     MmoText_FromAscii(encoded, line->from, NET_SENDER_LEN + 1);
     end = StringCopy(text, encoded);
+    if (line->kind == NET_CHAT_LOCAL)
+        end = StringCopy(end, sNearbyTag);
+    else if (line->kind == NET_CHAT_PRIVATE)
+        end = StringCopy(end, sWhispersTag);
     *end++ = CHAR_COLON;
     *end++ = CHAR_SPACE;
     MmoText_FromAscii(encoded, line->text, sizeof(encoded));
@@ -102,13 +127,25 @@ static void ShowLine(const struct NetChatLine *line)
     AddTextPrinterParameterized(sChatWindowId, FONT_NARROW, text, 0, 1, TEXT_SKIP_DRAW, NULL);
     CopyWindowToVram(sChatWindowId, COPYWIN_FULL);
     sFramesLeft = CHAT_VISIBLE_FRAMES;
+
+    if (line->kind == NET_CHAT_PRIVATE)
+    {
+        u32 i;
+
+        for (i = 0; i + 1 < sizeof(sLastWhisper) && line->from[i] != '\0'; i++)
+            sLastWhisper[i] = line->from[i];
+        sLastWhisper[i] = '\0';
+    }
 }
 
 // Draw what is being typed, with a caret, so it is obvious the game is listening.
 static void ShowComposer(const char *typed)
 {
-    u8 text[TEXT_INPUT_LIMIT + 8];
+    u8 text[TEXT_INPUT_LIMIT + NET_SENDER_LEN + 16];
     u8 encoded[TEXT_INPUT_LIMIT + 1];
+    char target[NET_SENDER_LEN];
+    const char *body;
+    u8 scope;
     u8 *end;
 
     if (sChatWindowId == WINDOW_NONE)
@@ -119,8 +156,28 @@ static void ShowComposer(const char *typed)
         LoadMessageBoxAndBorderGfx();
     }
 
-    end = StringCopy(text, sSayPrompt);
-    MmoText_FromAscii(encoded, typed, sizeof(encoded));
+    // Reparsed on every keystroke so the prompt follows what is being typed: the moment a
+    // name completes, "Say:" becomes "To Bob:" and there is no doubt about who will read it.
+    scope = MmoChat_ParseCompose(typed, sLastWhisper, target, sizeof(target), &body);
+    if (scope == NET_CHAT_LOCAL)
+    {
+        end = StringCopy(text, sNearbyPrompt);
+    }
+    else if (scope == NET_CHAT_PRIVATE)
+    {
+        end = StringCopy(text, sToPrompt);
+        MmoText_FromAscii(encoded, target, sizeof(target));
+        end = StringCopy(end, encoded);
+        end = StringCopy(end, sToPromptEnd);
+    }
+    else
+    {
+        end = StringCopy(text, sSayPrompt);
+    }
+
+    // The command itself is not echoed back; what is shown is the message as it will be
+    // sent, under a prompt that says where it is going.
+    MmoText_FromAscii(encoded, body, sizeof(encoded));
     end = StringCopy(end, encoded);
     *end++ = CHAR_UNDERSCORE;
     *end = EOS;
@@ -165,8 +222,17 @@ void MmoChat_Update(void)
         sComposing = FALSE;
         UnlockPlayerFieldControls();
 
-        if (result == 1 && typed[0] != '\0')
-            Net_SendChat(NET_CHAT_GLOBAL, "", typed);
+        if (result == 1)
+        {
+            char target[NET_SENDER_LEN];
+            const char *body;
+            u8 scope = MmoChat_ParseCompose(typed, sLastWhisper, target,
+                                            sizeof(target), &body);
+
+            // A whisper with nobody to whisper to is dropped rather than broadcast.
+            if (scope != MMO_CHAT_SCOPE_UNRESOLVED && body[0] != '\0')
+                Net_SendChat(scope, target, body);
+        }
 
         HideChatWindow();
         return;
