@@ -26,6 +26,7 @@
 #include "random.h"
 #include "rtc.h"
 #include "fieldmap.h"
+#include "load_save.h"
 #include "reload_save.h"
 #include "save.h"
 #include "scanline_effect.h"
@@ -788,20 +789,23 @@ static void Task_PokePlanetConnect(u8 taskId)
                 // and sets this field from warp coordinates and map dimensions. Writing one
                 // into the other put the player seven tiles from where they belonged, off
                 // the edge of a small map, which loads as a black screen.
-                gSaveBlock1Ptr->location.mapGroup = profile.mapGroup;
-                gSaveBlock1Ptr->location.mapNum = profile.mapNum;
-
-                // location, not just pos. Loading a map runs SetPlayerCoordsFromWarp, which
-                // writes pos from location -- either the coordinates of location's warp, or
-                // location.x/y when there is no warp. Setting pos alone looks like it works
-                // and is then quietly overwritten by whatever the save image held, which is
-                // exactly what happened: the character kept appearing at the save's position
-                // while the server's was ignored.
-                gSaveBlock1Ptr->location.warpId = WARP_ID_NONE;
-                gSaveBlock1Ptr->location.x = profile.x - MAP_OFFSET;
-                gSaveBlock1Ptr->location.y = profile.y - MAP_OFFSET;
-                gSaveBlock1Ptr->pos.x = profile.x - MAP_OFFSET;
-                gSaveBlock1Ptr->pos.y = profile.y - MAP_OFFSET;
+                // A continue-game warp, not a write to location and pos.
+                //
+                // Writing those looks right and does nothing, which cost a while to work
+                // out: continuing restores every object event from the save, the player's
+                // among them, so the avatar is placed from its saved coordinates and the
+                // position fields are simply ignored. The values were correct all along and
+                // nothing read them.
+                //
+                // This is the mechanism the game already has for "continue somewhere other
+                // than where the save says" -- what a Pokemon Center uses to put you at the
+                // door after a whiteout -- so the whole load path handles it properly, and
+                // the avatar, the camera and the map all agree afterwards.
+                SetContinueGameWarp(profile.mapGroup, profile.mapNum, WARP_ID_NONE,
+                                    profile.x - MAP_OFFSET, profile.y - MAP_OFFSET);
+                // Storing the warp is not the same as asking for it: continuing checks a
+                // separate flag and ignores the warp data entirely without it.
+                SetContinueGameWarpStatus();
             }
         }
 
