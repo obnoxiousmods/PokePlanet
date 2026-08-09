@@ -229,6 +229,10 @@ pub fn encode_profile(profile: &crate::quic::CharacterProfile) -> Vec<u8> {
     b.extend_from_slice(&profile.pokedex_seen.to_le_bytes());
     b.extend_from_slice(&profile.play_time_seconds.to_le_bytes());
     b.extend_from_slice(&profile.money.to_le_bytes());
+    b.push(profile.map_group);
+    b.push(profile.map_num);
+    b.extend_from_slice(&profile.x.to_le_bytes());
+    b.extend_from_slice(&profile.y.to_le_bytes());
     put_str(&mut b, &profile.name, NAME_LEN);
     frame(b)
 }

@@ -272,7 +272,7 @@ static void HandleSnapshot(const u8 *payload, u32 len)
 static void HandleProfile(const u8 *payload, u32 len)
 {
     // graphicsId, badges, caught, seen, playTime, money, name
-    if (len < 1 + 1 + 2 + 2 + 4 + 4 + NET_NAME_LEN)
+    if (len < 1 + 1 + 2 + 2 + 4 + 4 + 1 + 1 + 2 + 2 + NET_NAME_LEN)
         return;
 
     SDL_LockMutex(sNet.lock);
@@ -282,7 +282,11 @@ static void HandleProfile(const u8 *payload, u32 len)
     sNet.profile.pokedexSeen = ReadU16(payload + 4);
     sNet.profile.playTimeSeconds = ReadU32(payload + 6);
     sNet.profile.money = ReadU32(payload + 10);
-    CopyField(sNet.profile.name, payload + 14, NET_NAME_LEN);
+    sNet.profile.mapGroup = payload[14];
+    sNet.profile.mapNum = payload[15];
+    sNet.profile.x = ReadS16(payload + 16);
+    sNet.profile.y = ReadS16(payload + 18);
+    CopyField(sNet.profile.name, payload + 20, NET_NAME_LEN);
     sNet.hasProfile = TRUE;
     SDL_UnlockMutex(sNet.lock);
 }

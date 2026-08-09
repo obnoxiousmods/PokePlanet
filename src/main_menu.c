@@ -752,8 +752,23 @@ static void Task_PokePlanetConnect(u8 taskId)
         // continuing the character the server holds rather than whatever is on this machine.
         if (Net_TakeServerSave())
         {
+            struct NetProfile profile;
+
             ReloadSave();
             gSaveFileStatus = SAVE_STATUS_OK;
+
+            // Take the position from the server rather than from inside the save image.
+            // Both describe where this character stands and nothing keeps them in step, so
+            // one of them has to win; the server is the one everyone else agrees with, and
+            // letting the save win is what had the client and the server correcting each
+            // other ten times a second the moment the player appeared.
+            if (Net_GetProfile(&profile))
+            {
+                gSaveBlock1Ptr->location.mapGroup = profile.mapGroup;
+                gSaveBlock1Ptr->location.mapNum = profile.mapNum;
+                gSaveBlock1Ptr->pos.x = profile.x;
+                gSaveBlock1Ptr->pos.y = profile.y;
+            }
         }
 
         // Signed in: hand straight over to the normal menu, which draws the CONTINUE

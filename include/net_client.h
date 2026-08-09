@@ -74,6 +74,12 @@ struct NetProfile
     u16 pokedexSeen;
     u32 playTimeSeconds;
     u32 money;
+    // Where the server says this character stands. Adopted after the save loads, so the
+    // two never disagree about it afterwards.
+    u8 mapGroup;
+    u8 mapNum;
+    s16 x;
+    s16 y;
 };
 
 // Start the socket thread. Safe to call more than once; later calls do nothing.

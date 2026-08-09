@@ -207,6 +207,10 @@ impl Character {
             pokedex_caught: self.pokedex_caught,
             pokedex_seen: self.pokedex_seen,
             money: self.money.max(0) as u32,
+            map_group: self.map_group,
+            map_num: self.map_num,
+            x: self.x,
+            y: self.y,
         }
     }
 }

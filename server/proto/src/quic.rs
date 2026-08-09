@@ -72,6 +72,13 @@ pub struct CharacterProfile {
     pub pokedex_caught: u16,
     pub pokedex_seen: u16,
     pub money: u32,
+    /// Where this character stands, as the server has it. The client adopts this after
+    /// loading the save rather than trusting the position inside the save image, so the
+    /// two cannot drift apart and argue about it afterwards.
+    pub map_group: u8,
+    pub map_num: u8,
+    pub x: i16,
+    pub y: i16,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
