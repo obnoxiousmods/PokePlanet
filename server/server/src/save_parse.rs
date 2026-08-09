@@ -32,8 +32,19 @@ const SAVEBLOCK2_SECTOR: u16 = 0;
 /// Offset of the obfuscation key within SaveBlock2.
 const OFFSET_ENCRYPTION_KEY: usize = 0xAC;
 
+/// Caps the game itself enforces, from src/money.c and include/constants/coins.h.
+///
+/// These are the only rules worth checking at this stage, precisely because they cannot
+/// produce a false accusation: the game clamps to them, so no amount of ordinary play can
+/// exceed them. Rules about how fast money may be earned would need every legitimate source
+/// enumerated first, and getting that wrong refuses an honest player -- which is a worse
+/// bug than the cheating it would catch.
+pub const MAX_MONEY: u32 = 999_999;
+pub const MAX_COINS: u16 = 9_999;
+
 /// Offsets within SaveBlock1. From the annotated struct in include/global.h.
 const OFFSET_MONEY: usize = 0x490;
+const OFFSET_COINS: usize = 0x494;
 const OFFSET_FLAGS: usize = 0x1270;
 const OFFSET_VARS: usize = 0x139C;
 
@@ -51,6 +62,8 @@ pub struct SaveState {
     pub vars: Vec<u16>,
     /// Still obfuscated. See `money`.
     pub money_raw: u32,
+    /// Still obfuscated. See `coins`.
+    pub coins_raw: u16,
     /// The key the save was written with, from SaveBlock2.
     pub encryption_key: u32,
 }
@@ -63,6 +76,33 @@ impl SaveState {
     /// the decoded value is comparable.
     pub fn money(&self) -> u32 {
         self.money_raw ^ self.encryption_key
+    }
+
+    /// Game Corner coins, obfuscated with the low half of the same key.
+    pub fn coins(&self) -> u16 {
+        self.coins_raw ^ (self.encryption_key as u16)
+    }
+
+    /// What in this save could not have come from playing the game.
+    ///
+    /// None means only that nothing here is provably impossible -- it is not a statement
+    /// that the save is honest. This is the floor of validation, not the ceiling.
+    pub fn impossible(&self) -> Option<String> {
+        if self.money() > MAX_MONEY {
+            return Some(format!(
+                "money is {}, above the {} the game clamps to",
+                self.money(),
+                MAX_MONEY
+            ));
+        }
+        if self.coins() > MAX_COINS {
+            return Some(format!(
+                "coins are {}, above the {} the game clamps to",
+                self.coins(),
+                MAX_COINS
+            ));
+        }
+        None
     }
 }
 
@@ -172,8 +212,10 @@ pub fn parse(image: &[u8]) -> Option<SaveState> {
         .collect();
     let money_bytes = block.get(OFFSET_MONEY..OFFSET_MONEY + 4)?;
     let money_raw = u32::from_le_bytes(money_bytes.try_into().ok()?);
+    let coins_bytes = block.get(OFFSET_COINS..OFFSET_COINS + 2)?;
+    let coins_raw = u16::from_le_bytes(coins_bytes.try_into().ok()?);
 
-    Some(SaveState { flags, vars, money_raw, encryption_key })
+    Some(SaveState { flags, vars, money_raw, coins_raw, encryption_key })
 }
 
 #[cfg(test)]
@@ -274,6 +316,31 @@ mod tests {
                 "decoded money should match what the game reports"
             );
         }
+    }
+
+    /// An ordinary save is not accused of anything.
+    #[test]
+    fn an_honest_save_is_not_impossible() {
+        let image = image_with(0, 1, &vec![0; FLAG_BYTES], &vec![0; VAR_COUNT], 3000);
+        let state = parse(&image).expect("should parse");
+        assert_eq!(state.money(), 3000);
+        assert_eq!(state.impossible(), None);
+    }
+
+    /// Exactly at the cap is reachable by playing, so it must not be refused.
+    #[test]
+    fn the_cap_itself_is_allowed() {
+        let image = image_with(0, 1, &vec![0; FLAG_BYTES], &vec![0; VAR_COUNT], MAX_MONEY);
+        let state = parse(&image).expect("should parse");
+        assert_eq!(state.impossible(), None, "the cap is reachable, not a cheat");
+    }
+
+    /// Above the cap the game clamps to, which no amount of play can produce.
+    #[test]
+    fn money_above_the_cap_is_impossible() {
+        let image = image_with(0, 1, &vec![0; FLAG_BYTES], &vec![0; VAR_COUNT], MAX_MONEY + 1);
+        let state = parse(&image).expect("should parse");
+        assert!(state.impossible().is_some(), "above the cap should be caught");
     }
 
     #[test]

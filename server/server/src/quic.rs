@@ -418,22 +418,38 @@ async fn control_loop(
                 if save_image.len() == offset as usize {
                     save_image.extend_from_slice(&bytes);
                     if save_image.len() == total as usize {
+                        // Read the save before filing it, so one that could not have come
+                        // from playing is never stored in the first place.
+                        //
+                        // Reading it here rather than asking the client for a summary is the
+                        // point: a summary would be one more thing the client is trusted to
+                        // be honest about, whereas this is the same bytes the game itself
+                        // reads back.
+                        let parsed = crate::save_parse::parse(&save_image);
+
+                        if let Some(reason) = parsed.as_ref().and_then(|s| s.impossible()) {
+                            // Safe to refuse only because these rules are caps the game
+                            // itself clamps to, so no honest save can trip them. The server
+                            // keeps the copy it already believed, which sets the player back
+                            // rather than locking them out.
+                            tracing::warn!(
+                                player = player_id, %reason,
+                                "refusing a save that could not have come from playing"
+                            );
+                            save_image.clear();
+                            continue;
+                        }
+
                         db::store_save(&server.db, character_id, &save_image).await?;
                         tracing::info!(
                             player = player_id, bytes = save_image.len(), "save stored"
                         );
 
-                        // Read the save rather than only filing it. This is what turns the
-                        // stored blob into something the server can reason about, and it is
-                        // deliberately done here rather than asked of the client: a summary
-                        // the client wrote would be one more thing to take on trust, whereas
-                        // this is the same bytes the game itself will read back.
-                        //
-                        // A save that will not parse is still kept. The client can already
-                        // play it -- it is the image the game wrote -- and refusing to store
+                        // A save that will not parse at all is still kept. The client can
+                        // already play it -- it is the image the game wrote -- and refusing
                         // it would lose real progress over a format this may simply not
                         // understand yet.
-                        match crate::save_parse::parse(&save_image) {
+                        match parsed {
                             Some(state) => {
                                 let vars: Vec<u8> = state
                                     .vars
