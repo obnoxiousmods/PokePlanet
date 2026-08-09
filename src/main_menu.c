@@ -631,7 +631,11 @@ static u32 InitMainMenu(bool8 returningFromOptionsMenu)
 static const u8 sText_PokePlanetConnecting[] = _("Connecting to PokePlanet...\nPress B to play offline.");
 static const u8 sText_PokePlanetSignIn[] = _("Sign in with Discord in your browser.\nA: open again   B: play offline");
 static const u8 sText_PokePlanetOffline[] = _("Can't reach PokePlanet.\nA: try again   B: play offline");
-static const u8 sText_PokePlanetSignedIn[] = _("Signed in as {STR_VAR_1}!");
+// The save summary, straight from the server. Deliberately mirrors the shape of the
+// vanilla CONTINUE panel so it reads as the same idea: this is your saved game.
+static const u8 sText_PokePlanetSaveSummary[] = _(
+    "{STR_VAR_1}   TIME {STR_VAR_2}\n"
+    "BADGES {STR_VAR_3}    A: continue");
 
 #define tLastAuthState data[2]
 #define tHoldTimer     data[3]
@@ -651,10 +655,30 @@ static void ShowAuthMessage(u8 authState)
     {
     case NET_AUTH_ONLINE:
     {
+        struct NetProfile profile;
         u8 name[NET_NAME_LEN + 1];
-        MmoText_FromAscii(name, Net_GetPlayerName(), sizeof(name));
+
+        if (!Net_GetProfile(&profile))
+        {
+            // Signed in but the summary has not landed yet; it arrives in the same
+            // burst, so this is at most a frame or two.
+            CreateMainMenuErrorWindow(sText_PokePlanetConnecting);
+            break;
+        }
+
+        MmoText_FromAscii(name, profile.name, sizeof(name));
         StringCopy(gStringVar1, name);
-        StringExpandPlaceholders(gStringVar4, sText_PokePlanetSignedIn);
+        // Play time is authoritative on the server, so format its seconds rather than
+        // reading the local counter.
+        ConvertIntToDecimalStringN(gStringVar2, profile.playTimeSeconds / 3600,
+                                   STR_CONV_MODE_LEFT_ALIGN, 4);
+        StringAppend(gStringVar2, gText_Colon2);
+        ConvertIntToDecimalStringN(gStringVar2 + StringLength(gStringVar2),
+                                   (profile.playTimeSeconds / 60) % 60,
+                                   STR_CONV_MODE_LEADING_ZEROS, 2);
+        ConvertIntToDecimalStringN(gStringVar3, profile.badges,
+                                   STR_CONV_MODE_LEFT_ALIGN, 2);
+        StringExpandPlaceholders(gStringVar4, sText_PokePlanetSaveSummary);
         CreateMainMenuErrorWindow(gStringVar4);
         break;
     }
@@ -757,14 +781,12 @@ static void Task_PokePlanetConnect(u8 taskId)
         tHasDrawn = TRUE;
         tLastAuthState = authState;
         ShowAuthMessage(authState);
-        if (authState == NET_AUTH_ONLINE)
-            tHoldTimer = 1; // start the confirmation hold
     }
 
-    if (tHoldTimer != 0)
+    if (authState == NET_AUTH_ONLINE)
     {
-        // Let the player read "Signed in as ..." before the world loads.
-        if (++tHoldTimer > SIGNED_IN_HOLD_FRAMES)
+        // The save summary is showing. A loads it; there is nothing else to choose.
+        if (JOY_NEW(A_BUTTON))
             EnterWorldSignedIn(taskId);
         return;
     }
@@ -775,10 +797,7 @@ static void Task_PokePlanetConnect(u8 taskId)
         // connection still lights up multiplayer once the player is in the overworld.
         EnterMainMenu(taskId);
     }
-    else if (JOY_NEW(A_BUTTON)
-          && (authState == NET_AUTH_OFFLINE
-           || authState == NET_AUTH_NEEDS_LOGIN
-           || authState == NET_AUTH_AWAITING_BROWSER))
+    else if (JOY_NEW(A_BUTTON))
     {
         Net_BeginLogin();
     }

@@ -134,8 +134,11 @@ async fn main() -> anyhow::Result<()> {
                 return;
             }
             match quic::decode::<ServerControl>(&body) {
-                Ok(ServerControl::Welcome { player_id, name, graphics_id, .. }) => {
-                    tracing::info!(player_id, %name, graphics_id, "signed in");
+                Ok(ServerControl::Welcome { player_id, profile, .. }) => {
+                    tracing::info!(
+                        player_id, name = %profile.name, graphics_id = profile.graphics_id,
+                        "signed in"
+                    );
                 }
                 Ok(ServerControl::AuthRequired { .. }) => {
                     tracing::error!("token rejected; the server wants a browser login");

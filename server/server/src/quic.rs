@@ -225,8 +225,7 @@ async fn run_session(
         &mut send,
         &ServerControl::Welcome {
             player_id,
-            name: name.clone(),
-            graphics_id: character.graphics_id,
+            profile: character.profile(),
             token,
         },
     )

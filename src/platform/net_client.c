@@ -27,6 +27,7 @@
 #define MSG_STATUS       0x01
 #define MSG_SNAPSHOT     0x02
 #define MSG_CHAT         0x03
+#define MSG_PROFILE      0x04
 // Game -> sidecar
 #define MSG_SELF_STATE   0x81
 #define MSG_BEGIN_LOGIN  0x82
@@ -60,6 +61,9 @@ struct NetState
 
     struct NetRemotePlayer remotePlayers[NET_MAX_REMOTE_PLAYERS];
     u8 remoteCount;
+
+    struct NetProfile profile;
+    bool8 hasProfile;
 
     struct NetChatLine chatInbox[CHAT_INBOX_LINES];
     u8 chatHead;   // next slot to write
@@ -202,6 +206,24 @@ static void HandleSnapshot(const u8 *payload, u32 len)
     SDL_UnlockMutex(sNet.lock);
 }
 
+static void HandleProfile(const u8 *payload, u32 len)
+{
+    // graphicsId, badges, caught, seen, playTime, money, name
+    if (len < 1 + 1 + 2 + 2 + 4 + 4 + NET_NAME_LEN)
+        return;
+
+    SDL_LockMutex(sNet.lock);
+    sNet.profile.graphicsId = payload[0];
+    sNet.profile.badges = payload[1];
+    sNet.profile.pokedexCaught = ReadU16(payload + 2);
+    sNet.profile.pokedexSeen = ReadU16(payload + 4);
+    sNet.profile.playTimeSeconds = ReadU32(payload + 6);
+    sNet.profile.money = ReadU32(payload + 10);
+    CopyField(sNet.profile.name, payload + 14, NET_NAME_LEN);
+    sNet.hasProfile = TRUE;
+    SDL_UnlockMutex(sNet.lock);
+}
+
 static void HandleChat(const u8 *payload, u32 len)
 {
     struct NetChatLine *line;
@@ -236,6 +258,9 @@ static void DispatchFrame(const u8 *body, u32 len)
         break;
     case MSG_CHAT:
         HandleChat(body + 1, len - 1);
+        break;
+    case MSG_PROFILE:
+        HandleProfile(body + 1, len - 1);
         break;
     default:
         break; // Unknown types are ignored so the sidecar can add messages freely.
@@ -483,6 +508,21 @@ const char *Net_GetPlayerName(void)
 const char *Net_GetLoginUrl(void)
 {
     return sInitialised ? sNet.loginUrl : "";
+}
+
+bool8 Net_GetProfile(struct NetProfile *out)
+{
+    bool8 have;
+
+    if (!sInitialised || out == NULL)
+        return FALSE;
+
+    SDL_LockMutex(sNet.lock);
+    have = sNet.hasProfile;
+    if (have)
+        *out = sNet.profile;
+    SDL_UnlockMutex(sNet.lock);
+    return have;
 }
 
 void Net_BeginLogin(void)

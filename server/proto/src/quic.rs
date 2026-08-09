@@ -47,14 +47,28 @@ pub enum ChatTarget {
     Private(String),
 }
 
+/// The save-file summary shown on the sign-in screen, straight from the server.
+///
+/// This is the authoritative record of a character's progress; the client displays it
+/// rather than reading anything locally.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct CharacterProfile {
+    pub name: String,
+    /// Overworld sprite assigned to this character at creation.
+    pub graphics_id: u8,
+    pub play_time_seconds: u32,
+    pub badges: u8,
+    pub pokedex_caught: u16,
+    pub pokedex_seen: u16,
+    pub money: u32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ServerControl {
     /// Authentication succeeded; the character is live.
     Welcome {
         player_id: PlayerId,
-        name: String,
-        /// Overworld sprite assigned to this character at creation.
-        graphics_id: u8,
+        profile: CharacterProfile,
         /// Persist this and send it in `Hello` next launch to skip the browser.
         token: String,
     },

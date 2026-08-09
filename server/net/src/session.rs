@@ -143,12 +143,18 @@ impl Session {
                 frame = read_control(&mut recv) => {
                     let Some(frame) = frame? else { return Ok(()) };
                     match quic::decode::<ServerControl>(&frame)? {
-                        ServerControl::Welcome { name, token, graphics_id, player_id } => {
-                            tracing::info!(player_id, %name, graphics_id, "signed in");
+                        ServerControl::Welcome { player_id, profile, token } => {
+                            tracing::info!(
+                                player_id, name = %profile.name, badges = profile.badges,
+                                play_time_s = profile.play_time_seconds, "signed in"
+                            );
                             self.tokens.store(&token);
-                            player_name = name.clone();
+                            player_name = profile.name.clone();
                             pending_ticket = None;
-                            self.report(wire::AUTH_ONLINE, &name, "").await;
+                            // Profile before status: the sign-in screen reads the save
+                            // summary as soon as it sees the ONLINE state.
+                            self.link.send(wire::encode_profile(&profile)).await;
+                            self.report(wire::AUTH_ONLINE, &profile.name, "").await;
                         }
                         ServerControl::AuthRequired { ticket, login_url } => {
                             tracing::info!(%login_url, "login required");

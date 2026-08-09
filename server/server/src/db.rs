@@ -111,6 +111,11 @@ CREATE TABLE IF NOT EXISTS story_state (
     updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+-- Progress counters shown on the sign-in screen.
+ALTER TABLE characters ADD COLUMN IF NOT EXISTS badges         SMALLINT NOT NULL DEFAULT 0;
+ALTER TABLE characters ADD COLUMN IF NOT EXISTS pokedex_caught INTEGER  NOT NULL DEFAULT 0;
+ALTER TABLE characters ADD COLUMN IF NOT EXISTS pokedex_seen   INTEGER  NOT NULL DEFAULT 0;
+
 -- Existing deployments were created before Littleroot became the default spawn.
 ALTER TABLE characters ALTER COLUMN map_group SET DEFAULT 0;
 ALTER TABLE characters ALTER COLUMN map_num   SET DEFAULT 9;
@@ -152,6 +157,11 @@ pub struct Character {
     pub y: i16,
     pub facing: u8,
     pub elevation: u8,
+    pub play_time_s: i64,
+    pub money: i32,
+    pub badges: u8,
+    pub pokedex_caught: u16,
+    pub pokedex_seen: u16,
 }
 
 impl Character {
@@ -167,6 +177,24 @@ impl Character {
             y: row.get("pos_y"),
             facing: row.get::<_, i16>("facing") as u8,
             elevation: row.get::<_, i16>("elevation") as u8,
+            play_time_s: row.get("play_time_s"),
+            money: row.get("money"),
+            badges: row.get::<_, i16>("badges") as u8,
+            pokedex_caught: row.get::<_, i32>("pokedex_caught") as u16,
+            pokedex_seen: row.get::<_, i32>("pokedex_seen") as u16,
+        }
+    }
+
+    /// The save summary the client shows on its sign-in screen.
+    pub fn profile(&self) -> pokeplanet_proto::quic::CharacterProfile {
+        pokeplanet_proto::quic::CharacterProfile {
+            name: self.name.clone(),
+            graphics_id: self.graphics_id,
+            play_time_seconds: self.play_time_s.max(0) as u32,
+            badges: self.badges,
+            pokedex_caught: self.pokedex_caught,
+            pokedex_seen: self.pokedex_seen,
+            money: self.money.max(0) as u32,
         }
     }
 }

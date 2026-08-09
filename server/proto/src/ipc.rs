@@ -25,6 +25,7 @@ pub const MAX_FRAME: usize = 16 * 1024;
 pub const MSG_STATUS: u8 = 0x01;
 pub const MSG_SNAPSHOT: u8 = 0x02;
 pub const MSG_CHAT: u8 = 0x03;
+pub const MSG_PROFILE: u8 = 0x04;
 
 // Game -> sidecar
 pub const MSG_SELF_STATE: u8 = 0x81;
@@ -130,6 +131,21 @@ pub fn encode_snapshot(players: &[SnapshotEntry]) -> Vec<u8> {
         // Pad to the fixed stride so the C side can index without parsing.
         b.resize(start + REMOTE_PLAYER_SIZE, 0);
     }
+    frame(b)
+}
+
+/// The save summary the sign-in screen displays. Fixed layout, so the game reads it
+/// field by field with no parser.
+pub fn encode_profile(profile: &crate::quic::CharacterProfile) -> Vec<u8> {
+    let mut b = Vec::with_capacity(2 + 13 + NAME_LEN);
+    b.push(MSG_PROFILE);
+    b.push(profile.graphics_id);
+    b.push(profile.badges);
+    b.extend_from_slice(&profile.pokedex_caught.to_le_bytes());
+    b.extend_from_slice(&profile.pokedex_seen.to_le_bytes());
+    b.extend_from_slice(&profile.play_time_seconds.to_le_bytes());
+    b.extend_from_slice(&profile.money.to_le_bytes());
+    put_str(&mut b, &profile.name, NAME_LEN);
     frame(b)
 }
 

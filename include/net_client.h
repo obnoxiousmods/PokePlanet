@@ -60,6 +60,19 @@ struct NetChatLine
     char text[NET_TEXT_LEN];
 };
 
+// The authoritative save summary, as held by the server. The client displays this
+// rather than reading progress from any local file.
+struct NetProfile
+{
+    char name[NET_NAME_LEN];
+    u8 graphicsId;
+    u8 badges;
+    u16 pokedexCaught;
+    u16 pokedexSeen;
+    u32 playTimeSeconds;
+    u32 money;
+};
+
 // Start the socket thread. Safe to call more than once; later calls do nothing.
 void Net_Init(void);
 void Net_Shutdown(void);
@@ -72,6 +85,9 @@ u8 Net_GetAuthState(void);
 const char *Net_GetPlayerName(void);
 // The Discord URL to visit, when the state is NEEDS_LOGIN or AWAITING_BROWSER.
 const char *Net_GetLoginUrl(void);
+
+// Copy the server's save summary into `out`. Returns FALSE until one has arrived.
+bool8 Net_GetProfile(struct NetProfile *out);
 
 void Net_BeginLogin(void);
 void Net_CancelLogin(void);
