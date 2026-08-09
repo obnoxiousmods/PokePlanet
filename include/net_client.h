@@ -128,6 +128,20 @@ bool8 Net_PopBattleAnswer(struct NetBattleInvite *out, bool8 *accepted);
 // Why a challenge we sent could not be delivered, if the server refused it.
 bool8 Net_PopBattleFailure(char *out, u8 outSize);
 
+// Where the server says the player really is, after refusing a reported step.
+struct NetCorrection
+{
+    u8 mapGroup;
+    u8 mapNum;
+    s16 x;
+    s16 y;
+    u8 facing;
+    u8 elevation;
+};
+
+// Take the outstanding correction, if the server sent one. An honest client never sees one.
+bool8 Net_PopCorrection(struct NetCorrection *out);
+
 // TRUE once if the server handed over a save this session. The bytes are already in the
 // flash mirror; the caller reloads the game from them.
 bool8 Net_TakeServerSave(void);

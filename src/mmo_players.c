@@ -137,6 +137,33 @@ static void ReportSelf(void)
                  player->currentElevation);
 }
 
+// The server refused where we said we were, so go where it says instead.
+//
+// Without this the client simply keeps reporting the position the server has already
+// rejected, and the two argue forever at ten messages a second. Applying the correction is
+// what makes the server's word final rather than merely loud.
+static void ApplyCorrection(void)
+{
+    struct NetCorrection correction;
+    struct ObjectEvent *player;
+
+    if (!Net_PopCorrection(&correction))
+        return;
+
+    // A correction for a map we have since left is stale; the next report from here will
+    // tell the server where we actually are.
+    if (correction.mapGroup != sCurrentMapGroup || correction.mapNum != sCurrentMapNum)
+        return;
+
+    if (gPlayerAvatar.objectEventId >= OBJECT_EVENTS_COUNT)
+        return;
+    player = &gObjectEvents[gPlayerAvatar.objectEventId];
+    if (!player->active)
+        return;
+
+    MoveObjectEventToMapCoords(player, correction.x, correction.y);
+}
+
 // Bring one slot in line with what the server says about that player.
 static void ApplyRemote(u8 slot, const struct NetRemotePlayer *remote)
 {
@@ -388,6 +415,7 @@ void MmoPlayers_Update(void)
         sCurrentMapNum = gSaveBlock1Ptr->location.mapNum;
     }
 
+    ApplyCorrection();
     ReportSelf();
     CheckForBattleInvite();
     CheckForBattleOutcome();

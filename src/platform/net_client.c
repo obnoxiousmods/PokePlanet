@@ -40,6 +40,8 @@
 #define MSG_BATTLE_ANSWERED 0x06
 #define MSG_BATTLE_FAILED   0x07
 #define MSG_SAVE_IMAGE      0x08
+#define MSG_BATTLE_STARTING 0x09
+#define MSG_CORRECTION      0x0A
 // Game -> sidecar
 #define MSG_SELF_STATE   0x81
 #define MSG_BEGIN_LOGIN  0x82
@@ -53,6 +55,10 @@
 // Big enough that the 128KB image is a few hundred frames rather than thousands, small
 // enough to sit on the stack.
 #define SAVE_CHUNK_BYTES   1024
+// Type byte, then offset, total and length. Named so the buffer below and the offsets
+// written into it cannot drift apart: they did, by one byte, and every save smashed the
+// stack on the way out of the function that sent it.
+#define SAVE_CHUNK_HEADER  (1 + 4 + 4 + 2)
 
 // Must match REMOTE_PLAYER_SIZE in the Rust protocol crate.
 #define REMOTE_PLAYER_STRIDE 32
@@ -105,6 +111,10 @@ struct NetState
 
     // The server handed over a save and it is now sitting in the flash mirror.
     bool8 hasServerSave;
+
+    // The server refused where we said we were. Only the newest matters: it is the truth.
+    struct NetCorrection correction;
+    bool8 hasCorrection;
 
     // Frames waiting for the worker thread to push onto the socket.
     u8 txQueue[TX_QUEUE_FRAMES][TX_FRAME_MAX];
@@ -375,6 +385,22 @@ static void HandleSaveImage(const u8 *payload, u32 len)
     }
 }
 
+static void HandleCorrection(const u8 *payload, u32 len)
+{
+    if (len < 8)
+        return;
+
+    SDL_LockMutex(sNet.lock);
+    sNet.correction.mapGroup = payload[0];
+    sNet.correction.mapNum = payload[1];
+    sNet.correction.x = ReadS16(payload + 2);
+    sNet.correction.y = ReadS16(payload + 4);
+    sNet.correction.facing = payload[6];
+    sNet.correction.elevation = payload[7];
+    sNet.hasCorrection = TRUE;
+    SDL_UnlockMutex(sNet.lock);
+}
+
 static void DispatchFrame(const u8 *body, u32 len)
 {
     if (len < 1)
@@ -395,6 +421,9 @@ static void DispatchFrame(const u8 *body, u32 len)
         break;
     case MSG_SAVE_IMAGE:
         HandleSaveImage(body + 1, len - 1);
+        break;
+    case MSG_CORRECTION:
+        HandleCorrection(body + 1, len - 1);
         break;
     case MSG_SNAPSHOT:
         HandleSnapshot(body + 1, len - 1);
@@ -514,14 +543,14 @@ static bool8 FlushTxQueue(NetSocket sock)
 // pass sends a consistent image over the top.
 static bool8 SendSaveImage(NetSocket sock)
 {
-    u8 frame[10 + SAVE_CHUNK_BYTES];
+    u8 frame[SAVE_CHUNK_HEADER + SAVE_CHUNK_BYTES];
     u32 offset;
 
     for (offset = 0; offset < sizeof(FLASH_BASE); offset += SAVE_CHUNK_BYTES)
     {
         u32 remaining = sizeof(FLASH_BASE) - offset;
         u16 length = remaining < SAVE_CHUNK_BYTES ? (u16)remaining : SAVE_CHUNK_BYTES;
-        u32 bodyLen = 1 + 10 + length;
+        u32 bodyLen = SAVE_CHUNK_HEADER + length;
         u8 header[4];
         int sent;
 
@@ -529,7 +558,7 @@ static bool8 SendSaveImage(NetSocket sock)
         PutU32(frame + 1, offset);
         PutU32(frame + 5, sizeof(FLASH_BASE));
         PutU16(frame + 9, length);
-        memcpy(frame + 11, FLASH_BASE + offset, length);
+        memcpy(frame + SAVE_CHUNK_HEADER, FLASH_BASE + offset, length);
 
         PutU32(header, bodyLen);
         for (sent = 0; sent < (int)sizeof(header); )
@@ -931,6 +960,23 @@ bool8 Net_TakeSaveChanged(void)
     if (!sSaveChanged)
         return FALSE;
     sSaveChanged = FALSE;
+    return TRUE;
+}
+
+bool8 Net_PopCorrection(struct NetCorrection *out)
+{
+    if (!sInitialised || out == NULL)
+        return FALSE;
+
+    SDL_LockMutex(sNet.lock);
+    if (!sNet.hasCorrection)
+    {
+        SDL_UnlockMutex(sNet.lock);
+        return FALSE;
+    }
+    *out = sNet.correction;
+    sNet.hasCorrection = FALSE;
+    SDL_UnlockMutex(sNet.lock);
     return TRUE;
 }
 
