@@ -29,6 +29,7 @@
 #include "gba/flash_internal.h"
 #include "platform/dma.h"
 #include "platform/framedraw.h"
+#include "net_client.h"
 
 extern void (*const gIntrTable[])(void);
 
@@ -75,6 +76,31 @@ struct SiiRtcInfo internalClock;
 static FILE *sSaveFile = NULL;
 static char sSavePath[1024] = "pokeemerald.sav";
 static char sConfigPath[1024] = "pokeemerald.cfg";
+
+// Multiplayer endpoint. The game itself only needs the sidecar port; the server address
+// is kept here so the two processes read one config file and so StoreConfigFile can write
+// it back untouched instead of silently dropping it.
+#define DEFAULT_SERVER_HOST  "pokeplanet.obby.ca"
+#define DEFAULT_SERVER_PORT  4433
+#define DEFAULT_SIDECAR_PORT 38400
+static char sServerHost[128] = DEFAULT_SERVER_HOST;
+static unsigned int sServerPort = DEFAULT_SERVER_PORT;
+static unsigned int sSidecarPort = DEFAULT_SIDECAR_PORT;
+
+u16 Platform_GetSidecarPort(void)
+{
+    return (u16)sSidecarPort;
+}
+
+const char *Platform_GetServerHost(void)
+{
+    return sServerHost;
+}
+
+u16 Platform_GetServerPort(void)
+{
+    return (u16)sServerPort;
+}
 static u8 sBorderBackground;
 static bool sHasBorderBackgroundConfig;
 static u8 sBackgroundOrderVersion;
@@ -89,6 +115,46 @@ extern void DoSoftReset(void);
 int DoMain(void *param);
 void ProcessEvents(void);
 void VDraw(SDL_Texture *texture);
+static void ReadConfigFile(void);
+
+// Start pokeplanet-net.exe alongside the game.
+//
+// The sidecar is a separate process so QUIC and TLS stay out of this 32-bit binary. It
+// is optional: if it is missing or fails to start, Net_Init simply never links and the
+// game runs single-player.
+static void LaunchSidecar(void)
+{
+#ifdef _WIN32
+    STARTUPINFOA startup;
+    PROCESS_INFORMATION process;
+    char commandLine[512];
+
+    // A sidecar may already be running -- a second copy of the game on this machine, or
+    // one started by hand for debugging. It owns the IPC port, so ours would just fail
+    // to bind; connecting to the existing one is the correct behaviour either way.
+    snprintf(commandLine, sizeof(commandLine),
+             "pokeplanet-net.exe --server %s --port %u --ipc-port %u",
+             sServerHost, sServerPort, sSidecarPort);
+
+    memset(&startup, 0, sizeof(startup));
+    startup.cb = sizeof(startup);
+    memset(&process, 0, sizeof(process));
+
+    if (CreateProcessA(NULL, commandLine, NULL, NULL, FALSE,
+                       CREATE_NO_WINDOW, NULL, NULL, &startup, &process))
+    {
+        SDL_Log("net: started sidecar (pid %lu)", (unsigned long)process.dwProcessId);
+        // We never wait on it; closing the handles just releases our references.
+        CloseHandle(process.hThread);
+        CloseHandle(process.hProcess);
+    }
+    else
+    {
+        SDL_Log("net: no sidecar started (error %lu); running offline",
+                (unsigned long)GetLastError());
+    }
+#endif
+}
 
 static void ReadSaveFile(const char *path);
 static void ReadConfigFile(void);
@@ -125,6 +191,12 @@ int main(int argc, char **argv)
     SDL_LogSetOutputFunction(PokePlanetLogOutput, NULL);
     SDL_LogSetAllPriority(SDL_LOG_PRIORITY_INFO);
     SDL_Log("PokePlanet starting up");
+
+    // ReadConfigFile is called later during video setup, but the sidecar needs the
+    // server address before it launches, so read the file once up front.
+    ReadConfigFile();
+    LaunchSidecar();
+    Net_Init();
 
 #ifdef __ANDROID__
     SDL_setenv("SDL_AUDIODRIVER", "openslES", 1);
@@ -493,6 +565,12 @@ static void ReadConfigFile(void)
             sPlatformSettings[PLATFORM_SETTING_BORDER] = value != 0;
         else if (sscanf(line, "volume=%u", &value) == 1 && value <= 10)
             sPlatformSettings[PLATFORM_SETTING_VOLUME] = value;
+        else if (sscanf(line, "server=%127s", sServerHost) == 1)
+            ; // handled by the scanf itself
+        else if (sscanf(line, "serverPort=%u", &value) == 1 && value > 0 && value < 65536)
+            sServerPort = value;
+        else if (sscanf(line, "sidecarPort=%u", &value) == 1 && value > 0 && value < 65536)
+            sSidecarPort = value;
     }
     fclose(configFile);
 }
@@ -511,6 +589,10 @@ static void StoreConfigFile(void)
     fprintf(configFile, "vsync=%u\n", sPlatformSettings[PLATFORM_SETTING_VSYNC]);
     fprintf(configFile, "border=%u\n", sPlatformSettings[PLATFORM_SETTING_BORDER]);
     fprintf(configFile, "volume=%u\n", sPlatformSettings[PLATFORM_SETTING_VOLUME]);
+    // Written back so changing a display setting does not wipe the player's server choice.
+    fprintf(configFile, "server=%s\n", sServerHost);
+    fprintf(configFile, "serverPort=%u\n", sServerPort);
+    fprintf(configFile, "sidecarPort=%u\n", sSidecarPort);
     fclose(configFile);
 }
 

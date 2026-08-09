@@ -1,0 +1,601 @@
+// Loopback link to the PokePlanet network sidecar.
+//
+// A worker thread owns the socket and does all blocking work. Game code only ever
+// touches the shared state below, guarded by a single mutex, so nothing here can stall
+// a frame.
+//
+// Wire format is documented in server/proto/src/ipc.rs: a little-endian u32 length,
+// then a type byte, then a fixed-size payload. Everything is fixed width on purpose so
+// this side needs no parser and no allocator.
+
+#ifdef PLATFORM_SDL2
+
+#include <stdio.h>
+#include <string.h>
+
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#endif
+
+#include <SDL2/SDL.h>
+
+#include "global.h"
+#include "net_client.h"
+
+// Sidecar -> game
+#define MSG_STATUS       0x01
+#define MSG_SNAPSHOT     0x02
+#define MSG_CHAT         0x03
+// Game -> sidecar
+#define MSG_SELF_STATE   0x81
+#define MSG_BEGIN_LOGIN  0x82
+#define MSG_CANCEL_LOGIN 0x83
+#define MSG_CHAT_SEND    0x84
+#define MSG_LOGOUT       0x85
+
+// Must match REMOTE_PLAYER_SIZE in the Rust protocol crate.
+#define REMOTE_PLAYER_STRIDE 32
+
+#define DEFAULT_SIDECAR_PORT 38400
+#define RECONNECT_DELAY_MS   1000
+// Matches the sidecar's own upstream cadence; sending faster would be discarded anyway.
+#define SELF_STATE_INTERVAL_MS 100
+
+#define RX_BUFFER_SIZE   16384
+#define TX_QUEUE_FRAMES  32
+#define TX_FRAME_MAX     256
+#define CHAT_INBOX_LINES 16
+
+struct NetState
+{
+    SDL_mutex *lock;
+    SDL_Thread *thread;
+    bool8 running;
+    bool8 linked;
+
+    u8 authState;
+    char playerName[NET_NAME_LEN];
+    char loginUrl[NET_URL_LEN];
+
+    struct NetRemotePlayer remotePlayers[NET_MAX_REMOTE_PLAYERS];
+    u8 remoteCount;
+
+    struct NetChatLine chatInbox[CHAT_INBOX_LINES];
+    u8 chatHead;   // next slot to write
+    u8 chatTail;   // next slot to read
+    u8 chatCount;
+
+    // Frames waiting for the worker thread to push onto the socket.
+    u8 txQueue[TX_QUEUE_FRAMES][TX_FRAME_MAX];
+    u16 txLength[TX_QUEUE_FRAMES];
+    u8 txHead;
+    u8 txTail;
+    u8 txCount;
+
+    u32 lastSelfStateMs;
+};
+
+static struct NetState sNet;
+static bool8 sInitialised = FALSE;
+
+static u16 GetSidecarPort(void);
+
+// ---------------------------------------------------------------------------
+// Small helpers for the fixed-layout wire format.
+// ---------------------------------------------------------------------------
+
+static void PutU16(u8 *p, u16 v)
+{
+    p[0] = (u8)(v & 0xFF);
+    p[1] = (u8)(v >> 8);
+}
+
+static u16 ReadU16(const u8 *p)
+{
+    return (u16)(p[0] | ((u16)p[1] << 8));
+}
+
+static u32 ReadU32(const u8 *p)
+{
+    return (u32)p[0] | ((u32)p[1] << 8) | ((u32)p[2] << 16) | ((u32)p[3] << 24);
+}
+
+static s16 ReadS16(const u8 *p)
+{
+    return (s16)ReadU16(p);
+}
+
+// Copy a NUL-padded wire field into a NUL-terminated C string.
+static void CopyField(char *dest, const u8 *src, int width)
+{
+    int i;
+    for (i = 0; i < width - 1 && src[i] != 0; i++)
+        dest[i] = (char)src[i];
+    dest[i] = '\0';
+}
+
+// Write a C string into a fixed NUL-padded wire field.
+static void WriteField(u8 *dest, const char *src, int width)
+{
+    int i;
+    memset(dest, 0, width);
+    if (src == NULL)
+        return;
+    for (i = 0; i < width - 1 && src[i] != '\0'; i++)
+        dest[i] = (u8)src[i];
+}
+
+// Queue a frame body (type byte first) for the worker thread. Caller holds the lock.
+static void EnqueueLocked(const u8 *body, u16 bodyLen)
+{
+    u8 *slot;
+
+    if (bodyLen + 4 > TX_FRAME_MAX || sNet.txCount >= TX_QUEUE_FRAMES)
+        return; // Nothing here is worth stalling the game for; drop it.
+
+    slot = sNet.txQueue[sNet.txHead];
+    slot[0] = (u8)(bodyLen & 0xFF);
+    slot[1] = (u8)((bodyLen >> 8) & 0xFF);
+    slot[2] = 0;
+    slot[3] = 0;
+    memcpy(slot + 4, body, bodyLen);
+    sNet.txLength[sNet.txHead] = bodyLen + 4;
+    sNet.txHead = (sNet.txHead + 1) % TX_QUEUE_FRAMES;
+    sNet.txCount++;
+}
+
+static void Enqueue(const u8 *body, u16 bodyLen)
+{
+    SDL_LockMutex(sNet.lock);
+    EnqueueLocked(body, bodyLen);
+    SDL_UnlockMutex(sNet.lock);
+}
+
+// ---------------------------------------------------------------------------
+// Decoding messages from the sidecar. Called on the worker thread.
+// ---------------------------------------------------------------------------
+
+static void HandleStatus(const u8 *payload, u32 len)
+{
+    if (len < 1 + NET_NAME_LEN + NET_URL_LEN)
+        return;
+
+    SDL_LockMutex(sNet.lock);
+    sNet.authState = payload[0];
+    CopyField(sNet.playerName, payload + 1, NET_NAME_LEN);
+    CopyField(sNet.loginUrl, payload + 1 + NET_NAME_LEN, NET_URL_LEN);
+    SDL_UnlockMutex(sNet.lock);
+}
+
+static void HandleSnapshot(const u8 *payload, u32 len)
+{
+    u16 count;
+    u16 i;
+    u8 stored = 0;
+
+    if (len < 2)
+        return;
+    count = ReadU16(payload);
+    if (2 + (u32)count * REMOTE_PLAYER_STRIDE > len)
+        return; // truncated; ignore rather than read past the buffer
+
+    SDL_LockMutex(sNet.lock);
+    for (i = 0; i < count && stored < NET_MAX_REMOTE_PLAYERS; i++)
+    {
+        const u8 *e = payload + 2 + (u32)i * REMOTE_PLAYER_STRIDE;
+        struct NetRemotePlayer *p = &sNet.remotePlayers[stored];
+
+        p->playerId = ReadU32(e);
+        p->mapGroup = e[4];
+        p->mapNum = e[5];
+        p->x = ReadS16(e + 6);
+        p->y = ReadS16(e + 8);
+        p->facing = e[10];
+        p->graphicsId = e[11];
+        p->elevation = e[12];
+        p->moving = e[13] ? TRUE : FALSE;
+        CopyField(p->name, e + 14, NET_NAME_LEN);
+        stored++;
+    }
+    sNet.remoteCount = stored;
+    SDL_UnlockMutex(sNet.lock);
+}
+
+static void HandleChat(const u8 *payload, u32 len)
+{
+    struct NetChatLine *line;
+
+    if (len < 1 + NET_SENDER_LEN + NET_TEXT_LEN)
+        return;
+
+    SDL_LockMutex(sNet.lock);
+    line = &sNet.chatInbox[sNet.chatHead];
+    line->kind = payload[0];
+    CopyField(line->from, payload + 1, NET_SENDER_LEN);
+    CopyField(line->text, payload + 1 + NET_SENDER_LEN, NET_TEXT_LEN);
+    sNet.chatHead = (sNet.chatHead + 1) % CHAT_INBOX_LINES;
+    if (sNet.chatCount < CHAT_INBOX_LINES)
+        sNet.chatCount++;
+    else
+        sNet.chatTail = (sNet.chatTail + 1) % CHAT_INBOX_LINES; // oldest falls off
+    SDL_UnlockMutex(sNet.lock);
+}
+
+static void DispatchFrame(const u8 *body, u32 len)
+{
+    if (len < 1)
+        return;
+    switch (body[0])
+    {
+    case MSG_STATUS:
+        HandleStatus(body + 1, len - 1);
+        break;
+    case MSG_SNAPSHOT:
+        HandleSnapshot(body + 1, len - 1);
+        break;
+    case MSG_CHAT:
+        HandleChat(body + 1, len - 1);
+        break;
+    default:
+        break; // Unknown types are ignored so the sidecar can add messages freely.
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Worker thread.
+// ---------------------------------------------------------------------------
+
+#ifdef _WIN32
+
+static void ResetLinkState(void)
+{
+    SDL_LockMutex(sNet.lock);
+    sNet.linked = FALSE;
+    sNet.authState = NET_AUTH_OFFLINE;
+    sNet.remoteCount = 0;
+    sNet.txHead = sNet.txTail = sNet.txCount = 0;
+    SDL_UnlockMutex(sNet.lock);
+}
+
+static SOCKET ConnectToSidecar(void)
+{
+    SOCKET sock;
+    struct sockaddr_in addr;
+
+    sock = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (sock == INVALID_SOCKET)
+        return INVALID_SOCKET;
+
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(GetSidecarPort());
+    addr.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+
+    if (connect(sock, (struct sockaddr *)&addr, sizeof(addr)) != 0)
+    {
+        closesocket(sock);
+        return INVALID_SOCKET;
+    }
+    return sock;
+}
+
+// Push everything queued. Returns FALSE if the socket died.
+static bool8 FlushTxQueue(SOCKET sock)
+{
+    u8 frame[TX_FRAME_MAX];
+    u16 length;
+
+    for (;;)
+    {
+        SDL_LockMutex(sNet.lock);
+        if (sNet.txCount == 0)
+        {
+            SDL_UnlockMutex(sNet.lock);
+            return TRUE;
+        }
+        length = sNet.txLength[sNet.txTail];
+        memcpy(frame, sNet.txQueue[sNet.txTail], length);
+        sNet.txTail = (sNet.txTail + 1) % TX_QUEUE_FRAMES;
+        sNet.txCount--;
+        SDL_UnlockMutex(sNet.lock);
+
+        {
+            int sent = 0;
+            while (sent < (int)length)
+            {
+                int n = send(sock, (const char *)frame + sent, length - sent, 0);
+                if (n <= 0)
+                    return FALSE;
+                sent += n;
+            }
+        }
+    }
+}
+
+static int NetThreadMain(void *unused)
+{
+    WSADATA wsa;
+    u8 rx[RX_BUFFER_SIZE];
+    u32 rxUsed = 0;
+
+    if (WSAStartup(MAKEWORD(2, 2), &wsa) != 0)
+    {
+        SDL_Log("net: WSAStartup failed; multiplayer disabled");
+        return 0;
+    }
+
+    while (sNet.running)
+    {
+        SOCKET sock = ConnectToSidecar();
+        if (sock == INVALID_SOCKET)
+        {
+            SDL_Delay(RECONNECT_DELAY_MS);
+            continue;
+        }
+
+        SDL_Log("net: linked to sidecar on port %u", (unsigned)GetSidecarPort());
+        SDL_LockMutex(sNet.lock);
+        sNet.linked = TRUE;
+        SDL_UnlockMutex(sNet.lock);
+        rxUsed = 0;
+
+        while (sNet.running)
+        {
+            fd_set readable;
+            struct timeval timeout;
+            int ready;
+
+            if (!FlushTxQueue(sock))
+                break;
+
+            FD_ZERO(&readable);
+            FD_SET(sock, &readable);
+            // Short timeout so queued frames go out promptly and shutdown is responsive.
+            timeout.tv_sec = 0;
+            timeout.tv_usec = 20000;
+
+            ready = select(0, &readable, NULL, NULL, &timeout);
+            if (ready == SOCKET_ERROR)
+                break;
+            if (ready == 0)
+                continue;
+
+            {
+                int n = recv(sock, (char *)rx + rxUsed, RX_BUFFER_SIZE - rxUsed, 0);
+                if (n <= 0)
+                    break; // sidecar closed or errored
+                rxUsed += n;
+            }
+
+            // Drain every complete frame sitting in the buffer.
+            for (;;)
+            {
+                u32 bodyLen;
+                if (rxUsed < 4)
+                    break;
+                bodyLen = ReadU32(rx);
+                if (bodyLen == 0 || bodyLen > RX_BUFFER_SIZE - 4)
+                {
+                    // The stream is out of sync and cannot be recovered; drop the link
+                    // and let the reconnect loop start clean.
+                    SDL_Log("net: bad frame length %u, resetting link", (unsigned)bodyLen);
+                    rxUsed = 0;
+                    goto linkBroken;
+                }
+                if (rxUsed < 4 + bodyLen)
+                    break;
+                DispatchFrame(rx + 4, bodyLen);
+                memmove(rx, rx + 4 + bodyLen, rxUsed - (4 + bodyLen));
+                rxUsed -= 4 + bodyLen;
+            }
+        }
+
+    linkBroken:
+        closesocket(sock);
+        ResetLinkState();
+        SDL_Log("net: sidecar link lost");
+        if (sNet.running)
+            SDL_Delay(RECONNECT_DELAY_MS);
+    }
+
+    WSACleanup();
+    return 0;
+}
+
+#else // !_WIN32
+
+// Non-Windows builds have no sidecar yet; the game runs single-player.
+static int NetThreadMain(void *unused)
+{
+    return 0;
+}
+
+#endif
+
+// ---------------------------------------------------------------------------
+// Public API.
+// ---------------------------------------------------------------------------
+
+void Net_Init(void)
+{
+    if (sInitialised)
+        return;
+
+    memset(&sNet, 0, sizeof(sNet));
+    sNet.lock = SDL_CreateMutex();
+    if (sNet.lock == NULL)
+    {
+        SDL_Log("net: could not create mutex; multiplayer disabled");
+        return;
+    }
+    sNet.running = TRUE;
+    sNet.authState = NET_AUTH_OFFLINE;
+    sNet.thread = SDL_CreateThread(NetThreadMain, "PokePlanetNet", NULL);
+    if (sNet.thread == NULL)
+    {
+        SDL_Log("net: could not start network thread; multiplayer disabled");
+        sNet.running = FALSE;
+        return;
+    }
+    sInitialised = TRUE;
+}
+
+void Net_Shutdown(void)
+{
+    if (!sInitialised)
+        return;
+    sNet.running = FALSE;
+    // The worker wakes at least every 20ms, so this returns promptly.
+    SDL_WaitThread(sNet.thread, NULL);
+    SDL_DestroyMutex(sNet.lock);
+    sNet.lock = NULL;
+    sInitialised = FALSE;
+}
+
+bool8 Net_IsLinked(void)
+{
+    bool8 linked;
+    if (!sInitialised)
+        return FALSE;
+    SDL_LockMutex(sNet.lock);
+    linked = sNet.linked;
+    SDL_UnlockMutex(sNet.lock);
+    return linked;
+}
+
+u8 Net_GetAuthState(void)
+{
+    u8 state;
+    if (!sInitialised)
+        return NET_AUTH_OFFLINE;
+    SDL_LockMutex(sNet.lock);
+    state = sNet.authState;
+    SDL_UnlockMutex(sNet.lock);
+    return state;
+}
+
+const char *Net_GetPlayerName(void)
+{
+    return sInitialised ? sNet.playerName : "";
+}
+
+const char *Net_GetLoginUrl(void)
+{
+    return sInitialised ? sNet.loginUrl : "";
+}
+
+void Net_BeginLogin(void)
+{
+    u8 body[1];
+    if (!sInitialised)
+        return;
+    body[0] = MSG_BEGIN_LOGIN;
+    Enqueue(body, 1);
+}
+
+void Net_CancelLogin(void)
+{
+    u8 body[1];
+    if (!sInitialised)
+        return;
+    body[0] = MSG_CANCEL_LOGIN;
+    Enqueue(body, 1);
+}
+
+void Net_Logout(void)
+{
+    u8 body[1];
+    if (!sInitialised)
+        return;
+    body[0] = MSG_LOGOUT;
+    Enqueue(body, 1);
+}
+
+void Net_SendSelf(u8 mapGroup, u8 mapNum, s16 x, s16 y, u8 facing, bool8 moving,
+                  u8 graphicsId, u8 elevation)
+{
+    u8 body[11];
+    u32 now;
+
+    if (!sInitialised)
+        return;
+
+    // Callers may run this every frame; only one report per interval reaches the wire.
+    now = SDL_GetTicks();
+    SDL_LockMutex(sNet.lock);
+    if (!sNet.linked || (u32)(now - sNet.lastSelfStateMs) < SELF_STATE_INTERVAL_MS)
+    {
+        SDL_UnlockMutex(sNet.lock);
+        return;
+    }
+    sNet.lastSelfStateMs = now;
+    SDL_UnlockMutex(sNet.lock);
+
+    body[0] = MSG_SELF_STATE;
+    body[1] = mapGroup;
+    body[2] = mapNum;
+    PutU16(body + 3, (u16)x);
+    PutU16(body + 5, (u16)y);
+    body[7] = facing;
+    body[8] = moving ? 1 : 0;
+    body[9] = graphicsId;
+    body[10] = elevation;
+    Enqueue(body, sizeof(body));
+}
+
+u8 Net_GetRemotePlayers(struct NetRemotePlayer *out)
+{
+    u8 count;
+    if (!sInitialised || out == NULL)
+        return 0;
+    SDL_LockMutex(sNet.lock);
+    count = sNet.remoteCount;
+    memcpy(out, sNet.remotePlayers, sizeof(struct NetRemotePlayer) * count);
+    SDL_UnlockMutex(sNet.lock);
+    return count;
+}
+
+void Net_SendChat(u8 kind, const char *target, const char *text)
+{
+    u8 body[2 + NET_SENDER_LEN + NET_TEXT_LEN];
+
+    if (!sInitialised || text == NULL || text[0] == '\0')
+        return;
+
+    body[0] = MSG_CHAT_SEND;
+    body[1] = kind;
+    WriteField(body + 2, target, NET_SENDER_LEN);
+    WriteField(body + 2 + NET_SENDER_LEN, text, NET_TEXT_LEN);
+    Enqueue(body, sizeof(body));
+}
+
+bool8 Net_PopChatLine(struct NetChatLine *out)
+{
+    if (!sInitialised || out == NULL)
+        return FALSE;
+
+    SDL_LockMutex(sNet.lock);
+    if (sNet.chatCount == 0)
+    {
+        SDL_UnlockMutex(sNet.lock);
+        return FALSE;
+    }
+    *out = sNet.chatInbox[sNet.chatTail];
+    sNet.chatTail = (sNet.chatTail + 1) % CHAT_INBOX_LINES;
+    sNet.chatCount--;
+    SDL_UnlockMutex(sNet.lock);
+    return TRUE;
+}
+
+// The sidecar port is configurable so two clients can run on one machine for testing.
+// Platform_GetSidecarPort lives in the SDL backend alongside the rest of the config.
+extern u16 Platform_GetSidecarPort(void);
+
+static u16 GetSidecarPort(void)
+{
+    u16 port = Platform_GetSidecarPort();
+    return port != 0 ? port : DEFAULT_SIDECAR_PORT;
+}
+
+#endif // PLATFORM_SDL2
