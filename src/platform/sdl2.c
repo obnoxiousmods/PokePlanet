@@ -722,24 +722,32 @@ void Platform_StoreSaveFile(void)
 
 void Platform_ReadFlash(u16 sectorNum, u32 offset, u8 *dest, u32 size)
 {
+    // Serve reads from the RAM mirror rather than the file on disk.
+    //
+    // Writes land in FLASH_BASE and only reach the file when something calls
+    // Platform_StoreSaveFile, and several paths never do -- the incremental link saves
+    // behind trades, record mixing and Berry Crush all write sectors and leave them
+    // unflushed. Reading the file could therefore hand back bytes older than what the game
+    // had already written, which ReloadSave turns into progress that silently reverts.
+    //
+    // It also stops reopening the save file for every sector read during a load, and it is
+    // the seam a server-held save hydrates into: fill FLASH_BASE at sign-in and the whole
+    // load path reads from the server's copy without knowing anything changed.
+    u32 start = (sectorNum << gFlash->sector.shift) + offset;
+
     DBGPRINTF("ReadFlash(sectorNum=0x%04X,offset=0x%08X,size=0x%02X)\n",sectorNum,offset,size);
-    FILE * savefile = fopen(sSavePath, "r+b");
-    if (savefile == NULL)
+
+    if (dest == NULL || size == 0)
+        return;
+
+    if (start >= sizeof(FLASH_BASE) || size > sizeof(FLASH_BASE) - start)
     {
-        puts("Error opening save file.");
+        SDL_Log("flash read out of range: sector %u offset %u size %u",
+                (unsigned)sectorNum, (unsigned)offset, (unsigned)size);
         return;
     }
-    if (fseek(savefile, (sectorNum << gFlash->sector.shift) + offset, SEEK_SET))
-    {
-        fclose(savefile);
-        return;
-    }
-    if (fread(dest, 1, size, savefile) != size)
-    {
-        fclose(savefile);
-        return;
-    }
-    fclose(savefile);
+
+    memcpy(dest, FLASH_BASE + start, size);
 }
 
 void Platform_QueueAudio(float *audioBuffer, s32 samplesPerFrame)
