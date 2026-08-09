@@ -11,6 +11,7 @@
 #include "event_object_movement.h"
 #include "field_player_avatar.h"
 #include "mmo_autosave.h"
+#include "mmo_battle.h"
 #include "mmo_chat.h"
 #include "mmo_players.h"
 #include "mmo_text.h"
@@ -155,7 +156,7 @@ static void CheckForBattleStart(void)
     if (!Net_PopBattleStart(&start))
         return;
 
-    Link_SetAssignedMultiplayerId(start.linkId);
+    MmoBattle_Start(&start);
 }
 
 // The server refused where we said we were, so go where it says instead.

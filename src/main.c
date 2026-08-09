@@ -22,6 +22,7 @@
 #include "text.h"
 #include "intro.h"
 #include "main.h"
+#include "mmo_link.h"
 #include "trainer_hill.h"
 #include "platform.h"
 #include "constants/rgb.h"
@@ -178,6 +179,12 @@ void AgbMain(void)
 
 static void UpdateLinkAndCallCallbacks(void)
 {
+#ifdef PORTABLE
+    // Where the serial interrupt would have delivered blocks. Once per frame, before the
+    // callbacks that read them, so a block is available on the frame after it arrives.
+    MmoLink_Update();
+#endif
+
     if (!HandleLinkConnection())
         CallCallbacks();
 }
