@@ -33,6 +33,10 @@ pub const MSG_BEGIN_LOGIN: u8 = 0x82;
 pub const MSG_CANCEL_LOGIN: u8 = 0x83;
 pub const MSG_CHAT_SEND: u8 = 0x84;
 pub const MSG_LOGOUT: u8 = 0x85;
+/// Challenge another player: u32 player id.
+pub const MSG_BATTLE_REQUEST: u8 = 0x86;
+/// Answer a challenge: u32 player id, u8 accepted.
+pub const MSG_BATTLE_RESPOND: u8 = 0x87;
 
 /// Mirrors `enum NetAuthState` in the C header.
 pub const AUTH_OFFLINE: u8 = 0;
@@ -166,6 +170,8 @@ pub enum GameMessage {
     CancelLogin,
     ChatSend { kind: u8, target: String, text: String },
     Logout,
+    RequestBattle { target: PlayerId },
+    RespondToBattle { from: PlayerId, accepted: bool },
 }
 
 pub fn decode_game_message(body: &[u8]) -> anyhow::Result<GameMessage> {
@@ -187,6 +193,23 @@ pub fn decode_game_message(body: &[u8]) -> anyhow::Result<GameMessage> {
                     elevation: rest[9],
                 },
                 graphics_id: rest[8],
+            })
+        }
+        MSG_BATTLE_REQUEST => {
+            if rest.len() < 4 {
+                anyhow::bail!("short BATTLE_REQUEST frame ({} bytes)", rest.len());
+            }
+            Ok(GameMessage::RequestBattle {
+                target: u32::from_le_bytes([rest[0], rest[1], rest[2], rest[3]]),
+            })
+        }
+        MSG_BATTLE_RESPOND => {
+            if rest.len() < 5 {
+                anyhow::bail!("short BATTLE_RESPOND frame ({} bytes)", rest.len());
+            }
+            Ok(GameMessage::RespondToBattle {
+                from: u32::from_le_bytes([rest[0], rest[1], rest[2], rest[3]]),
+                accepted: rest[4] != 0,
             })
         }
         MSG_BEGIN_LOGIN => Ok(GameMessage::BeginLogin),

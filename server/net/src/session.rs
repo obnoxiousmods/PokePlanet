@@ -82,6 +82,12 @@ impl Session {
         let mut transport = quinn::TransportConfig::default();
         transport.max_idle_timeout(Some(Duration::from_secs(30).try_into()?));
         transport.keep_alive_interval(Some(Duration::from_secs(10)));
+        // Windows rejects oversized datagrams with WSAEMSGSIZE rather than reporting a
+        // path MTU, so quinn's discovery probes fail noisily on every connection. Our
+        // messages are far below the conservative floor anyway, so pin the MTU and skip
+        // discovery entirely.
+        transport.mtu_discovery_config(None);
+        transport.initial_mtu(1200);
         client_config.transport_config(Arc::new(transport));
 
         endpoint.set_default_client_config(client_config);
@@ -257,6 +263,16 @@ impl Session {
                                 _ => ChatTarget::Global,
                             };
                             write_control(&mut send, &ClientControl::Chat { target, text }).await?;
+                        }
+                        wire::GameMessage::RequestBattle { target } => {
+                            write_control(&mut send, &ClientControl::RequestBattle { target }).await?;
+                        }
+                        wire::GameMessage::RespondToBattle { from, accepted } => {
+                            write_control(
+                                &mut send,
+                                &ClientControl::RespondToBattle { from, accepted },
+                            )
+                            .await?;
                         }
                         wire::GameMessage::Logout => {
                             self.tokens.clear();
