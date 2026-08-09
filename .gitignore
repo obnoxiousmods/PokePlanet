@@ -54,3 +54,5 @@ prefabs.json
 /BG[0-9][0-9].bmp
 /Border.bmp
 /pymerald.log
+/server/target/
+/pymerald-net.exe

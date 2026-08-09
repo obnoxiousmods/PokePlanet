@@ -1,0 +1,15 @@
+[package]
+name = "pymerald-net"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+pymerald-proto.workspace = true
+anyhow.workspace = true
+quinn.workspace = true
+rustls.workspace = true
+serde.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
