@@ -22,6 +22,14 @@ pub struct Settings {
     /// Skip certificate verification. For pointing a dev build at a self-signed server;
     /// never appropriate against the real one.
     pub insecure: bool,
+    /// Sign in as whoever the cached token already is, and refuse to become anyone else:
+    /// no browser login, and the cache is never rewritten.
+    ///
+    /// This is what makes a second client on the same machine a genuinely separate player.
+    /// A Discord login always resolves to the account of whoever is at the keyboard, so
+    /// left to itself the test client signs in as the real player, and the two connections
+    /// then fight over one identity instead of seeing each other.
+    pub fixed_token: bool,
 }
 
 impl Default for Settings {
@@ -32,6 +40,7 @@ impl Default for Settings {
             ipc_addr: SocketAddr::from(([127, 0, 0, 1], DEFAULT_IPC_PORT)),
             token_path: PathBuf::from("pokeplanet-auth.json"),
             insecure: false,
+            fixed_token: false,
         }
     }
 }
@@ -110,6 +119,7 @@ impl Settings {
                         .into();
                 }
                 "--insecure" => self.insecure = true,
+                "--fixed-token" => self.fixed_token = true,
                 "--help" | "-h" => {
                     println!(
                         "pokeplanet-net — PokePlanet network sidecar\n\n\
@@ -118,6 +128,7 @@ impl Settings {
                            --port PORT           game server port\n  \
                            --ipc-port PORT       loopback port the game connects to (default {DEFAULT_IPC_PORT})\n  \
                            --token PATH          session token cache\n  \
+                           --fixed-token         stay signed in as the cached token; never\n                                                 log in through a browser, never rewrite it\n  \
                            --insecure            skip TLS verification (development only)\n"
                     );
                     std::process::exit(0);

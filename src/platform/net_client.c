@@ -28,6 +28,7 @@
 
 #include "global.h"
 #include "net_client.h"
+#include "platform.h"
 
 // Sidecar -> game
 #define MSG_STATUS       0x01
@@ -178,6 +179,15 @@ static void HandleStatus(const u8 *payload, u32 len)
     CopyField(sNet.playerName, payload + 1, NET_NAME_LEN);
     CopyField(sNet.loginUrl, payload + 1 + NET_NAME_LEN, NET_URL_LEN);
     SDL_UnlockMutex(sNet.lock);
+
+    // The character is being played somewhere else now. Nothing this copy does from here
+    // could reach the world, and leaving it running invites the player to keep playing a
+    // session whose progress is quietly going nowhere.
+    if (sNet.authState == NET_AUTH_SUPERSEDED)
+    {
+        SDL_Log("net: signed in elsewhere; closing");
+        Platform_RequestQuit();
+    }
 }
 
 static void HandleSnapshot(const u8 *payload, u32 len)

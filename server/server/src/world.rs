@@ -52,10 +52,24 @@ impl World {
             name: presence.name.clone(),
             graphics_id: presence.graphics_id,
         };
-        {
+        let displaced = {
             let mut players = self.players.write().await;
-            players.insert(id, presence);
+            players.insert(id, presence)
+        };
+
+        // One character cannot be in two places. The old connection was already being
+        // ignored from here on -- update_pose and session_is_current both check the
+        // session -- but nothing ever told it, so it sat there looking online while the
+        // world moved on without it. Say so, and let it close itself.
+        if let Some(old) = displaced {
+            let _ = old
+                .control
+                .send(ServerControl::Superseded {
+                    reason: "signed in from somewhere else".to_string(),
+                })
+                .await;
         }
+
         self.broadcast_except(id, announcement).await;
     }
 
@@ -304,6 +318,39 @@ mod tests {
             },
             rx,
         )
+    }
+
+    #[tokio::test]
+    async fn signing_in_again_tells_the_old_connection_to_stop() {
+        let world = World::new();
+        let (first, mut first_rx) = presence(1, "Ash", 0, 0);
+        let (second, _second_rx) = presence(1, "Ash", 0, 0);
+
+        world.join(1, first).await;
+        world.join(1, second).await;
+
+        match first_rx.try_recv() {
+            Ok(ServerControl::Superseded { .. }) => {}
+            other => panic!("the displaced connection was not told to stop: {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn the_surviving_connection_is_not_told_to_stop() {
+        let world = World::new();
+        let (first, _first_rx) = presence(1, "Ash", 0, 0);
+        let (second, mut second_rx) = presence(1, "Ash", 0, 0);
+
+        world.join(1, first).await;
+        world.join(1, second).await;
+
+        // Whatever the newcomer hears, it must not be an instruction to close itself.
+        while let Ok(msg) = second_rx.try_recv() {
+            assert!(
+                !matches!(msg, ServerControl::Superseded { .. }),
+                "the live connection was told to stop"
+            );
+        }
     }
 
     #[tokio::test]

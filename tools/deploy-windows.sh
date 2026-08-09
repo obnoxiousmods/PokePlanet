@@ -27,8 +27,12 @@ echo "== building sidecar =="
 # Windows locks a running executable, so copying over one fails with a bare "Permission
 # denied" that reads like a filesystem problem rather than "close the game first".
 copy_or_explain() {
-    if ! cp -v "$1" "$2" 2>/dev/null; then
-        echo "could not replace $(basename "$1"): it is most likely still running." >&2
+    # Not cp -v: it announces the copy before attempting it, so a failure prints a line
+    # claiming the file was replaced immediately above the error saying it was not.
+    if cp "$1" "$2" 2>/dev/null; then
+        echo "  $(basename "$1") -> $2"
+    else
+        echo "could not replace $(basename "$2"): it is most likely still running." >&2
         echo "close the game and the sidecar, then run this again." >&2
         return 1
     fi

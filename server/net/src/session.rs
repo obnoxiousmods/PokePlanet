@@ -154,7 +154,11 @@ impl Session {
                                 player_id, name = %profile.name, badges = profile.badges,
                                 play_time_s = profile.play_time_seconds, "signed in"
                             );
-                            self.tokens.store(&token);
+                            // A fixed-token client keeps the identity it was given; storing
+                            // the rotated one would let it drift onto a different account.
+                            if !self.settings.fixed_token {
+                                self.tokens.store(&token);
+                            }
                             player_name = profile.name.clone();
                             pending_ticket = None;
                             // Profile before status: the sign-in screen reads the save
@@ -163,6 +167,18 @@ impl Session {
                             self.report(wire::AUTH_ONLINE, &profile.name, "").await;
                         }
                         ServerControl::AuthRequired { ticket, login_url } => {
+                            if self.settings.fixed_token {
+                                // Opening a browser here would sign this client in as
+                                // whoever is at the keyboard, which is exactly the identity
+                                // it exists to avoid. Say so plainly instead of silently
+                                // becoming the wrong player.
+                                tracing::error!(
+                                    "the fixed token was refused; the account it names may \
+                                     no longer exist. Not falling back to a browser login."
+                                );
+                                self.report(wire::AUTH_OFFLINE, "", "").await;
+                                anyhow::bail!("fixed token refused");
+                            }
                             tracing::info!(%login_url, "login required");
                             // Only launch a browser the first time we see a given ticket.
                             // The server re-sends AuthRequired if the game asks again, and
@@ -206,8 +222,23 @@ impl Session {
                             tracing::error!(%reason, "server rejected this client");
                             // A stale token is the common cause; drop it so the next
                             // attempt starts a fresh browser login instead of looping.
-                            self.tokens.clear();
+                            // A fixed token is the client's only identity, so keep it and
+                            // let the operator fix whatever is wrong with it.
+                            if !self.settings.fixed_token {
+                                self.tokens.clear();
+                            }
                             anyhow::bail!("{reason}");
+                        }
+                        ServerControl::Superseded { reason } => {
+                            tracing::warn!(%reason, "signed in elsewhere; shutting down");
+                            self.report(wire::AUTH_SUPERSEDED, "", &reason).await;
+                            // Give the frame time to reach the game, which is quitting on
+                            // the strength of it, before this process goes away and takes
+                            // the IPC socket with it.
+                            tokio::time::sleep(Duration::from_millis(500)).await;
+                            // Reconnecting would only be told the same thing again, and the
+                            // sidecar exists solely to serve this one game.
+                            std::process::exit(0);
                         }
                     }
                 }

@@ -157,6 +157,18 @@ void Platform_LogMultiplayer(const char *line)
     SDL_Log("mmo: %s", line);
 }
 
+// Shut down as though the window had been closed, so the save is flushed and the sidecar
+// is left in a sane state. Pushed as an event rather than setting a flag directly because
+// the caller is usually the network thread, and SDL_PushEvent is the thread-safe way in.
+void Platform_RequestQuit(void)
+{
+    SDL_Event quit;
+
+    memset(&quit, 0, sizeof(quit));
+    quit.type = SDL_QUIT;
+    SDL_PushEvent(&quit);
+}
+
 const char *Platform_GetServerHost(void)
 {
     return sServerHost;
@@ -199,9 +211,15 @@ static void LaunchSidecar(void)
     // to bind; connecting to the existing one is the correct behaviour either way.
     // The token cache is per profile too, so a second instance signs in as its own
     // account instead of silently reusing the first one's session.
+    //
+    // A named profile is pinned to whatever account its token names and never offered a
+    // browser login. Otherwise signing in would resolve to whoever is at the keyboard --
+    // the same person already playing the main client -- and the two would fight over one
+    // identity rather than being two players who can see each other.
     snprintf(commandLine, sizeof(commandLine),
-             "pokeplanet-net.exe --server %s --port %u --ipc-port %u --token %s",
-             sServerHost, sServerPort, sSidecarPort, sTokenPath);
+             "pokeplanet-net.exe --server %s --port %u --ipc-port %u --token %s%s",
+             sServerHost, sServerPort, sSidecarPort, sTokenPath,
+             sProfile[0] != '\0' ? " --fixed-token" : "");
 
     memset(&startup, 0, sizeof(startup));
     startup.cb = sizeof(startup);

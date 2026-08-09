@@ -44,6 +44,9 @@ pub const AUTH_CONNECTING: u8 = 1;
 pub const AUTH_NEEDS_LOGIN: u8 = 2;
 pub const AUTH_AWAITING_BROWSER: u8 = 3;
 pub const AUTH_ONLINE: u8 = 4;
+/// This character signed in elsewhere. The game shuts itself down rather than sitting
+/// there looking connected while the world has moved on without it.
+pub const AUTH_SUPERSEDED: u8 = 5;
 
 pub const CHAT_GLOBAL: u8 = 0;
 pub const CHAT_LOCAL: u8 = 1;

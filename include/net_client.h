@@ -30,6 +30,9 @@ enum NetAuthState
     NET_AUTH_NEEDS_LOGIN,
     NET_AUTH_AWAITING_BROWSER,
     NET_AUTH_ONLINE,
+    // This character signed in elsewhere. The world has moved on without us, so the game
+    // closes rather than sitting there looking connected.
+    NET_AUTH_SUPERSEDED,
 };
 
 enum NetChatKind

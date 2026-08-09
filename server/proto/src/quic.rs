@@ -91,6 +91,12 @@ pub enum ServerControl {
     BattleInvitationFailed { reason: String },
     /// Terminal error; the sidecar drops to offline and reports `reason` to the game.
     Rejected { reason: String },
+    /// This character signed in somewhere else and that connection now owns it. Distinct
+    /// from `Rejected` because retrying cannot help and the token is perfectly good: the
+    /// only correct response is for this client to stop.
+    ///
+    /// Appended rather than inserted so the existing variant numbering does not shift.
+    Superseded { reason: String },
 }
 
 /// Position report, sent by the client at roughly 10Hz on a datagram.
