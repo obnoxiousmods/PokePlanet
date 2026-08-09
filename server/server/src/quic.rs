@@ -217,6 +217,7 @@ async fn run_session(
     character: db::Character,
 ) -> anyhow::Result<()> {
     let player_id = character.id as PlayerId;
+    let session = crate::world::next_session_id();
     let name = character.name.clone();
     let token = auth::random_token();
     db::issue_session(&server.db, character.id, &token).await?;
@@ -248,6 +249,7 @@ async fn run_session(
         .join(
             player_id,
             Presence {
+                session,
                 character_id: character.id,
                 name: name.clone(),
                 graphics_id: character.graphics_id,
@@ -273,13 +275,13 @@ async fn run_session(
     let movement = tokio::spawn({
         let server = server.clone();
         let conn = conn.clone();
-        async move { movement_loop(server, conn, player_id).await }
+        async move { movement_loop(server, conn, player_id, session).await }
     });
 
     // Control messages from the client until it hangs up.
-    let result = control_loop(&server, &mut recv, player_id, &name).await;
+    let result = control_loop(&server, &mut recv, player_id, session, &name).await;
 
-    server.world.leave(player_id).await;
+    server.world.leave(player_id, session).await;
     if let Some(pose) = server.world.pose_of(player_id).await {
         let _ = db::save_position(&server.db, character.id, &pose).await;
     }
@@ -293,6 +295,7 @@ async fn control_loop(
     server: &Arc<Server>,
     recv: &mut RecvStream,
     player_id: PlayerId,
+    session: crate::world::SessionId,
     name: &str,
 ) -> anyhow::Result<()> {
     while let Some(frame) = read_frame(recv).await? {
@@ -308,7 +311,7 @@ async fn control_loop(
             ClientControl::EnterMap { map } => {
                 if let Some(mut pose) = server.world.pose_of(player_id).await {
                     pose.map = map;
-                    server.world.update_pose(player_id, pose).await;
+                    server.world.update_pose(player_id, session, pose).await;
                 }
             }
             ClientControl::Goodbye => break,
@@ -330,7 +333,12 @@ fn sanitize_chat(text: &str) -> String {
         .to_string()
 }
 
-async fn movement_loop(server: Arc<Server>, conn: Connection, player_id: PlayerId) {
+async fn movement_loop(
+    server: Arc<Server>,
+    conn: Connection,
+    player_id: PlayerId,
+    session: crate::world::SessionId,
+) {
     let mut ticker = tokio::time::interval(SNAPSHOT_INTERVAL);
     let mut save_ticker = tokio::time::interval(POSITION_SAVE_INTERVAL);
     save_ticker.tick().await; // the first tick fires immediately; skip it
@@ -340,11 +348,13 @@ async fn movement_loop(server: Arc<Server>, conn: Connection, player_id: PlayerI
             datagram = conn.read_datagram() => {
                 let Ok(bytes) = datagram else { return };
                 match quic::decode::<ClientMovement>(&bytes) {
-                    Ok(m) => server.world.update_pose(player_id, m.pose).await,
+                    Ok(m) => server.world.update_pose(player_id, session, m.pose).await,
                     Err(e) => tracing::debug!(player = player_id, error = %e, "bad movement datagram"),
                 }
             }
             _ = ticker.tick() => {
+                // Stop feeding a superseded connection rather than shadowing the live one.
+                if !server.world.session_is_current(player_id, session).await { return }
                 let Some(pose) = server.world.pose_of(player_id).await else { return };
                 let players = server.world.snapshot(player_id, pose.map, pose).await;
                 let snapshot = ServerSnapshot { players };

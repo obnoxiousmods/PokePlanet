@@ -9,7 +9,21 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 
+/// Distinguishes two connections for the same character.
+///
+/// A player can be connected twice at once -- a reconnect that races its own teardown, or
+/// a second copy of the game. Without this, the older connection's cleanup would evict the
+/// live one from the world and silently stop its snapshots.
+pub type SessionId = u64;
+
+static NEXT_SESSION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+pub fn next_session_id() -> SessionId {
+    NEXT_SESSION.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
+
 pub struct Presence {
+    pub session: SessionId,
     pub character_id: i64,
     pub name: String,
     pub graphics_id: u8,
@@ -43,18 +57,41 @@ impl World {
         self.broadcast_except(id, announcement).await;
     }
 
-    pub async fn leave(&self, id: PlayerId) {
-        let existed = self.players.write().await.remove(&id).is_some();
-        if existed {
+    /// Remove a player, but only if the presence still belongs to `session`.
+    ///
+    /// A reconnecting client briefly has two connections. The older one tearing down must
+    /// not evict the newer one, or the live session stops receiving snapshots while still
+    /// believing it is online.
+    pub async fn leave(&self, id: PlayerId, session: SessionId) {
+        let removed = {
+            let mut players = self.players.write().await;
+            match players.get(&id) {
+                Some(p) if p.session == session => players.remove(&id).is_some(),
+                _ => false,
+            }
+        };
+        if removed {
             self.broadcast_except(id, ServerControl::PlayerLeft { player_id: id })
                 .await;
         }
     }
 
-    pub async fn update_pose(&self, id: PlayerId, pose: Pose) {
+    /// Update a pose, ignoring reports from a connection that has been superseded.
+    pub async fn update_pose(&self, id: PlayerId, session: SessionId, pose: Pose) {
         if let Some(p) = self.players.write().await.get_mut(&id) {
-            p.pose = pose;
+            if p.session == session {
+                p.pose = pose;
+            }
         }
+    }
+
+    /// True while this session is still the live one for its character.
+    pub async fn session_is_current(&self, id: PlayerId, session: SessionId) -> bool {
+        self.players
+            .read()
+            .await
+            .get(&id)
+            .is_some_and(|p| p.session == session)
     }
 
     pub async fn pose_of(&self, id: PlayerId) -> Option<Pose> {
@@ -171,6 +208,7 @@ mod tests {
         let (tx, rx) = mpsc::channel(16);
         (
             Presence {
+                session: next_session_id(),
                 character_id,
                 name: name.to_string(),
                 graphics_id: 7,
@@ -272,15 +310,53 @@ mod tests {
         let world = World::new();
         let (a, mut ra) = presence(1, "Ash", 0, 0);
         let (b, _rb) = presence(2, "Misty", 0, 0);
+        let b_session = b.session;
         world.join(1, a).await;
         world.join(2, b).await;
         while ra.try_recv().is_ok() {}
 
-        world.leave(2).await;
+        world.leave(2, b_session).await;
         match ra.try_recv() {
             Ok(ServerControl::PlayerLeft { player_id }) => assert_eq!(player_id, 2),
             other => panic!("expected PlayerLeft, got {other:?}"),
         }
         assert_eq!(world.online_count().await, 1);
+    }
+
+    #[tokio::test]
+    async fn a_stale_connection_cannot_evict_the_reconnected_one() {
+        // The exact failure seen live: a second sidecar connects as the same character,
+        // then the first one's teardown removed the live presence and snapshots stopped.
+        let world = World::new();
+        let (first, _r1) = presence(1, "Ash", 0, 0);
+        let stale_session = first.session;
+        world.join(1, first).await;
+
+        let (second, _r2) = presence(1, "Ash", 5, 5);
+        let live_session = second.session;
+        world.join(1, second).await;
+        assert_ne!(stale_session, live_session);
+
+        world.leave(1, stale_session).await;
+
+        assert_eq!(world.online_count().await, 1, "live session must survive");
+        assert!(world.session_is_current(1, live_session).await);
+        assert!(!world.session_is_current(1, stale_session).await);
+    }
+
+    #[tokio::test]
+    async fn a_superseded_connection_cannot_move_the_character() {
+        let world = World::new();
+        let (first, _r1) = presence(1, "Ash", 0, 0);
+        let stale_session = first.session;
+        world.join(1, first).await;
+        let (second, _r2) = presence(1, "Ash", 5, 5);
+        world.join(1, second).await;
+
+        world
+            .update_pose(1, stale_session, Pose { map: MapId::new(1, 4), x: 99, y: 99, ..Default::default() })
+            .await;
+
+        assert_eq!(world.pose_of(1).await.unwrap().x, 5, "stale report ignored");
     }
 }

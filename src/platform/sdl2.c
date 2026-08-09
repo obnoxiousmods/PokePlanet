@@ -92,6 +92,12 @@ u16 Platform_GetSidecarPort(void)
     return (u16)sSidecarPort;
 }
 
+// Game-side multiplayer diagnostics land in pokeplanet.log alongside the platform's own.
+void Platform_LogMultiplayer(const char *line)
+{
+    SDL_Log("mmo: %s", line);
+}
+
 const char *Platform_GetServerHost(void)
 {
     return sServerHost;

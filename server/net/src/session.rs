@@ -199,6 +199,9 @@ impl Session {
                     let bytes = datagram.context("datagram stream ended")?;
                     match quic::decode::<ServerSnapshot>(&bytes) {
                         Ok(snapshot) => {
+                            if !snapshot.players.is_empty() {
+                                tracing::debug!(count = snapshot.players.len(), "snapshot in");
+                            }
                             let entries: Vec<wire::SnapshotEntry> = snapshot
                                 .players
                                 .into_iter()

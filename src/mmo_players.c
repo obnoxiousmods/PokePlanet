@@ -7,6 +7,7 @@
 //
 // Ticked once per overworld frame from OverworldBasic().
 
+#include <stdarg.h>
 #include "global.h"
 #include "event_object_movement.h"
 #include "field_player_avatar.h"
@@ -17,6 +18,21 @@
 // Local IDs for remote players. Real maps number their object events from 1 and never
 // come close to this, so these cannot collide with a map's own NPCs.
 #define MMO_LOCAL_ID_BASE 200
+
+// Diagnostics for the multiplayer path, mirrored into pokeplanet.log. Rate limited by
+// the caller; never called every frame.
+extern void Platform_LogMultiplayer(const char *line);
+
+static void MmoDebug(const char *format, ...)
+{
+    char line[160];
+    va_list args;
+
+    va_start(args, format);
+    vsnprintf(line, sizeof(line), format, args);
+    va_end(args);
+    Platform_LogMultiplayer(line);
+}
 
 struct MmoSlot
 {
@@ -30,6 +46,8 @@ struct MmoSlot
 static struct MmoSlot sSlots[NET_MAX_REMOTE_PLAYERS];
 static u8 sCurrentMapGroup = 0xFF;
 static u8 sCurrentMapNum = 0xFF;
+static u16 sDebugTimer;
+static struct NetRemotePlayer sDebugScratch[NET_MAX_REMOTE_PLAYERS];
 
 static u8 LocalIdForSlot(u8 slot)
 {
@@ -83,6 +101,8 @@ void MmoPlayers_Reset(void)
 static void ReportSelf(void)
 {
     struct ObjectEvent *player;
+    struct NetProfile profile;
+    u8 graphicsId;
 
     if (gPlayerAvatar.objectEventId >= OBJECT_EVENTS_COUNT)
         return;
@@ -90,11 +110,16 @@ static void ReportSelf(void)
     if (!player->active)
         return;
 
+    // Report the sprite the server assigned this character, not the local avatar's.
+    // The avatar is always Brendan or May; the server picks a distinct NPC sprite per
+    // character so other players can tell each other apart.
+    graphicsId = Net_GetProfile(&profile) ? profile.graphicsId : player->graphicsId;
+
     Net_SendSelf(sCurrentMapGroup, sCurrentMapNum,
                  player->currentCoords.x, player->currentCoords.y,
                  player->facingDirection,
                  player->heldMovementActive && !player->heldMovementFinished,
-                 player->graphicsId,
+                 graphicsId,
                  player->currentElevation);
 }
 
@@ -115,7 +140,13 @@ static void ApplyRemote(u8 slot, const struct NetRemotePlayer *remote)
             remote->x, remote->y, remote->elevation);
 
         if (objectEventId == OBJECT_EVENTS_COUNT)
+        {
+            MmoDebug("spawn FAILED slot=%u gfx=%u at %d,%d", slot,
+                     remote->graphicsId, remote->x, remote->y);
             return; // No free object event slot this frame; try again next frame.
+        }
+        MmoDebug("spawned slot=%u obj=%u gfx=%u at %d,%d", slot, objectEventId,
+                 remote->graphicsId, remote->x, remote->y);
 
         state->spawned = TRUE;
         state->x = remote->x;
@@ -175,6 +206,18 @@ void MmoPlayers_Update(void)
     u8 count;
     u8 i;
     u8 slot;
+
+    // Once a second, record what this client believes about the world. Without it the
+    // difference between "no snapshot arrived", "snapshot arrived but the map did not
+    // match" and "spawn was refused" is invisible.
+    if (++sDebugTimer >= 60)
+    {
+        sDebugTimer = 0;
+        MmoDebug("tick linked=%u auth=%u map=%u:%u remotes=%u",
+                 Net_IsLinked(), Net_GetAuthState(),
+                 gSaveBlock1Ptr->location.mapGroup, gSaveBlock1Ptr->location.mapNum,
+                 Net_GetRemotePlayers(sDebugScratch));
+    }
 
     if (!Net_IsLinked() || Net_GetAuthState() != NET_AUTH_ONLINE)
         return;
