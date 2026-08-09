@@ -184,7 +184,13 @@ pub async fn grant_role(http: &reqwest::Client, cfg: &Config, discord_user_id: &
         }
     };
 
-    let Some(role) = roles.iter().find(|r| r.name == cfg.discord_role_name) else {
+    // Case-insensitive: Discord role names are display strings that get renamed and
+    // recapitalised, and a grant silently doing nothing over a capital letter is a
+    // miserable thing to debug.
+    let Some(role) = roles
+        .iter()
+        .find(|r| r.name.eq_ignore_ascii_case(&cfg.discord_role_name))
+    else {
         tracing::warn!(
             role = %cfg.discord_role_name,
             "role does not exist in the guild; create it and put it below the bot's highest role"
