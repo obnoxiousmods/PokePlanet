@@ -422,6 +422,54 @@ async fn control_loop(
                 }
             }
             ClientControl::BlockChunk { block, offset, total, bytes } => {
+                // Block 2 is the tail: Hall of Fame, Trainer Hill, recorded battle. Whole
+                // sectors including footers, spliced in as they arrived.
+                const TAIL_BLOCK: u8 = 2;
+                let tail_len =
+                    crate::save_parse::TAIL_SECTORS.len() * crate::save_parse::SECTOR_SIZE;
+
+                if block == TAIL_BLOCK {
+                    if total as usize != tail_len
+                        || offset as usize + bytes.len() > tail_len
+                        || bytes.len() > 0x400
+                    {
+                        tracing::warn!(player = player_id, "refusing a malformed tail chunk");
+                        block_buf.clear();
+                        continue;
+                    }
+                    if offset == 0 || block_id != Some(block) || block_buf.len() != offset as usize
+                    {
+                        block_buf.clear();
+                        block_id = Some(block);
+                    }
+                    if block_buf.len() != offset as usize {
+                        continue;
+                    }
+                    block_buf.extend_from_slice(&bytes);
+                    if block_buf.len() != tail_len {
+                        continue;
+                    }
+
+                    let tail = std::mem::take(&mut block_buf);
+                    block_id = None;
+
+                    let Ok(Some(stored)) = db::load_save(&server.db, character_id).await else {
+                        continue;
+                    };
+                    let Some(candidate) = crate::save_parse::with_tail(&stored, &tail) else {
+                        continue;
+                    };
+                    // Still has to remain a save the server can read: splicing sectors it does
+                    // not model must not be a way to make the rest unparseable.
+                    if crate::save_parse::parse(&candidate).is_none() {
+                        tracing::warn!(player = player_id, "tail report broke the save; refusing");
+                        continue;
+                    }
+                    db::store_save(&server.db, character_id, &candidate).await?;
+                    tracing::info!(player = player_id, "tail sectors set by report");
+                    continue;
+                }
+
                 let Some(sectors) = crate::save_parse::reportable_block(block) else {
                     tracing::warn!(player = player_id, block, "refusing an unknown block id");
                     continue;

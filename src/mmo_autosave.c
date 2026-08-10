@@ -182,6 +182,16 @@ static void ReportRegionsIfChanged(void)
 // rate ceilings a wholesale write would skip.
 #define REPORT_BLOCK_SAVEBLOCK2 0
 #define REPORT_BLOCK_STORAGE    1
+// Hall of Fame, Trainer Hill and the recorded battle: sectors 28 to 31, which sit outside the
+// two save slots. Reported as whole sectors straight out of the flash mirror, footers included,
+// because they are not a struct anybody here models -- and this is the last thing the save
+// image carried that nothing else did.
+#define REPORT_BLOCK_TAIL       2
+#define TAIL_SECTOR_FIRST       28
+#define TAIL_SECTOR_COUNT       4
+#define SAVE_SECTOR_BYTES       4096
+
+extern unsigned char FLASH_BASE[131072];
 
 #define BLOCK_CHUNK_BYTES 0x400
 
@@ -196,19 +206,21 @@ static void ReportRegionsIfChanged(void)
 // of the object; the server keeps whatever was already in that tail.
 static void ReportBlocksIfChanged(void)
 {
-    static u32 sLast[2];
-    static bool8 sHaveSent[2];
+    static u32 sLast[3];
+    static bool8 sHaveSent[3];
     static u32 sSending;      // index + 1, or 0 for idle
     static u32 sOffset;
 
-    const void *base[2];
-    u32 size[2];
+    const void *base[3];
+    u32 size[3];
     u32 i;
 
     base[REPORT_BLOCK_SAVEBLOCK2] = gSaveBlock2Ptr;
     size[REPORT_BLOCK_SAVEBLOCK2] = sizeof(struct SaveBlock2);
     base[REPORT_BLOCK_STORAGE] = gPokemonStoragePtr;
     size[REPORT_BLOCK_STORAGE] = sizeof(struct PokemonStorage);
+    base[REPORT_BLOCK_TAIL] = FLASH_BASE + TAIL_SECTOR_FIRST * SAVE_SECTOR_BYTES;
+    size[REPORT_BLOCK_TAIL] = TAIL_SECTOR_COUNT * SAVE_SECTOR_BYTES;
 
     if (sSending != 0)
     {
@@ -230,7 +242,7 @@ static void ReportBlocksIfChanged(void)
         return;
     }
 
-    for (i = 0; i < 2; i++)
+    for (i = 0; i < 3; i++)
     {
         u32 sum = 2166136261u;
         const u8 *bytes = (const u8 *)base[i];

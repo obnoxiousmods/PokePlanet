@@ -17,7 +17,7 @@
 //! - The slot with the higher counter is the newer one, which is the one the game will load.
 //! - SaveBlock1 is spread across sector ids 1 to 4, in order, 3968 bytes at a time.
 
-const SECTOR_SIZE: usize = 4096;
+pub const SECTOR_SIZE: usize = 4096;
 pub const SECTOR_DATA_SIZE: usize = 3968;
 const SECTORS_PER_SLOT: usize = 14;
 const NUM_SECTORS: usize = 32;
@@ -648,6 +648,37 @@ pub fn with_region(state: &SaveState, offset: usize, bytes: &[u8]) -> Option<Vec
     Some(block1)
 }
 
+/// The sectors after the two save slots: Hall of Fame (28, 29), Trainer Hill (30) and the
+/// recorded battle (31).
+///
+/// These sit outside the slot rotation entirely, so none of the block machinery reaches them --
+/// it all resolves through `newest_slot`. They were the last thing the save image carried that
+/// nothing else did, which is why the upload could not simply be switched off: a player's Hall
+/// of Fame would have stopped reaching the server, gone at the next sign-in rather than
+/// degraded.
+pub const TAIL_SECTORS: std::ops::Range<usize> = 28..32;
+
+/// Replace the tail sectors with what the client reported, verbatim.
+///
+/// Verbatim including footers, and deliberately so. These sectors are not a struct the server
+/// models -- there is no field here it could check -- and their checksums were written by the
+/// game that produced them. Recomputing what is not understood is how a save gets confidently
+/// corrupted; copying it cannot be wrong in a way that reading it right would have caught.
+///
+/// Safe to take at face value because nothing here feeds the rules that matter: no money, no
+/// party, no bag. A forged Hall of Fame is a vanity lie, not an economic one.
+pub fn with_tail(image: &[u8], tail: &[u8]) -> Option<Vec<u8>> {
+    let at = TAIL_SECTORS.start * SECTOR_SIZE;
+    let len = TAIL_SECTORS.len() * SECTOR_SIZE;
+    if image.len() != NUM_SECTORS * SECTOR_SIZE || tail.len() != len {
+        return None;
+    }
+
+    let mut out = image.to_vec();
+    out[at..at + len].copy_from_slice(tail);
+    Some(out)
+}
+
 /// The blocks a client may report wholesale, by id.
 ///
 /// Ids rather than sector lists on the wire: the client naming which sectors to write is the
@@ -660,6 +691,7 @@ pub fn reportable_block(id: u8) -> Option<&'static [u16]> {
     match id {
         0 => Some(&SAVEBLOCK2_SECTORS),
         1 => Some(&STORAGE_SECTORS),
+        // 2 is the tail; it is not a slot block and is handled by with_tail.
         _ => None,
     }
 }
