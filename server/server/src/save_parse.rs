@@ -217,19 +217,24 @@ impl SaveState {
             ));
         }
 
-        // The bag is deliberately not grounds for refusing a save yet.
+        // A slot holds at most ninety-nine of anything -- the game starts a new slot rather
+        // than putting a hundredth in -- and never zero, since it clears a slot instead of
+        // leaving one empty.
         //
-        // A slot holds at most ninety-nine of anything and never zero, so the rule itself is
-        // sound -- but the quantities it would judge come out of an obfuscation that has not
-        // been checked against real data. Both saves available to test with have empty bags,
-        // which makes the check that was meant to prove the decode pass without examining
-        // anything, and an attempt to plant a known item did not survive to the server. A
-        // wrong decode would scatter quantities across the whole 16-bit range and refuse
-        // every honest save that carried an item.
-        //
-        // The argument that it is right -- the key is the same one money is proven with, and
-        // the pocket offsets and counts agree with each other exactly -- is a good argument
-        // and not evidence. The bag is parsed and recorded so the evidence can be had.
+        // Enforced because the decode behind it was finally checked against real data rather
+        // than argued for: a known item written into a running game, obfuscated by the game
+        // itself, saved, uploaded and read back here as the same item and the same count.
+        // Until that evidence existed this was left unenforced, because both saves to hand
+        // had empty bags and a wrong decode would have refused every honest save carrying an
+        // item.
+        for (pocket, item, quantity) in &self.bag {
+            if *quantity == 0 || *quantity > MAX_ITEM_QUANTITY {
+                return Some(format!(
+                    "bag pocket {} holds {} of item {}, which the game cannot store",
+                    pocket + 1, quantity, item
+                ));
+            }
+        }
 
         for (i, mon) in self.party.iter().enumerate() {
             // Level is read straight out of `struct Pokemon`, at an offset confirmed against
@@ -583,5 +588,6 @@ mod tests {
         assert!(parse(&broken).is_none(), "an incomplete slot is not loadable");
     }
 }
+
 
 
