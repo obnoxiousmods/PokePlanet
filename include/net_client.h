@@ -201,6 +201,24 @@ bool8 Net_PopLinkBlock(struct NetLinkBlock *out);
 // Tell the server the battle is over, so it stops forwarding blocks to the opponent.
 void Net_SendBattleEnded(void);
 
+// The server's gameplay rates, as hundredths of the original game: 100 is Emerald exactly,
+// 250 is two and a half times, 25 is a quarter.
+//
+// Held as hundredths rather than a fraction because the game has no floating point worth
+// using and every rate is applied to an integer amount anyway. See MmoRates_Apply.
+struct NetRates
+{
+    u16 experience;
+    u16 encounter;
+    u16 money;
+    u16 items;
+    u16 catch;
+};
+
+// The rates this server runs. Returns the original game's rates until the server has said
+// otherwise, so nothing has to wait for them or check whether they arrived.
+void Net_GetRates(struct NetRates *out);
+
 // Has this session ever been signed in?
 //
 // Distinct from Net_GetAuthState, which is a live value and dips during a reconnect. For

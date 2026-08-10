@@ -530,6 +530,25 @@ async fn control_loop(
                     map_num = profile.map_num, x = profile.x, y = profile.y,
                     "resyncing a newly attached game"
                 );
+                // The rates go out again too. They are sent once after Welcome, which is
+                // normally before the game has finished booting, and GameLink drops what it
+                // cannot deliver -- so a game attaching later would play on the original
+                // game's rates while the server ran on different ones, and nothing would look
+                // wrong until somebody compared the numbers.
+                server
+                    .world
+                    .tell(
+                        player_id,
+                        ServerControl::Rates {
+                            experience: server.rates.experience,
+                            encounter: server.rates.encounter,
+                            money: server.rates.money,
+                            items: server.rates.items,
+                            catch: server.rates.catch,
+                        },
+                    )
+                    .await;
+
                 server
                     .world
                     .tell(

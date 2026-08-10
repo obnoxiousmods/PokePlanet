@@ -41,6 +41,13 @@ pub const MSG_BATTLE_STARTING: u8 = 0x09;
 pub const MSG_CORRECTION: u8 = 0x0A;
 /// One block of link-battle traffic from the opponent: u8 from_slot, u16 len, bytes.
 pub const MSG_LINK_BLOCK: u8 = 0x0B;
+/// The server's gameplay rates: five u16 each a multiplier in hundredths.
+///
+/// Hundredths rather than a float because the game side is 32-bit C compiled through the
+/// decomp's preprocessor and this format is deliberately dumb -- fixed-size integers only.
+/// A hundredth is finer than anyone tuning a rate needs, and 1.0 is exactly 100 rather than
+/// something that has to be compared with a tolerance.
+pub const MSG_RATES: u8 = 0x0C;
 
 // Game -> sidecar
 pub const MSG_SELF_STATE: u8 = 0x81;
@@ -256,6 +263,21 @@ pub fn encode_chat(kind: u8, from: &str, text: &str) -> Vec<u8> {
     b.push(kind);
     put_str(&mut b, from, SENDER_LEN);
     put_str(&mut b, text, TEXT_LEN);
+    frame(b)
+}
+
+/// The gameplay rates, as hundredths. Anything beyond what a u16 can hold is clamped: a
+/// multiplier over 650 is not a rate anyone chose on purpose, and refusing to encode it
+/// would take the server down over a typo in a file it already accepted.
+pub fn encode_rates(experience: f32, encounter: f32, money: f32, items: f32, catch: f32) -> Vec<u8> {
+    fn hundredths(rate: f32) -> u16 {
+        (rate * 100.0).round().clamp(0.0, u16::MAX as f32) as u16
+    }
+
+    let mut b = vec![MSG_RATES];
+    for rate in [experience, encounter, money, items, catch] {
+        b.extend_from_slice(&hundredths(rate).to_le_bytes());
+    }
     frame(b)
 }
 

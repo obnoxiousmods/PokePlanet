@@ -43,6 +43,7 @@
 #define MSG_BATTLE_STARTING 0x09
 #define MSG_CORRECTION      0x0A
 #define MSG_LINK_BLOCK      0x0B
+#define MSG_RATES           0x0C
 // Game -> sidecar
 #define MSG_SELF_STATE   0x81
 #define MSG_BEGIN_LOGIN  0x82
@@ -109,6 +110,7 @@ struct NetState
     struct NetProfile profile;
     bool8 hasProfile;
 
+    struct NetRates rates;
     struct NetLinkBlock blockInbox[LINK_BLOCK_INBOX];
     u8 blockHead;
     u8 blockTail;
@@ -316,6 +318,47 @@ static void HandleProfile(const u8 *payload, u32 len)
     SDL_UnlockMutex(sNet.lock);
 }
 
+static void HandleRates(const u8 *payload, u32 len)
+{
+    if (len < 10)
+        return;
+
+    SDL_LockMutex(sNet.lock);
+    sNet.rates.experience = (u16)(payload[0] | (payload[1] << 8));
+    sNet.rates.encounter  = (u16)(payload[2] | (payload[3] << 8));
+    sNet.rates.money      = (u16)(payload[4] | (payload[5] << 8));
+    sNet.rates.items      = (u16)(payload[6] | (payload[7] << 8));
+    sNet.rates.catch      = (u16)(payload[8] | (payload[9] << 8));
+    SDL_UnlockMutex(sNet.lock);
+    SDL_Log("net: rates x%u.%02u exp, x%u.%02u encounter, x%u.%02u money",
+            sNet.rates.experience / 100, sNet.rates.experience % 100,
+            sNet.rates.encounter / 100, sNet.rates.encounter % 100,
+            sNet.rates.money / 100, sNet.rates.money % 100);
+}
+
+void Net_GetRates(struct NetRates *out)
+{
+    if (out == NULL)
+        return;
+
+    // The original game, until the server says otherwise. Callers multiply by these without
+    // asking whether they arrived, so the default has to be the identity rather than zero --
+    // which would quietly stop all experience rather than leaving it alone.
+    out->experience = 100;
+    out->encounter = 100;
+    out->money = 100;
+    out->items = 100;
+    out->catch = 100;
+
+    if (!sInitialised)
+        return;
+
+    SDL_LockMutex(sNet.lock);
+    if (sNet.rates.experience != 0)
+        *out = sNet.rates;
+    SDL_UnlockMutex(sNet.lock);
+}
+
 static void HandleLinkBlock(const u8 *payload, u32 len)
 {
     struct NetLinkBlock *slot;
@@ -489,6 +532,9 @@ static void DispatchFrame(const u8 *body, u32 len)
         break;
     case MSG_SAVE_IMAGE:
         HandleSaveImage(body + 1, len - 1);
+        break;
+    case MSG_RATES:
+        HandleRates(body + 1, len - 1);
         break;
     case MSG_LINK_BLOCK:
         HandleLinkBlock(body + 1, len - 1);

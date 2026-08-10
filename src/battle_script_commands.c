@@ -1,4 +1,5 @@
 #include "global.h"
+#include "net_client.h"
 #include "battle.h"
 #include "battle_message.h"
 #include "battle_anim.h"
@@ -3377,6 +3378,21 @@ static void Cmd_getexp(void)
                         gBattleMoveDamage = (gBattleMoveDamage * 150) / 100;
                     if (gBattleTypeFlags & BATTLE_TYPE_TRAINER)
                         gBattleMoveDamage = (gBattleMoveDamage * 150) / 100;
+
+                    // The server's experience rate, in the same shape as the bonuses around
+                    // it: hundredths, so 100 changes nothing at all.
+                    //
+                    // Applied here rather than at the end of the chain on purpose. The
+                    // boosts below are told to the player -- "a boosted!" -- and a server
+                    // rate is not one of those; folding it in before them keeps the message
+                    // about the Pokemon rather than about the server's settings.
+                    {
+                        struct NetRates rates;
+
+                        Net_GetRates(&rates);
+                        if (rates.experience != 100)
+                            gBattleMoveDamage = (gBattleMoveDamage * rates.experience) / 100;
+                    }
 
                     if (IsTradedMon(&gPlayerParty[gBattleStruct->expGetterMonId]))
                     {
