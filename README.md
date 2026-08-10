@@ -151,9 +151,17 @@ Refused server-side, each verified against real data with a negative control:
   no-going-backwards rule, same rate ceiling. A second, laxer set of rules for the direct path
   would just make the direct path the way to cheat.
 
-  **Still to do:** the same treatment for items, party and the rest. Each is the same shape as
-  money -- find the chokepoint, report the value, write and re-check server-side -- and the
-  upload can only be switched off once nothing still depends on it to carry a field.
+  **Bag items travel on their own too**, as counts rather than deltas -- a delta that arrives
+  twice, or not at all, leaves the bag wrong in a way nothing afterwards can notice. The pocket
+  mapping lives in the game rather than the server, because SaveBlock1 orders pockets
+  differently from the `POCKET_*` constants and a server guessing that wrong would file items
+  into the wrong pocket, which to a player is indistinguishable from losing them.
+
+  **Still to do:** the party, and the remaining fields after it. Each is the same shape --
+  find the chokepoint, report the value, write and re-check server-side. The upload can only be
+  switched off once nothing still depends on it to carry a field, and the party is the largest
+  of those: six Pokemon of a hundred bytes each, with encrypted substructures whose order
+  depends on personality, so it is the one most worth doing carefully rather than quickly.
 
   And the honest limit: even finished, retiring the upload stops the client *choosing the format*
   it reports in, while the client still computes the contents. Real narrowing of the attack
