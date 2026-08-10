@@ -3,6 +3,7 @@
 #include "battle_ai_script_commands.h"
 #include "battle_anim.h"
 #include "battle_controllers.h"
+#include "mmo_link.h"
 #include "battle_message.h"
 #include "cable_club.h"
 #include "link.h"
@@ -34,7 +35,22 @@ void HandleLinkBattleSetup(void)
             SetWirelessCommType1();
         if (!gReceivedRemoteLinkPlayers)
             OpenLink();
-        CreateTask(Task_WaitForLinkPlayerConnection, 0);
+
+        // Task_WaitForLinkPlayerConnection is for waiting on a cable, and there is not one.
+        //
+        // It exists to notice a player dropping out mid-connect, and it decides that by
+        // comparing the live player count against the count saved when the link was
+        // established. A server-run battle never establishes a link and so never saves a
+        // count, and the moment the live count is answered honestly the two disagree --
+        // whereupon the task calls CloseLink and jumps to CB2_LinkError, tearing the battle
+        // down before a single block has been sent.
+        //
+        // That is exactly what made an honest player count look like it broke the game: the
+        // battle was not stalling, it was being aborted. Here the players are already
+        // connected, by the server, and their connection is not this task's to police.
+        if (!MmoLink_InBattle())
+            CreateTask(Task_WaitForLinkPlayerConnection, 0);
+
         CreateTasksForSendRecvLinkBuffers();
     }
 }
@@ -797,7 +813,20 @@ static void Task_HandleSendLinkBuffersData(u8 taskId)
             else
                 numPlayers = (gBattleTypeFlags & BATTLE_TYPE_MULTI) ? 4 : 2;
 
-            if (GetLinkPlayerCount_2() >= numPlayers)
+            // Wait for the battle to be properly under way, not just for the players to be
+            // counted.
+            //
+            // CB2_HandleStartBattle drives SendBlock itself for the version handshake and the
+            // party exchange, and this task drives it for controller traffic. On hardware the
+            // two never overlap because there is nothing queued here that early; here the
+            // timing differs, and letting this task start first breaks the exchange that has
+            // to finish before a battle exists at all -- measured, twice.
+            //
+            // BATTLE_TYPE_LINK_IN_BATTLE is set once that exchange is done, which is the same
+            // thing TryReceiveLinkBattleData waits for. Waiting for it on the send side too
+            // gives the block layer exactly one owner at a time.
+            if (GetLinkPlayerCount_2() >= numPlayers
+             && (gBattleTypeFlags & BATTLE_TYPE_LINK_IN_BATTLE))
             {
                 if (IsLinkMaster())
                 {

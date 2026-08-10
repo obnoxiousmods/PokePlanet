@@ -1432,6 +1432,21 @@ void ResetLinkPlayerCount(void)
 
 u8 GetLinkPlayerCount_2(void)
 {
+#ifdef PORTABLE
+    // Same reasoning as GetLinkPlayerCount, and a separate stall.
+    //
+    // Task_HandleSendLinkBuffersData will not leave SENDTASK_STATE_COUNT_PLAYERS until this
+    // reports the players it expects, so at zero the battle's send task never starts and no
+    // controller message is ever transmitted -- the mirror of the receive loop that never ran.
+    //
+    // Answered here rather than by filling in gLinkStatus, which every one of these reads.
+    // Doing that made the battle stall *earlier*: some path takes the master or established
+    // bit as licence to use link machinery that does not exist on this port. One narrow
+    // answer at a time is slower and does not trade a known stall for an unknown one.
+    if (sAssignedMultiplayerId != NO_ASSIGNED_SLOT)
+        return 2;
+#endif
+
     return EXTRACT_PLAYER_COUNT(gLinkStatus);
 }
 
