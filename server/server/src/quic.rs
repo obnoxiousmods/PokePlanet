@@ -381,6 +381,9 @@ async fn control_loop(
 ) -> anyhow::Result<()> {
     // Save slices are reassembled here, per connection.
     let mut save_image: Vec<u8> = Vec::new();
+    // Reassembly for whole-block reports; see ClientControl::BlockChunk below.
+    let mut block_buf: Vec<u8> = Vec::new();
+    let mut block_id: Option<u8> = None;
     // When this character last uploaded, so the server knows how long it had to earn what it
     // now claims. Per connection: a first upload has nothing to compare against and is not
     // judged on rate at all.
@@ -417,6 +420,80 @@ async fn control_loop(
                         .tell(player_id, ServerControl::BattleInvitationFailed { reason })
                         .await;
                 }
+            }
+            ClientControl::BlockChunk { block, offset, total, bytes } => {
+                let Some(sectors) = crate::save_parse::reportable_block(block) else {
+                    tracing::warn!(player = player_id, block, "refusing an unknown block id");
+                    continue;
+                };
+                let want = sectors.len() * crate::save_parse::SECTOR_DATA_SIZE;
+
+                // Bounded by which block this is, so the wire does not get to choose how much
+                // is held. Not required to *equal* it: the game's structs are smaller than the
+                // sectors that carry them -- SaveBlock2 is well under one -- so a client can
+                // only honestly send sizeof(struct), and reading the rest of the sector out of
+                // its process would be reading past the end of the object.
+                if total as usize > want
+                    || offset as usize + bytes.len() > total as usize
+                    || bytes.len() > 0x400
+                {
+                    tracing::warn!(player = player_id, block, total, "refusing a malformed chunk");
+                    block_buf.clear();
+                    continue;
+                }
+
+                // Restarting part way through, or arriving out of order: begin again rather
+                // than stitch together pieces of two different versions of the block.
+                if offset == 0 || block_id != Some(block) || block_buf.len() != offset as usize {
+                    block_buf.clear();
+                    block_id = Some(block);
+                }
+                if block_buf.len() != offset as usize {
+                    continue;
+                }
+                block_buf.extend_from_slice(&bytes);
+                if block_buf.len() != total as usize {
+                    continue;
+                }
+
+                let reported = std::mem::take(&mut block_buf);
+                block_id = None;
+
+                let Ok(Some(stored)) = db::load_save(&server.db, character_id).await else {
+                    continue;
+                };
+                let Some(old) = crate::save_parse::parse(&stored) else {
+                    continue;
+                };
+                // Splice what was reported over the block already held, leaving the tail of
+                // the last sector as it was. That padding is not the player's data and nobody
+                // reports it; zeroing it would be inventing bytes the game never wrote.
+                let Some(mut assembled) = crate::save_parse::read_block(&stored, sectors) else {
+                    continue;
+                };
+                assembled[..reported.len()].copy_from_slice(&reported);
+
+                let Some(candidate) =
+                    crate::save_parse::reauthor_block(&stored, sectors, &assembled)
+                else {
+                    tracing::warn!(player = player_id, block, "could not rebuild the save block");
+                    continue;
+                };
+                let Some(new) = crate::save_parse::parse(&candidate) else {
+                    tracing::error!(player = player_id, "rebuilt a save that will not parse");
+                    continue;
+                };
+
+                if let Some(reason) = new
+                    .impossible()
+                    .or_else(|| crate::save_parse::regressed(&old, &new))
+                {
+                    tracing::warn!(player = player_id, %reason, "refusing a reported block");
+                    continue;
+                }
+
+                db::store_save(&server.db, character_id, &candidate).await?;
+                tracing::info!(player = player_id, block, "block set by report");
             }
             ClientControl::RegionChanged { offset, bytes } => {
                 // Bounded before it is used for anything: the allowlist inside with_region is

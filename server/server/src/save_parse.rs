@@ -18,7 +18,7 @@
 //! - SaveBlock1 is spread across sector ids 1 to 4, in order, 3968 bytes at a time.
 
 const SECTOR_SIZE: usize = 4096;
-const SECTOR_DATA_SIZE: usize = 3968;
+pub const SECTOR_DATA_SIZE: usize = 3968;
 const SECTORS_PER_SLOT: usize = 14;
 const NUM_SECTORS: usize = 32;
 const SECTOR_SIGNATURE: u32 = 0x0801_2025;
@@ -628,6 +628,22 @@ pub fn with_region(state: &SaveState, offset: usize, bytes: &[u8]) -> Option<Vec
     let mut block1 = state.block1.clone();
     block1.get_mut(offset..offset + bytes.len())?.copy_from_slice(bytes);
     Some(block1)
+}
+
+/// The blocks a client may report wholesale, by id.
+///
+/// Ids rather than sector lists on the wire: the client naming which sectors to write is the
+/// same arbitrary write the region allowlist exists to prevent, one level up.
+///
+/// SaveBlock1 is absent. It holds money, the bag and the party, which have their own messages
+/// carrying caps and rate ceilings -- accepting it wholesale here would be a way to set them
+/// without meeting any of that.
+pub fn reportable_block(id: u8) -> Option<&'static [u16]> {
+    match id {
+        0 => Some(&SAVEBLOCK2_SECTORS),
+        1 => Some(&STORAGE_SECTORS),
+        _ => None,
+    }
 }
 
 /// The game's own checksum: sum of the data as little-endian u32s, folded to sixteen bits.

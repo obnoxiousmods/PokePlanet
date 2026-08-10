@@ -429,6 +429,13 @@ impl Session {
                         wire::GameMessage::LinkBlock { bytes } => {
                             write_control(&mut send, &ClientControl::LinkBlock { bytes }).await?;
                         }
+                        wire::GameMessage::BlockChunk { block, offset, total, bytes } => {
+                            write_control(
+                                &mut send,
+                                &ClientControl::BlockChunk { block, offset, total, bytes },
+                            )
+                            .await?;
+                        }
                         wire::GameMessage::RegionChanged { offset, bytes } => {
                             write_control(
                                 &mut send,

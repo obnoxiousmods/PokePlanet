@@ -60,6 +60,7 @@
 #define MSG_ITEM            0x8D
 #define MSG_PARTY           0x8E
 #define MSG_REGION          0x8F
+#define MSG_BLOCK           0x90
 
 // Lives in the SDL backend, like the sidecar port beside it.
 extern const char *Platform_GetInstanceToken(void);
@@ -1143,6 +1144,29 @@ void Net_SendRegion(u32 offset, const void *bytes, u32 size)
     body[4] = (u8)((offset >> 24) & 0xFF);
     memcpy(body + 5, bytes, size);
     Enqueue(body, 5 + size);
+}
+
+void Net_SendBlockChunk(u8 block, u32 offset, u32 total, const void *bytes, u32 size)
+{
+    u8 body[10 + 0x400];
+
+    if (!sInitialised)
+        return;
+    if (size > 0x400)
+        return;
+
+    body[0] = MSG_BLOCK;
+    body[1] = block;
+    body[2] = (u8)(offset & 0xFF);
+    body[3] = (u8)((offset >> 8) & 0xFF);
+    body[4] = (u8)((offset >> 16) & 0xFF);
+    body[5] = (u8)((offset >> 24) & 0xFF);
+    body[6] = (u8)(total & 0xFF);
+    body[7] = (u8)((total >> 8) & 0xFF);
+    body[8] = (u8)((total >> 16) & 0xFF);
+    body[9] = (u8)((total >> 24) & 0xFF);
+    memcpy(body + 10, bytes, size);
+    Enqueue(body, 10 + size);
 }
 
 void Net_SendBattleEnded(void)

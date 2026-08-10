@@ -28,6 +28,7 @@
 #include "save.h"
 #include "script.h"
 #include "pokemon.h"
+#include "pokemon_storage_system.h"
 
 // Frames of quiet before a change is written out. Long enough that a script setting a run
 // of flags produces one save rather than a dozen; short enough that a player who changes
@@ -165,8 +166,94 @@ static void ReportRegionsIfChanged(void)
                    sReportable[which].size);
 }
 
+
+// Whole blocks that are not SaveBlock1: SaveBlock2, and the PC boxes.
+//
+// Ids match reportable_block() on the server. SaveBlock1 is deliberately not here -- it holds
+// money, the bag and the party, which report through their own messages so they meet caps and
+// rate ceilings a wholesale write would skip.
+#define REPORT_BLOCK_SAVEBLOCK2 0
+#define REPORT_BLOCK_STORAGE    1
+
+#define BLOCK_CHUNK_BYTES 0x400
+
+// A chunk per tick, and only one block in flight.
+//
+// The boxes are around thirty-five kilobytes. Sending that in one frame would put the whole
+// lot through the pipe at once for what is often a single Pokemon being deposited, so it goes
+// a kilobyte at a time -- about thirty-five frames, half a second, and no visible hitch.
+//
+// Only the *size the struct actually is* is ever read. The sectors that carry these blocks are
+// larger than the structs themselves, and reading the difference would be reading past the end
+// of the object; the server keeps whatever was already in that tail.
+static void ReportBlocksIfChanged(void)
+{
+    static u32 sLast[2];
+    static bool8 sHaveSent[2];
+    static u32 sSending;      // index + 1, or 0 for idle
+    static u32 sOffset;
+
+    const void *base[2];
+    u32 size[2];
+    u32 i;
+
+    base[REPORT_BLOCK_SAVEBLOCK2] = gSaveBlock2Ptr;
+    size[REPORT_BLOCK_SAVEBLOCK2] = sizeof(struct SaveBlock2);
+    base[REPORT_BLOCK_STORAGE] = gPokemonStoragePtr;
+    size[REPORT_BLOCK_STORAGE] = sizeof(struct PokemonStorage);
+
+    if (sSending != 0)
+    {
+        u32 which = sSending - 1;
+        u32 left = size[which] - sOffset;
+        u32 take = left < BLOCK_CHUNK_BYTES ? left : BLOCK_CHUNK_BYTES;
+
+        if (base[which] == NULL)
+        {
+            sSending = 0;
+            return;
+        }
+
+        Net_SendBlockChunk((u8)which, sOffset, size[which],
+                           (const u8 *)base[which] + sOffset, take);
+        sOffset += take;
+        if (sOffset >= size[which])
+            sSending = 0;
+        return;
+    }
+
+    for (i = 0; i < 2; i++)
+    {
+        u32 sum = 2166136261u;
+        const u8 *bytes = (const u8 *)base[i];
+        u32 j;
+
+        if (bytes == NULL)
+            continue;
+
+        for (j = 0; j < size[i]; j++)
+        {
+            sum ^= bytes[j];
+            sum *= 16777619u;
+        }
+
+        if (sHaveSent[i] && sum == sLast[i])
+            continue;
+
+        sLast[i] = sum;
+        sHaveSent[i] = TRUE;
+        sSending = i + 1;
+        sOffset = 0;
+        // A box change is worth saving, the same as a party change.
+        MmoAutosave_NoteChange();
+        return;
+    }
+}
+
 void MmoAutosave_Update(void)
 {
+    ReportBlocksIfChanged();
+
     ReportRegionsIfChanged();
 
     ReportPartyIfChanged();

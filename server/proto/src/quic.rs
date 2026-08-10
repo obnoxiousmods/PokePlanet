@@ -84,6 +84,10 @@ pub enum ClientControl {
     ///
     /// Appended so the existing variant numbering does not shift.
     RegionChanged { offset: u32, bytes: Vec<u8> },
+    /// One chunk of a whole save block.
+    ///
+    /// Appended so the existing variant numbering does not shift.
+    BlockChunk { block: u8, offset: u32, total: u32, bytes: Vec<u8> },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

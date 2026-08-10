@@ -81,6 +81,8 @@ pub const MSG_ITEM: u8 = 0x8D;
 pub const MSG_PARTY: u8 = 0x8E;
 /// One allowlisted region of SaveBlock1.
 pub const MSG_REGION: u8 = 0x8F;
+/// One chunk of a whole save block -- the PC boxes, or SaveBlock2.
+pub const MSG_BLOCK: u8 = 0x90;
 
 /// Mirrors `enum NetAuthState` in the C header.
 pub const AUTH_OFFLINE: u8 = 0;
@@ -346,6 +348,11 @@ pub enum GameMessage {
     PartyChanged { count: u8, mons: Vec<u8> },
     /// One allowlisted region of SaveBlock1, as the game's own bytes.
     RegionChanged { offset: u32, bytes: Vec<u8> },
+    /// One chunk of a whole save block.
+    ///
+    /// The PC boxes are nine sectors -- about thirty-five kilobytes -- which is far too much to
+    /// put through the pipe in a single frame, so they arrive in pieces and are reassembled.
+    BlockChunk { block: u8, offset: u32, total: u32, bytes: Vec<u8> },
     /// The game introducing itself, naming the sidecar it means to reach.
     Hello { instance: String },
     /// A game process connected to the sidecar.
@@ -362,6 +369,15 @@ pub fn decode_game_message(body: &[u8]) -> anyhow::Result<GameMessage> {
         .ok_or_else(|| anyhow::anyhow!("empty IPC frame"))?;
     match kind {
         MSG_BATTLE_ENDED => Ok(GameMessage::BattleEnded),
+        MSG_BLOCK => {
+            let head = rest.get(..9).ok_or_else(|| anyhow::anyhow!("short block chunk"))?;
+            Ok(GameMessage::BlockChunk {
+                block: head[0],
+                offset: u32::from_le_bytes([head[1], head[2], head[3], head[4]]),
+                total: u32::from_le_bytes([head[5], head[6], head[7], head[8]]),
+                bytes: rest[9..].to_vec(),
+            })
+        }
         MSG_REGION => {
             let head = rest.get(..4).ok_or_else(|| anyhow::anyhow!("short region"))?;
             Ok(GameMessage::RegionChanged {

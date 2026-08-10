@@ -208,6 +208,7 @@ void Net_SendMoney(u32 amount);
 void Net_SendItem(u8 pocket, u16 item, u16 quantity);
 void Net_SendParty(u8 count, const void *mons, u32 size);
 void Net_SendRegion(u32 offset, const void *bytes, u32 size);
+void Net_SendBlockChunk(u8 block, u32 offset, u32 total, const void *bytes, u32 size);
 
 // The server's gameplay rates, as hundredths of the original game: 100 is Emerald exactly,
 // 250 is two and a half times, 25 is a quarter.
