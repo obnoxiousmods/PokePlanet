@@ -152,6 +152,23 @@ pub enum ServerControl {
     /// `from_slot` is the sender's link id, which is the index the game files the block
     /// under in gBlockRecvBuffer.
     LinkBlock { from_slot: u8, bytes: Vec<u8> },
+    /// The gameplay rates this server runs, sent at sign-in.
+    ///
+    /// Multipliers on the original game: 1.0 is Emerald exactly. The client applies them so
+    /// play feels right; the server keeps them so it can refuse a save that gained more than
+    /// they allow. Sending them rather than baking them into the client is what lets a server
+    /// be retuned without shipping a new build to everyone.
+    ///
+    /// Per-species encounter rates are deliberately not here: there are hundreds and the
+    /// client needs one at a time, so it asks when it needs to rather than being handed a
+    /// table at sign-in.
+    Rates {
+        experience: f32,
+        encounter: f32,
+        money: f32,
+        items: f32,
+        catch: f32,
+    },
 }
 
 /// Position report, sent by the client at roughly 10Hz on a datagram.

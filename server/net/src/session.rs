@@ -293,6 +293,18 @@ impl Session {
                                 ))
                                 .await;
                         }
+                        ServerControl::Rates {
+                            experience, encounter, money, items, catch,
+                        } => {
+                            // Logged rather than forwarded for now: the game has nowhere to
+                            // put them yet. Recorded here so a server that is retuned can be
+                            // seen to have said so, rather than the change being invisible
+                            // until someone notices the experience feels different.
+                            tracing::info!(
+                                experience, encounter, money, items, catch,
+                                "server gameplay rates"
+                            );
+                        }
                         ServerControl::LinkBlock { from_slot, bytes } => {
                             self.link
                                 .send(wire::encode_link_block(from_slot, &bytes))

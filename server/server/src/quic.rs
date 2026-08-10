@@ -251,6 +251,18 @@ async fn run_session(
     // a fraction of the slices reaching the game, so enabling it would trade a working
     // connection for a save that never arrives. Uploading is unaffected and stays on: the
     // server is already collecting saves, which is what the rest of this needs.
+    write_frame(
+        &mut send,
+        &ServerControl::Rates {
+            experience: server.rates.experience,
+            encounter: server.rates.encounter,
+            money: server.rates.money,
+            items: server.rates.items,
+            catch: server.rates.catch,
+        },
+    )
+    .await?;
+
     hand_over_save(&server, &conn, character.id, player_id).await?;
 
     // Fan-in for anything the world wants to push at this client.
