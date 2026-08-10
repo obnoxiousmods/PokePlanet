@@ -260,6 +260,17 @@ pub fn regressed(before: &SaveState, after: &SaveState) -> Option<String> {
         else {
             continue;
         };
+        // Only compare records both sides could actually decode.
+        //
+        // `gained_too_fast` and `impossible` already gate on this; this function did not, which
+        // made it the strictest check running on the least reliable data. A substruct that fails
+        // to decode yields an invented experience number, and an invented number that happens to
+        // be low reads as "a Pokemon lost experience" -- rejecting the whole report and, with the
+        // save upload retired, discarding real progress over a decode this could not trust
+        // anyway. An undecodable record is not evidence of regression.
+        if !old.checksum_ok || !new.checksum_ok {
+            continue;
+        }
         if new.experience < old.experience {
             return Some(format!(
                 "a Pokemon lost experience, going from {} to {}",
@@ -1355,6 +1366,75 @@ mod tests {
                 "a block of the wrong length must be refused"
             );
         }
+    }
+
+    /// A state carrying one Pokemon, for reasoning about regression directly.
+    fn with_mon(level: u8, experience: u32, checksum_ok: bool) -> SaveState {
+        SaveState {
+            flags: vec![],
+            vars: vec![],
+            money_raw: 0,
+            coins_raw: 0,
+            encryption_key: 0,
+            bag: vec![],
+            seen: vec![],
+            game_stats: vec![],
+            block1: vec![],
+            berry_trees: vec![],
+            rematches: vec![],
+            party: vec![PartyMon {
+                personality: 7,
+                ot_id: 7,
+                species: 1,
+                level,
+                experience,
+                evs: [0; 6],
+                checksum_ok,
+            }],
+        }
+    }
+
+    /// Regression is judged only on records that decoded, and is still judged.
+    ///
+    /// The negative control is the whole point of this test. Skipping undecodable records is a
+    /// one-line change that could just as easily have disabled the check altogether, and a
+    /// disabled no-going-backwards rule is invisible until somebody uses it to roll a character
+    /// back. So this asserts both directions: a real regression is still caught, and only the
+    /// undecodable case is waved through.
+    #[test]
+    fn regression_is_ignored_only_when_the_record_did_not_decode() {
+        let good_high = with_mon(20, 8000, true);
+        let good_low = with_mon(10, 2000, true);
+
+        // Negative control: the check must still fire on decodable records.
+        assert!(
+            regressed(&good_high, &good_low).is_some(),
+            "losing experience must still be caught -- if this passes, the rule is off"
+        );
+        // And it must not fire on ordinary forward progress.
+        assert!(
+            regressed(&good_low, &good_high).is_none(),
+            "gaining experience is not a regression"
+        );
+
+        // The actual change: an undecodable record on either side is not evidence. Its level and
+        // experience are whatever the failed decode invented, so comparing them is meaningless.
+        assert!(
+            regressed(&good_high, &with_mon(10, 2000, false)).is_none(),
+            "an undecodable new record must not be read as a loss"
+        );
+        assert!(
+            regressed(&with_mon(20, 8000, false), &good_low).is_none(),
+            "an undecodable old record must not be read as a loss"
+        );
+
+        // Level, not just experience -- both comparisons needed gating.
+        let mut level_drop = with_mon(10, 8000, true);
+        level_drop.party[0].experience = good_high.party[0].experience;
+        assert!(
+            regressed(&good_high, &level_drop).is_some(),
+            "losing levels must still be caught independently of experience"
+        );
     }
 
     /// Build an image with one readable slot, so the layout logic is exercised without

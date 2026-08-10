@@ -93,9 +93,17 @@ static void ReportPartyIfChanged(void)
     if (sHaveSent && sum == sLast)
         return;
 
+    // Only remember this party as reported once it is actually on the queue.
+    //
+    // The old order set the hash first and sent afterwards, ignoring the result. Any failed
+    // send was then invisible and permanent: the next tick computed the same hash, matched it,
+    // and returned -- so the change was never retried and never reached the server. Committing
+    // after success means a full queue costs one frame instead of the progress.
+    if (!Net_SendParty(gPlayerPartyCount, gPlayerParty, size))
+        return;
+
     sLast = sum;
     sHaveSent = TRUE;
-    Net_SendParty(gPlayerPartyCount, gPlayerParty, size);
 
     // A changed party is a change worth saving.
     //
@@ -153,25 +161,52 @@ static void ReportRegionsIfChanged(void)
     u32 sum = 2166136261u;
     u32 i;
 
+    // The chunks tile the four sectors SaveBlock1 occupies, which is more than the struct
+    // itself: sizeof(struct SaveBlock1) is smaller than 4 * 3968, and the difference is
+    // padding the game never writes. Reading it would be reading past the end of the object,
+    // so the copy stops at the struct and the rest of the chunk goes out as zeroes.
+    //
+    // Zeroes are safe there precisely because it is padding -- no field lives in it, and the
+    // server recomputes the sector checksum over whatever it ends up holding. Sending the
+    // chunk at its declared length keeps the allowlist an exact match, which is what stops it
+    // becoming a write at an offset of the caller's choosing.
+    u8 chunk[0x400];
+    u32 offset = sReportable[which].offset;
+    u32 size = sReportable[which].size;
+    u32 readable = 0;
+
     sNext = (sNext + 1) % ARRAY_COUNT(sReportable);
 
     if (base == NULL)
         return;
 
-    for (i = 0; i < sReportable[which].size; i++)
+    if (offset < sizeof(struct SaveBlock1))
     {
-        sum ^= base[sReportable[which].offset + i];
+        readable = sizeof(struct SaveBlock1) - offset;
+        if (readable > size)
+            readable = size;
+    }
+
+    for (i = 0; i < readable; i++)
+        chunk[i] = base[offset + i];
+    for (; i < size; i++)
+        chunk[i] = 0;
+
+    for (i = 0; i < size; i++)
+    {
+        sum ^= chunk[i];
         sum *= 16777619u;
     }
 
     if (sHaveSent[which] && sum == sLast[which])
         return;
 
+    // Committed only on success, for the same reason as the party above.
+    if (!Net_SendRegion(offset, chunk, size))
+        return;
+
     sLast[which] = sum;
     sHaveSent[which] = TRUE;
-    Net_SendRegion(sReportable[which].offset,
-                   base + sReportable[which].offset,
-                   sReportable[which].size);
 }
 
 
@@ -230,12 +265,22 @@ static void ReportBlocksIfChanged(void)
 
         if (base[which] == NULL)
         {
+            // Abandoned before finishing: forget the hash so the whole block is sent again,
+            // rather than being remembered as reported when only part of it went.
+            sHaveSent[which] = FALSE;
             sSending = 0;
             return;
         }
 
-        Net_SendBlockChunk((u8)which, sOffset, size[which],
-                           (const u8 *)base[which] + sOffset, take);
+        // Advance only when the chunk was queued. Advancing regardless would leave a hole in
+        // the middle of the block: the server reassembles by offset and refuses anything that
+        // does not arrive contiguously, so a single dropped chunk would discard the whole
+        // transfer -- and the block would still be marked as reported, so it would never be
+        // retried. A failed chunk simply waits for the next tick.
+        if (!Net_SendBlockChunk((u8)which, sOffset, size[which],
+                                (const u8 *)base[which] + sOffset, take))
+            return;
+
         sOffset += take;
         if (sOffset >= size[which])
             sSending = 0;

@@ -87,7 +87,18 @@ extern const char *Platform_GetInstanceToken(void);
 
 #define RX_BUFFER_SIZE   16384
 #define TX_QUEUE_FRAMES  32
-#define TX_FRAME_MAX     256
+// Wide enough for the largest message any Net_Send* function produces, which is a block chunk
+// at 10 + 1024 = 1034 bytes plus the 4-byte length header.
+//
+// This was 256 for a long time, when every message was a handful of bytes -- movement, chat, a
+// battle block. The party (606 with header), region (1033) and block-chunk (1038) reports were
+// added later and every single one of them was silently dropped by EnqueueLocked below, which
+// is why levels, moves and experience never persisted while money and items did. Raising this
+// is the fix; making the drop loud is what stops it happening again.
+//
+// Costs TX_QUEUE_FRAMES * TX_FRAME_MAX = ~35KB of static buffer, next to the 128KB already held
+// for FLASH_BASE. Not a meaningful amount of memory for the class of bug it removes.
+#define TX_FRAME_MAX     1088
 #define CHAT_INBOX_LINES 16
 
 // Blocks arrive faster than the game reads them: the battle engine sends one and then waits
@@ -137,6 +148,7 @@ struct NetState
 
     // The server handed over a save and it is now sitting in the flash mirror.
     bool8 hasServerSave;
+    bool8 serverOwnsSave;
 
     // The server refused where we said we were. Only the newest matters: it is the truth.
     struct NetCorrection correction;
@@ -159,17 +171,6 @@ struct NetState
 static struct NetState sNet;
 static bool8 sInitialised = FALSE;
 
-// Whether the server is known to already hold a save for this character.
-//
-// The save image is no longer how progress reaches the server. Money, the bag, the party, all
-// of SaveBlock1 in chunks, SaveBlock2, the PC boxes and the Hall of Fame each report as
-// themselves. Sending 128KB on top of that is duplication, and it lets the client keep deciding
-// the format the server reads its state out of -- the thing all of that work exists to stop.
-//
-// One exception, and it is not a loophole: a character the server has no save for at all. Every
-// typed report splices into an existing image, so there would be nothing to write into. A
-// character that was sent a save has proved the server has one, and never uploads again.
-static bool8 sServerHasSave;
 
 static u16 GetSidecarPort(void);
 
@@ -227,12 +228,26 @@ static void WriteField(u8 *dest, const char *src, int width)
 }
 
 // Queue a frame body (type byte first) for the worker thread. Caller holds the lock.
-static void EnqueueLocked(const u8 *body, u16 bodyLen)
+static bool8 EnqueueLocked(const u8 *body, u16 bodyLen)
 {
     u8 *slot;
 
-    if (bodyLen + 4 > TX_FRAME_MAX || sNet.txCount >= TX_QUEUE_FRAMES)
-        return; // Nothing here is worth stalling the game for; drop it.
+    // Oversize is a programming error, not a runtime condition: some Net_Send* function is
+    // producing a message this queue was never sized for. It used to return silently here,
+    // which is how three whole categories of save data went missing without a single log line.
+    // Complain loudly -- a caller that trips this needs fixing, and the only thing worse than
+    // the bug is not being able to see it.
+    if (bodyLen + 4 > TX_FRAME_MAX)
+    {
+        SDL_Log("net: BUG: message 0x%02X is %u bytes, over the %u-byte frame limit; dropped",
+                bodyLen > 0 ? body[0] : 0, (unsigned)(bodyLen + 4), (unsigned)TX_FRAME_MAX);
+        return FALSE;
+    }
+
+    // A full queue is ordinary backpressure rather than a mistake, so it stays quiet. The
+    // caller is told, and callers that care retry on the next tick.
+    if (sNet.txCount >= TX_QUEUE_FRAMES)
+        return FALSE;
 
     slot = sNet.txQueue[sNet.txHead];
     slot[0] = (u8)(bodyLen & 0xFF);
@@ -243,13 +258,17 @@ static void EnqueueLocked(const u8 *body, u16 bodyLen)
     sNet.txLength[sNet.txHead] = bodyLen + 4;
     sNet.txHead = (sNet.txHead + 1) % TX_QUEUE_FRAMES;
     sNet.txCount++;
+    return TRUE;
 }
 
-static void Enqueue(const u8 *body, u16 bodyLen)
+static bool8 Enqueue(const u8 *body, u16 bodyLen)
 {
+    bool8 ok;
+
     SDL_LockMutex(sNet.lock);
-    EnqueueLocked(body, bodyLen);
+    ok = EnqueueLocked(body, bodyLen);
     SDL_UnlockMutex(sNet.lock);
+    return ok;
 }
 
 // ---------------------------------------------------------------------------
@@ -484,10 +503,6 @@ static void HandleSaveImage(const u8 *payload, u32 len)
 
     if (len < 10u + length)
         return;
-    // Receiving a save proves the server already holds one, which is what retires the upload:
-    // from here on every change travels as itself and the image is never sent again.
-    sServerHasSave = TRUE;
-
     if (total != sizeof(FLASH_BASE))
     {
         SDL_Log("net: ignoring a save of %u bytes; this build expects %u",
@@ -503,6 +518,15 @@ static void HandleSaveImage(const u8 *payload, u32 len)
     {
         SDL_LockMutex(sNet.lock);
         sNet.hasServerSave = TRUE;
+        // Durable record that the server holds a save for this character.
+        //
+        // Separate from hasServerSave on purpose. That one is a one-shot signal the main menu
+        // *consumes* via Net_TakeServerSave to decide whether to swap the loaded save, so it is
+        // FALSE for the rest of the session afterwards. Gating the upload on it inverted the
+        // behaviour: a successful handshake re-enabled uploads, and a failed one disabled them
+        // -- disabling exactly the case where the client is holding local-only progress and the
+        // upload is the last thing that would have saved it.
+        sNet.serverOwnsSave = TRUE;
         SDL_UnlockMutex(sNet.lock);
         SDL_Log("net: loaded the server's save (%u bytes)", (unsigned)total);
     }
@@ -806,10 +830,28 @@ static int NetThreadMain(void *unused)
                 break;
 
             // A save happened; the server's copy is now out of date.
-            // Uploads are retired for any character the server already has a save for. The
-            // flag is still taken either way, so a change does not sit pending forever.
-            if (Net_TakeSaveChanged() && !sServerHasSave && !SendSaveImage(sock))
-                break;
+            // Uploads are retired for any character the server already holds a save for.
+            //
+            // Gated on sNet.hasServerSave, which is set only once a complete image has arrived
+            // and been applied. An earlier version of this used its own flag set as soon as a
+            // save *frame* appeared, before the size check -- so a save this build rejected
+            // would have retired the upload anyway, leaving the server with no image for that
+            // character and every typed report with nothing to splice into. Nothing would have
+            // persisted at all.
+            //
+            // The flag is still taken either way, so a change does not sit pending forever and
+            // reappear as an upload if this is ever turned back on.
+            {
+                bool8 changed = Net_TakeSaveChanged();
+                bool8 serverHasSave;
+
+                SDL_LockMutex(sNet.lock);
+                serverHasSave = sNet.serverOwnsSave;
+                SDL_UnlockMutex(sNet.lock);
+
+                if (changed && !serverHasSave && !SendSaveImage(sock))
+                    break;
+            }
 
             FD_ZERO(&readable);
             FD_SET(sock, &readable);
@@ -1129,31 +1171,31 @@ void Net_SendItem(u8 pocket, u16 item, u16 quantity)
     Enqueue(body, sizeof(body));
 }
 
-void Net_SendParty(u8 count, const void *mons, u32 size)
+bool8 Net_SendParty(u8 count, const void *mons, u32 size)
 {
     u8 body[2 + 600];
 
     if (!sInitialised)
-        return;
+        return FALSE;
     // The server refuses anything but the exact size, so sending a different one would be a
     // silent no-op. Better to notice here than to wonder later why nothing was stored.
     if (size != 600)
-        return;
+        return FALSE;
 
     body[0] = MSG_PARTY;
     body[1] = count;
     memcpy(body + 2, mons, size);
-    Enqueue(body, 2 + size);
+    return Enqueue(body, 2 + size);
 }
 
-void Net_SendRegion(u32 offset, const void *bytes, u32 size)
+bool8 Net_SendRegion(u32 offset, const void *bytes, u32 size)
 {
     u8 body[5 + 0x400];
 
     if (!sInitialised)
-        return;
+        return FALSE;
     if (size > 0x400)
-        return;
+        return FALSE;
 
     body[0] = MSG_REGION;
     body[1] = (u8)(offset & 0xFF);
@@ -1161,17 +1203,17 @@ void Net_SendRegion(u32 offset, const void *bytes, u32 size)
     body[3] = (u8)((offset >> 16) & 0xFF);
     body[4] = (u8)((offset >> 24) & 0xFF);
     memcpy(body + 5, bytes, size);
-    Enqueue(body, 5 + size);
+    return Enqueue(body, 5 + size);
 }
 
-void Net_SendBlockChunk(u8 block, u32 offset, u32 total, const void *bytes, u32 size)
+bool8 Net_SendBlockChunk(u8 block, u32 offset, u32 total, const void *bytes, u32 size)
 {
     u8 body[10 + 0x400];
 
     if (!sInitialised)
-        return;
+        return FALSE;
     if (size > 0x400)
-        return;
+        return FALSE;
 
     body[0] = MSG_BLOCK;
     body[1] = block;
@@ -1184,7 +1226,7 @@ void Net_SendBlockChunk(u8 block, u32 offset, u32 total, const void *bytes, u32 
     body[8] = (u8)((total >> 16) & 0xFF);
     body[9] = (u8)((total >> 24) & 0xFF);
     memcpy(body + 10, bytes, size);
-    Enqueue(body, 10 + size);
+    return Enqueue(body, 10 + size);
 }
 
 void Net_SendBattleEnded(void)

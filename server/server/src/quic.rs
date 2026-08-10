@@ -596,6 +596,12 @@ async fn control_loop(
                     continue;
                 }
                 let Ok(Some(stored)) = db::load_save(&server.db, character_id).await else {
+                    // Was silent. Every report for a character with no save row vanished without
+                    // a trace, which is the hardest possible version of this to diagnose.
+                    tracing::warn!(
+                        player = player_id,
+                        "party reported but there is no stored save to apply it to"
+                    );
                     continue;
                 };
                 let Some(old) = crate::save_parse::parse(&stored) else {
