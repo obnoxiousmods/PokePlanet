@@ -12,15 +12,20 @@
 // was never true before and the precondition for everything else.
 //
 // What is NOT here yet, stated plainly so nobody mistakes this for the finished article:
-//   - nothing drives the frame loop; AgbMain is never entered
-//   - no input is injected, so the game would sit at the title screen if it were
+//   - no input is injected, so the game sits wherever the title screen leaves it
 //   - the server does not instantiate or talk to this
+//   - there is no make target yet; a Linux one is needed for this to run on the server
 //
-// Those are the next three pieces, in that order. This one is the foundation they need: a build
-// of the game with the platform sawn off.
+// Those are the next three pieces, in that order.
 
 #include "global.h"
 #include "platform.h"
+
+#include <pthread.h>
+#include <semaphore.h>
+#include <time.h>
+
+extern void AgbMain(void);
 
 void Platform_RequestQuit(void)
 {
@@ -114,4 +119,62 @@ void Platform_SetTime(struct SiiRtcInfo *rtc)
 
 void Platform_SetAlarm(u8 *alarmData)
 {
+}
+
+// The frame loop, with nothing to show for itself.
+//
+// VBlankIntrWait is the only point at which the game yields, so it is the only lever a host has
+// over it: the game thread parks here every frame and cannot proceed until something releases
+// it. On the SDL2 build that release is tied to presenting a frame, which is why the game runs
+// at the speed of the display. Nothing here is drawing anything, so the release is on a timer
+// instead -- and that timer is the whole reason this target is interesting.
+//
+// A server driving this does not have to run it at sixty frames a second. It can run a
+// simulation as fast as the machine allows to catch up, or hold it still, because the pace is
+// now a decision rather than a property of a monitor. That is the difference between the game
+// being *shown* somewhere and the game being *run* somewhere.
+//
+// pthreads rather than SDL: this has to build for the server eventually, and pthreads is the
+// one threading interface both a Linux host and the existing mingw toolchain already have.
+
+static sem_t sVBlank;
+static pthread_t sGameThread;
+
+static void *GameThread(void *unused)
+{
+    (void)unused;
+    AgbMain();
+    return NULL;
+}
+
+void VBlankIntrWait(void)
+{
+    sem_wait(&sVBlank);
+}
+
+int main(int argc, char **argv)
+{
+    struct timespec frame;
+
+    (void)argc;
+    (void)argv;
+
+    if (sem_init(&sVBlank, 0, 0) != 0)
+        return 1;
+    if (pthread_create(&sGameThread, NULL, GameThread, NULL) != 0)
+        return 1;
+
+    // A sixtieth of a second, matching the hardware this game was written for. Kept as a
+    // constant rather than a setting because nothing here consumes the output yet; when the
+    // server drives this, the pace becomes its decision and this loop goes away.
+    frame.tv_sec = 0;
+    frame.tv_nsec = 16666667L;
+
+    for (;;)
+    {
+        sem_post(&sVBlank);
+        nanosleep(&frame, NULL);
+    }
+
+    return 0;
 }
