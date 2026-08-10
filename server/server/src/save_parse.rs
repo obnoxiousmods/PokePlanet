@@ -212,6 +212,19 @@ pub struct SaveState {
     pub bag: Vec<(u8, u16, u16)>,
     /// Which species have been seen, as the game's own bitfield.
     pub seen: Vec<u8>,
+    /// The whole of SaveBlock1, exactly as the game wrote it.
+    ///
+    /// This is what makes retiring the save image safe. Every other field here exists so the
+    /// server can *reason* about progress; this one exists so nothing is lost when it stops
+    /// keeping the image. Roughly thirty fields are still unparsed -- mail, the daycare,
+    /// secret bases, contest wins -- and rebuilding a save from parsed fields alone would
+    /// return them all as zero, permanently and with no copy to restore from.
+    ///
+    /// Holding the block means the server can reconstruct a save it fully understands the
+    /// wrapper of (sectors, counters, checksums) around contents it does not have to
+    /// understand at all. Preserving something is a lower bar than interpreting it, and it is
+    /// the bar that matters for not destroying somebody's game.
+    pub block1: Vec<u8>,
     /// Berry trees and trainer rematch state, kept as the game's own bytes.
     ///
     /// Raw for the same reason flags and vars are: reproducing every structure in the save
@@ -545,6 +558,7 @@ pub fn parse(image: &[u8]) -> Option<SaveState> {
         .unwrap_or_default();
 
     Some(SaveState {
+        block1: block.clone(),
         flags,
         vars,
         money_raw,
@@ -562,6 +576,61 @@ pub fn parse(image: &[u8]) -> Option<SaveState> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Write a byte at a SaveBlock1 offset the parser knows nothing about, by finding the
+    /// sector that carries it rather than assuming where it sits.
+    fn poke(image: &mut [u8], slot: usize, offset: usize, byte: u8) {
+        let n = offset / SECTOR_DATA_SIZE;
+        let within = offset % SECTOR_DATA_SIZE;
+        let want = SAVEBLOCK1_SECTORS[n];
+        for i in 0..SECTORS_PER_SLOT {
+            let start = (slot * SECTORS_PER_SLOT + i) * SECTOR_SIZE;
+            let footer = start + SECTOR_DATA_SIZE + 116;
+            let id = u16::from_le_bytes([image[footer], image[footer + 1]]);
+            if id == want {
+                image[start + within] = byte;
+                return;
+            }
+        }
+        panic!("no sector carries offset {offset:#X}");
+    }
+
+    /// The whole block is kept, including the parts nothing understands.
+    ///
+    /// This is the guarantee that lets the save image be retired without losing anything. It
+    /// deliberately probes the *mail* offset, which no code here parses and none is planned to:
+    /// if preservation only worked for fields that happened to have a parser, it would not be
+    /// preservation, it would be a coincidence.
+    #[test]
+    fn the_whole_block_survives_including_what_is_not_parsed() {
+        const OFFSET_MAIL: usize = 0x2BE0;
+
+        let mut image = image_with(0, 1, &[], &[], 0);
+        poke(&mut image, 0, OFFSET_MAIL, 0xA7);
+
+        let state = parse(&image).expect("readable save");
+
+        assert_eq!(
+            state.block1.len(),
+            SAVEBLOCK1_SECTORS.len() * SECTOR_DATA_SIZE,
+            "the block should be kept whole, not truncated to the parsed region"
+        );
+        assert_eq!(
+            state.block1[OFFSET_MAIL], 0xA7,
+            "a byte no field parses still has to come back"
+        );
+
+        // Negative control. Without it this test passes on a block of the right length full of
+        // zeroes, or on one that happens to contain 0xA7 everywhere -- both of which would lose
+        // the player's mail while reporting success.
+        let mut clean = image_with(0, 1, &[], &[], 0);
+        poke(&mut clean, 0, OFFSET_MAIL, 0x00);
+        let unmarked = parse(&clean).expect("readable save");
+        assert_eq!(
+            unmarked.block1[OFFSET_MAIL], 0x00,
+            "the byte must track the save, not be a constant this test wrote"
+        );
+    }
 
     /// Build an image with one readable slot, so the layout logic is exercised without
     /// needing a real save on disk.
