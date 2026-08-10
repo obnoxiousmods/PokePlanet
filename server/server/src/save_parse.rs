@@ -98,6 +98,10 @@ pub const VAR_COUNT: usize = 256;
 /// One Pokemon, as much of it as validation needs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PartyMon {
+    /// Immutable for the life of a Pokemon, and effectively unique, so it is what identifies
+    /// the same Pokemon across two saves even after the party has been reordered.
+    pub personality: u32,
+    pub ot_id: u32,
     pub species: u16,
     pub level: u8,
     pub experience: u32,
@@ -153,6 +157,8 @@ fn read_mon(bytes: &[u8]) -> Option<PartyMon> {
     evs.copy_from_slice(&plain[evs_at..evs_at + 6]);
 
     Some(PartyMon {
+        personality,
+        ot_id,
         species,
         level: *bytes.get(MON_OFFSET_LEVEL)?,
         experience,
@@ -180,6 +186,42 @@ pub struct SaveState {
     pub party: Vec<PartyMon>,
     /// The bag: (pocket, item id, quantity), empty slots omitted.
     pub bag: Vec<(u8, u16, u16)>,
+}
+
+/// What could not have happened between two saves of the same character.
+///
+/// Rules about how *fast* things may be gained need every legitimate source enumerated
+/// first, and refusing an honest player is worse than the cheating it would catch. This is
+/// the one direction that needs no such list: in this game experience is never taken away,
+/// so a Pokemon that has gone backwards is not a Pokemon that was played.
+///
+/// Matched by personality and trainer id rather than by party position, because reordering,
+/// depositing and withdrawing all move Pokemon between slots quite legitimately. A Pokemon
+/// present in one save and not the other is not compared at all -- it may have been traded,
+/// released or boxed.
+pub fn regressed(before: &SaveState, after: &SaveState) -> Option<String> {
+    for old in &before.party {
+        let Some(new) = after
+            .party
+            .iter()
+            .find(|m| m.personality == old.personality && m.ot_id == old.ot_id)
+        else {
+            continue;
+        };
+        if new.experience < old.experience {
+            return Some(format!(
+                "a Pokemon lost experience, going from {} to {}",
+                old.experience, new.experience
+            ));
+        }
+        if new.level < old.level {
+            return Some(format!(
+                "a Pokemon lost levels, going from {} to {}",
+                old.level, new.level
+            ));
+        }
+    }
+    None
 }
 
 impl SaveState {

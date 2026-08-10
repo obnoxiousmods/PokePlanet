@@ -440,6 +440,24 @@ async fn control_loop(
                             continue;
                         }
 
+                        // Compare against the copy already held, which is the only way to
+                        // see a change rather than a state. Loading it costs one read per
+                        // save and is what makes going backwards visible at all.
+                        if let (Some(new), Ok(Some(old_image))) =
+                            (parsed.as_ref(), db::load_save(&server.db, character_id).await)
+                        {
+                            if let Some(old) = crate::save_parse::parse(&old_image) {
+                                if let Some(reason) = crate::save_parse::regressed(&old, new) {
+                                    tracing::warn!(
+                                        player = player_id, %reason,
+                                        "refusing a save that undoes progress"
+                                    );
+                                    save_image.clear();
+                                    continue;
+                                }
+                            }
+                        }
+
                         db::store_save(&server.db, character_id, &save_image).await?;
                         tracing::info!(
                             player = player_id, bytes = save_image.len(), "save stored"
