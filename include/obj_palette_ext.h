@@ -20,8 +20,26 @@
 
 #define OBJ_PALETTE_EXT_COUNT 64
 
-// Sixteen colours each, in the same 15-bit BGR the hardware palette uses.
+// The colours as drawn, after any fade. Sixteen each, in the same 15-bit BGR the hardware
+// palette uses.
 extern u16 gObjPaletteExt[OBJ_PALETTE_EXT_COUNT][16];
+
+// The colours as loaded, before any fade.
+//
+// The pair mirrors gPlttBufferUnfaded and gPlttBufferFaded, and for the same reason: a fade is
+// recomputed from the original colours every frame, so blending in place would darken what was
+// already dark and never come back.
+extern u16 gObjPaletteExtUnfaded[OBJ_PALETTE_EXT_COUNT][16];
+
+// Load sixteen colours into one extended palette, into both copies.
+void ObjPaletteExt_Load(u8 slot, const u16 *colours);
+
+// Apply the current fade to every extended palette.
+//
+// Called from the palette fade alongside the hardware palettes. Without it, sprites drawing
+// from this bank stay at full brightness while the world fades around them -- through every
+// map transition, whiteout and battle intro.
+void ObjPaletteExt_ApplyFade(u8 coeff, u16 blendColor);
 
 // Which extended palette each OAM entry draws with: 0 for none, otherwise 1 + the index.
 // Written alongside the OAM buffer so it is indexed identically.

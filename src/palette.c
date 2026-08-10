@@ -1,5 +1,6 @@
 #include "global.h"
 #include "palette.h"
+#include "obj_palette_ext.h"
 #include "util.h"
 #include "decompress.h"
 #include "gpu_regs.h"
@@ -452,6 +453,11 @@ static u8 UpdateNormalPaletteFade(void)
             selectedPalettes >>= 1;
             paletteOffset += 16;
         }
+
+        // The extended bank follows the object palettes, because that is what it holds.
+        // Without this, players drawn from it stay bright while the world goes dark.
+        if (gPaletteFade.objPaletteToggle)
+            ObjPaletteExt_ApplyFade(gPaletteFade.y, gPaletteFade.blendColor);
 
         gPaletteFade.objPaletteToggle ^= 1;
 
