@@ -12,52 +12,19 @@ use serde::Deserialize;
 /// NPC with a full set of directional animations. Deliberately excludes the player
 /// sprites (so real players stay distinguishable from Brendan/May), and anything static
 /// or non-human such as `OBJ_EVENT_GFX_RAYQUAZA_STILL` (41), which has no walk cycle.
+/// The two overworld sprites a player can be.
+///
+/// Brendan and May, and deliberately only those two. They are the only overworld graphics with
+/// complete frame sets -- walking, running, cycling, surfing, fishing and the field moves -- so
+/// a player using anything else reverts to Brendan the moment they get on a bike, which is what
+/// the assorted NPC sprites here used to do.
+///
+/// Players are told apart by colour rather than by sprite: the client recolours each character
+/// from its id, which gives far more distinct looks than a handful of NPC graphics did and
+/// keeps every animation intact. See src/mmo_colour.c.
 pub const PLAYER_SPRITES: &[u8] = &[
-    5,  // NINJA_BOY
-    6,  // TWIN
-    7,  // BOY_1
-    8,  // GIRL_1
-    9,  // BOY_2
-    10, // GIRL_2
-    13, // BOY_3
-    14, // GIRL_3
-    16, // WOMAN_1
-    17, // FAT_MAN
-    19, // MAN_1
-    20, // WOMAN_2
-    23, // MAN_2
-    24, // WOMAN_3
-    26, // WOMAN_4
-    27, // COOK
-    31, // CAMPER
-    32, // PICNICKER
-    33, // MAN_3
-    34, // WOMAN_5
-    35, // YOUNGSTER
-    36, // BUG_CATCHER
-    37, // PSYCHIC_M
-    38, // SCHOOL_KID_M
-    39, // MANIAC
-    40, // HEX_MANIAC
-    42, // SWIMMER_M
-    43, // SWIMMER_F
-    44, // BLACK_BELT
-    45, // BEAUTY
-    46, // SCIENTIST_1
-    47, // LASS
-    48, // GENTLEMAN
-    49, // SAILOR
-    50, // FISHERMAN
-    51, // RUNNING_TRIATHLETE_M
-    52, // RUNNING_TRIATHLETE_F
-    53, // TUBER_F
-    54, // TUBER_M
-    55, // HIKER
-    56, // CYCLING_TRIATHLETE_M
-    57, // CYCLING_TRIATHLETE_F
-    58, // NURSE
-    65, // MAN_4
-    66, // MAN_5
+    0,  // OBJ_EVENT_GFX_BRENDAN_NORMAL
+    89, // OBJ_EVENT_GFX_MAY_NORMAL
 ];
 
 pub fn random_sprite() -> u8 {
