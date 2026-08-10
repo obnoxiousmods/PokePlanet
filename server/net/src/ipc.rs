@@ -5,6 +5,7 @@
 //! game while the sidecar keeps running.
 
 use pokeplanet_proto::ipc::{self, GameMessage};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
@@ -19,6 +20,10 @@ struct Latched {
     profile: Option<Vec<u8>>,
 }
 
+/// How long to wait for a game to come back before following it out. Long enough to cover a
+/// relaunch, short enough that a closed game does not leave a process behind.
+const EXIT_GRACE: std::time::Duration = std::time::Duration::from_secs(20);
+
 /// Handle used by the rest of the sidecar to talk to whichever game process is attached.
 #[derive(Clone, Default)]
 pub struct GameLink {
@@ -26,6 +31,11 @@ pub struct GameLink {
     latched: Arc<Mutex<Latched>>,
     /// Held while a save is being handed to the game, so two never interleave.
     save_run: Arc<Mutex<()>>,
+    /// Bumped every time a game attaches, so a pending shutdown can tell whether the game
+    /// it was waiting for came back or a different one arrived.
+    generation: Arc<AtomicU64>,
+    /// True while a game is connected.
+    attached: Arc<AtomicBool>,
 }
 
 impl GameLink {
@@ -77,6 +87,9 @@ impl GameLink {
     }
 
     async fn attach(&self, tx: mpsc::Sender<Vec<u8>>) {
+        self.generation.fetch_add(1, Ordering::SeqCst);
+        self.attached.store(true, Ordering::SeqCst);
+
         // Replay what the sign-in screen needs. Otherwise a game that attaches after the
         // sidecar has already signed in -- a restart, or just a sidecar that reconnected
         // faster than the game could boot -- waits on the connecting screen forever.
@@ -99,8 +112,35 @@ impl GameLink {
         *self.outbound.lock().await = Some(tx);
     }
 
+    /// The game has gone. Wait a moment in case it is restarting, then follow it out.
+    ///
+    /// The sidecar used to outlive the game deliberately, so a relaunch skipped the browser.
+    /// That reasoning is stale: the token is cached to disk, so a fresh sidecar signs in
+    /// without a browser anyway. What it actually produced was a process that had to be
+    /// killed by hand, and -- worse -- one still holding a session and a port that a
+    /// different game could then attach to and be signed in as the wrong character.
+    ///
+    /// The grace period exists because closing and reopening the game is ordinary, and
+    /// exiting the instant the socket drops would make every restart a fresh login round
+    /// trip. The generation counter is what tells a returning game from a new one.
     async fn detach(&self) {
         *self.outbound.lock().await = None;
+        self.attached.store(false, Ordering::SeqCst);
+
+        let generation = self.generation.load(Ordering::SeqCst);
+        let seen = self.generation.clone();
+        let attached = self.attached.clone();
+
+        tokio::spawn(async move {
+            tokio::time::sleep(EXIT_GRACE).await;
+            // Still nobody, and nobody has been here since: the game is not coming back.
+            if !attached.load(Ordering::SeqCst)
+                && seen.load(Ordering::SeqCst) == generation
+            {
+                tracing::info!("the game has gone; shutting down");
+                std::process::exit(0);
+            }
+        });
     }
 }
 
