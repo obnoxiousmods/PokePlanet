@@ -753,8 +753,25 @@ void ClearLinkCallback_2(void)
         gLinkCallback = NULL;
 }
 
+#define NO_ASSIGNED_SLOT 0xFF
+static u8 sAssignedMultiplayerId = NO_ASSIGNED_SLOT;
+
 u8 GetLinkPlayerCount(void)
 {
+#ifdef PORTABLE
+    // An assigned slot means the server is running this battle, and a battle here is always
+    // between exactly two players.
+    //
+    // The count normally comes out of gLinkStatus, which the cable hardware fills and nothing
+    // on this port ever does, so it reads zero. That is not a cosmetic zero: the loop in
+    // TryReceiveLinkBattleData that takes controller data off the link is bounded by this, so
+    // at zero it runs no iterations, no controller message is ever received, the exec flags
+    // never clear, and the battle sits in its intro forever waiting for an opponent that is
+    // answering perfectly well.
+    if (sAssignedMultiplayerId != NO_ASSIGNED_SLOT)
+        return 2;
+#endif
+
     if (gWirelessCommType)
         return Rfu_GetLinkPlayerCount();
 
@@ -1033,8 +1050,6 @@ static void UNUSED SendBerryBlenderNoSpaceForPokeblocks(void)
 // the single thing most likely to break a networked battle without looking broken.
 //
 // The server assigns the slots instead, because it is the only party that can see both.
-#define NO_ASSIGNED_SLOT 0xFF
-static u8 sAssignedMultiplayerId = NO_ASSIGNED_SLOT;
 
 void Link_SetAssignedMultiplayerId(u8 id)
 {
