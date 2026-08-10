@@ -18,6 +18,13 @@
 //
 // Those are the next three pieces, in that order.
 
+// Compiled only for the headless target.
+//
+// The build globs src/*/*.c, so without this guard this file joins the SDL2 build and defines
+// main and VBlankIntrWait a second time -- which is exactly what happened, and it broke the
+// client link. A platform layer has to be chosen, never merely present.
+#ifdef PLATFORM_HEADLESS
+
 #include "global.h"
 #include "platform.h"
 
@@ -178,3 +185,5 @@ int main(int argc, char **argv)
 
     return 0;
 }
+
+#endif // PLATFORM_HEADLESS
