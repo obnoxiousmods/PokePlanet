@@ -1,5 +1,6 @@
 #include "global.h"
 #include "sprite.h"
+#include "obj_palette_ext.h"
 #include "main.h"
 #include "palette.h"
 
@@ -494,6 +495,10 @@ void AddSpritesToOamBuffer(void)
 
     while (oamIndex < gOamLimit)
     {
+        // Clear the slot as well as the entry. A destroyed sprite that left its palette
+        // behind would lend its colours to whatever takes the entry next, which reads as
+        // sprites randomly wearing each other's palettes.
+        gObjPaletteExtSlot[oamIndex] = 0;
         gMain.oamBuffer[oamIndex] = gDummyOamData;
         oamIndex++;
     }
@@ -634,7 +639,12 @@ void ResetOamRange(u8 start, u8 end)
 {
     u8 i;
     for (i = start; i < end; i++)
+    {
+        // The palette slot goes with the entry, or a cleared sprite lends its colours to
+        // whatever takes its place.
+        gObjPaletteExtSlot[i] = 0;
         gMain.oamBuffer[i] = *(struct OamData *)&gDummyOamData;
+    }
 }
 
 void LoadOam(void)
@@ -1670,6 +1680,9 @@ bool8 AddSpriteToOamBuffer(struct Sprite *sprite, u8 *oamIndex)
 
     if (!sprite->subspriteTables || sprite->subspriteMode == SUBSPRITES_OFF)
     {
+        // Alongside the OAM entry and at the same index, because that index is what the
+        // renderers derive to look the palette up.
+        gObjPaletteExtSlot[*oamIndex] = sprite->paletteExtSlot;
         gMain.oamBuffer[*oamIndex] = sprite->oam;
         (*oamIndex)++;
         return 0;
@@ -1693,6 +1706,7 @@ bool8 AddSubspritesToOamBuffer(struct Sprite *sprite, struct OamData *destOam, u
 
     if (!subspriteTable || !subspriteTable->subsprites)
     {
+        gObjPaletteExtSlot[*oamIndex] = sprite->paletteExtSlot;
         *destOam = *oam;
         (*oamIndex)++;
         return 0;

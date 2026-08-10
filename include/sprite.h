@@ -239,6 +239,11 @@ struct Sprite
              u8 subspriteMode:2;
 
     /*0x43*/ u8 subpriority;
+    // Which extended palette this sprite draws with: 0 for none, otherwise 1 + the index.
+    //
+    // Zero means "the way the hardware would", so every sprite that has never heard of this
+    // behaves exactly as before. See include/obj_palette_ext.h.
+    /*0x44*/ u8 paletteExtSlot;
 };
 
 struct OamMatrix

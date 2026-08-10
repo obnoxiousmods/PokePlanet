@@ -86,7 +86,8 @@ Refused server-side, each verified against real data with a negative control:
 - **Chat** with global, map and private scopes, bridged to IRC, with `/s`, `/w NAME` and `/r`.
   A whisper with nobody to whisper to is dropped rather than broadcast.
 - **Battles between two players.** Invitations both ways, the server assigning slots, and the
-  link-battle protocol carried over the network instead of a cable.
+  whole link-battle protocol carried over the network instead of a cable -- intro, turn loop
+  and all. Two players can fight a match.
 - **Gameplay rates held by the server**: experience, encounters, money, items, catch and shop
   prices, plus per-species encounter rates. Edit one file, restart, every client is told.
 
@@ -98,20 +99,6 @@ Refused server-side, each verified against real data with a negative control:
 ---
 
 ## In progress
-
-- **Battles freeze mid-turn.** A battle now starts, the intro completes and both players reach
-  the first turn. It then stops: in play, after the first moves resolve ("Foe A used TACKLE!"),
-  and in the headless harness one step earlier, at action selection waiting for the opponent.
-  It reaches further each time it is measured -- most recently close to a second turn -- which
-  points at a round trip that completes sometimes rather than one that never happens.
-
-  The intro freeze is fixed, so controller *data* crosses the link. What is not proven is the
-  acknowledgement:  does not clear the exec flag locally on the
-  link branch -- it queues  and depends on that block coming back,
-  which is what clears the per-player bits. Note also that the responder never reaches the
-  action-selection stage in the harness, which is expected for the non-master (its engine is a
-  dummy and its controllers are driven by the master) but should be confirmed rather than
-  assumed.
 
 - **Palettes beyond the hardware's four.** Sprites can carry a palette of their own and both
   renderers honour it; nothing assigns one yet, and the extended bank does not participate in
