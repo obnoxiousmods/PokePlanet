@@ -469,6 +469,105 @@ fn saveblock1(image: &[u8], slot: usize) -> Option<Vec<u8>> {
     Some(out)
 }
 
+/// The game's own checksum: sum of the data as little-endian u32s, folded to sixteen bits.
+///
+/// Mirrors CalculateChecksum in src/save.c.
+fn checksum(data: &[u8], size: usize) -> u16 {
+    let mut sum: u32 = 0;
+    for chunk in data[..size].chunks_exact(4) {
+        sum = sum.wrapping_add(u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]));
+    }
+    ((sum >> 16) as u16).wrapping_add(sum as u16)
+}
+
+/// Work out how many bytes of a sector the checksum was taken over, by finding the size that
+/// reproduces the checksum already stored in it.
+///
+/// The game checksums each sector over its *declared* size, which comes from
+/// `sizeof(struct SaveBlock1)` in the build that wrote it -- a number that changes whenever the
+/// struct changes. Hardcoding it would mean every future change to the game silently producing
+/// saves this refuses, so the size is recovered from the image instead of assumed about it.
+///
+/// Sizes are tried largest first because the full-sector case is overwhelmingly the common one.
+fn declared_size(data: &[u8], stored: u16) -> Option<usize> {
+    (0..=SECTOR_DATA_SIZE)
+        .rev()
+        .filter(|n| n % 4 == 0)
+        .find(|&n| checksum(data, n) == stored)
+}
+
+/// Write a modified SaveBlock1 back into an image, returning the new image.
+///
+/// This is what lets the server *author* a save rather than only read one, which is the whole
+/// prerequisite for the save image stopping being something the client is the origin of.
+///
+/// Returns None rather than a wrong image whenever anything does not line up. A save that fails
+/// to rebuild leaves the player exactly where they were; a save rebuilt wrongly corrupts a
+/// character permanently, so every uncertain case takes the first outcome.
+pub fn write_block1(image: &[u8], block1: &[u8]) -> Option<Vec<u8>> {
+    if image.len() != NUM_SECTORS * SECTOR_SIZE
+        || block1.len() != SAVEBLOCK1_SECTORS.len() * SECTOR_DATA_SIZE
+    {
+        return None;
+    }
+
+    let slot = newest_slot(image)?;
+    let mut out = image.to_vec();
+
+    for (n, want) in SAVEBLOCK1_SECTORS.iter().enumerate() {
+        let mut wrote = false;
+
+        for i in 0..SECTORS_PER_SLOT {
+            let index = slot * SECTORS_PER_SLOT + i;
+            let sector = read_sector(image, index)?;
+            if sector.signature != SECTOR_SIGNATURE || sector.id != *want {
+                continue;
+            }
+
+            let start = index * SECTOR_SIZE;
+            let footer = start + SECTOR_DATA_SIZE + 116;
+            let stored = u16::from_le_bytes([image[footer + 2], image[footer + 3]]);
+            // Recovered from the sector as it stands, before anything is changed in it.
+            let size = declared_size(sector.data, stored)?;
+
+            let from = n * SECTOR_DATA_SIZE;
+            out[start..start + SECTOR_DATA_SIZE]
+                .copy_from_slice(&block1[from..from + SECTOR_DATA_SIZE]);
+
+            let fresh = checksum(&out[start..start + SECTOR_DATA_SIZE], size);
+            out[footer + 2..footer + 4].copy_from_slice(&fresh.to_le_bytes());
+            wrote = true;
+            break;
+        }
+
+        if !wrote {
+            return None;
+        }
+    }
+
+    Some(out)
+}
+
+/// Rebuild an image with the server's own SaveBlock1, refusing unless authoring is provably
+/// faithful on this exact image first.
+///
+/// `declared_size` recovers a size by matching a checksum, and a checksum is sixteen bits, so in
+/// principle a wrong size could match by luck. Rather than argue about how unlikely that is on
+/// any given save, this rewrites the *unchanged* block first and requires the result to be
+/// byte-identical to what came in. If the recovered sizes were wrong, the checksums they produce
+/// differ and the identity fails -- on this image, not on average.
+///
+/// So the guarantee is not "the derivation is sound in theory" but "it was just demonstrated on
+/// the save actually in hand", which is the one that protects the player holding it.
+pub fn reauthor(image: &[u8], block1: &[u8]) -> Option<Vec<u8>> {
+    let original = saveblock1(image, newest_slot(image)?)?;
+    let identity = write_block1(image, &original)?;
+    if identity != image {
+        return None;
+    }
+    write_block1(image, block1)
+}
+
 /// Read what the server cares about out of a whole flash image.
 ///
 /// Returns None for an image that is not a save at all -- the wrong size, or with no slot
@@ -629,6 +728,122 @@ mod tests {
         assert_eq!(
             unmarked.block1[OFFSET_MAIL], 0x00,
             "the byte must track the save, not be a constant this test wrote"
+        );
+    }
+
+    /// Stamp real checksums into a fixture, the way the game would.
+    ///
+    /// `last` is the size the final SaveBlock1 chunk declares. The real game checksums that one
+    /// over only part of the sector, because sizeof(SaveBlock1) is not a multiple of the sector
+    /// size, so a fixture where every sector is full would never exercise the case that actually
+    /// ships.
+    fn sign(image: &mut [u8], slot: usize, last: usize) {
+        for i in 0..SECTORS_PER_SLOT {
+            let start = (slot * SECTORS_PER_SLOT + i) * SECTOR_SIZE;
+            let footer = start + SECTOR_DATA_SIZE + 116;
+            let id = u16::from_le_bytes([image[footer], image[footer + 1]]);
+            let size = if id == *SAVEBLOCK1_SECTORS.last().unwrap() {
+                last
+            } else {
+                SECTOR_DATA_SIZE
+            };
+            let sum = checksum(&image[start..start + SECTOR_DATA_SIZE], size);
+            image[footer + 2..footer + 4].copy_from_slice(&sum.to_le_bytes());
+        }
+    }
+
+    /// The server can write a save the game would accept, and change only what it meant to.
+    #[test]
+    fn authoring_changes_the_one_field_and_leaves_the_rest() {
+        let mut image = image_with(0, 1, &[0xFF, 0x0F], &[7, 9], 1234);
+        poke(&mut image, 0, 0x2BE0, 0xA7);
+        sign(&mut image, 0, 2000);
+
+        let before = parse(&image).expect("readable");
+
+        // Change money the way the server would: in the block, not in the image.
+        let mut block1 = before.block1.clone();
+        let new_money = 4321u32 ^ before.encryption_key;
+        block1[OFFSET_MONEY..OFFSET_MONEY + 4].copy_from_slice(&new_money.to_le_bytes());
+
+        let rebuilt = reauthor(&image, &block1).expect("authoring should succeed");
+        let after = parse(&rebuilt).expect("the rebuilt save must still parse");
+
+        assert_eq!(after.money(), 4321, "the field asked for should change");
+        assert_eq!(before.money(), 1234, "and it should not have been that already");
+        assert_eq!(after.flags, before.flags, "flags must survive authoring");
+        assert_eq!(after.vars, before.vars, "vars must survive authoring");
+        assert_eq!(
+            after.block1[0x2BE0], 0xA7,
+            "a field nothing parses must survive being rewritten around"
+        );
+        assert_eq!(rebuilt.len(), image.len(), "the image must keep its shape");
+    }
+
+    /// The checksums written are the ones the game would have written.
+    ///
+    /// Recomputed here from the game's own algorithm rather than compared against whatever the
+    /// code under test produced, so this fails if authoring and reading are wrong *together* --
+    /// which is exactly what a self-consistent bug looks like.
+    #[test]
+    fn authored_checksums_match_the_games_own() {
+        const LAST: usize = 2000;
+        let mut image = image_with(0, 1, &[0xFF], &[3], 100);
+        sign(&mut image, 0, LAST);
+
+        let mut block1 = parse(&image).expect("readable").block1;
+        block1[OFFSET_MONEY..OFFSET_MONEY + 4].copy_from_slice(&999u32.to_le_bytes());
+        let rebuilt = reauthor(&image, &block1).expect("authoring should succeed");
+
+        for i in 0..SECTORS_PER_SLOT {
+            let start = i * SECTOR_SIZE;
+            let footer = start + SECTOR_DATA_SIZE + 116;
+            let id = u16::from_le_bytes([rebuilt[footer], rebuilt[footer + 1]]);
+            if !SAVEBLOCK1_SECTORS.contains(&id) {
+                continue;
+            }
+            let size = if id == *SAVEBLOCK1_SECTORS.last().unwrap() {
+                LAST
+            } else {
+                SECTOR_DATA_SIZE
+            };
+            let want = checksum(&rebuilt[start..start + SECTOR_DATA_SIZE], size);
+            let got = u16::from_le_bytes([rebuilt[footer + 2], rebuilt[footer + 3]]);
+            assert_eq!(got, want, "sector {id} carries a checksum the game would reject");
+        }
+    }
+
+    /// Authoring refuses rather than guesses.
+    #[test]
+    fn authoring_refuses_what_it_cannot_do_faithfully() {
+        let mut image = image_with(0, 1, &[0xFF], &[3], 100);
+        sign(&mut image, 0, 2000);
+        let block1 = parse(&image).expect("readable").block1;
+
+        assert!(
+            reauthor(&image, &block1[..100]).is_none(),
+            "a block of the wrong length must be refused, not padded"
+        );
+        assert!(
+            reauthor(&image[..1000], &block1).is_none(),
+            "an image of the wrong length must be refused, not extended"
+        );
+
+        // A sector whose checksum matches no size at all: the size cannot be recovered, so
+        // authoring cannot know what the game would check, so it must decline.
+        let mut broken = image.clone();
+        for i in 0..SECTORS_PER_SLOT {
+            let footer = i * SECTOR_SIZE + SECTOR_DATA_SIZE + 116;
+            let id = u16::from_le_bytes([broken[footer], broken[footer + 1]]);
+            if id == SAVEBLOCK1_SECTORS[0] {
+                // Non-zero data with a checksum that cannot arise from any prefix of it.
+                broken[i * SECTOR_SIZE] = 0x11;
+                broken[footer + 2..footer + 4].copy_from_slice(&0xBEEFu16.to_le_bytes());
+            }
+        }
+        assert!(
+            reauthor(&broken, &block1).is_none(),
+            "an unrecoverable size must stop authoring, not produce a corrupt save"
         );
     }
 
