@@ -284,6 +284,28 @@ int main(int argc, char **argv)
     if (sProfile[0] != '\0')
         SDL_Log("profile: %s (save %s, sidecar port %u)", sProfile, sSavePath, sSidecarPort);
 
+    // A port for tests to use, so a harness can never take a player's session.
+    //
+    // WSL forwards localhost, so a headless test binding the default port in Linux is
+    // reachable from a real client running on Windows -- which attached to it, signed in as
+    // whatever character the test was using, and left the player being someone else in their
+    // own game. The bug was mine and the fix belongs here rather than in a note telling
+    // future harnesses to be careful.
+    {
+        const char *port = SDL_getenv("POKEPLANET_SIDECAR_PORT");
+
+        if (port != NULL && *port != '\0')
+        {
+            int value = SDL_atoi(port);
+
+            if (value > 0 && value < 65536)
+            {
+                sSidecarPort = (unsigned int)value;
+                SDL_Log("sidecar port overridden to %u", sSidecarPort);
+            }
+        }
+    }
+
     // ReadConfigFile is called later during video setup, but the sidecar needs the
     // server address before it launches, so read the file once up front.
     ReadConfigFile();

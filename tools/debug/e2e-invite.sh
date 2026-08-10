@@ -41,7 +41,7 @@ trap cleanup EXIT
 printf '{\n  "token": "%s"\n}\n' "$PLAYER_TOKEN" > /tmp/e2e-player-auth.json
 
 ./server/target/debug/pokeplanet-net --token /tmp/e2e-player-auth.json \
-    --ipc-port 38400 --log /tmp/e2e-sidecar.log < /dev/null > /dev/null 2>&1 &
+    --ipc-port 39400 --log /tmp/e2e-sidecar.log < /dev/null > /dev/null 2>&1 &
 PIDS+=($!)
 sleep 6
 
