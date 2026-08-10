@@ -5,8 +5,8 @@
 // server, other people can see it, and there is no reason a player should ever think about
 // it. So the game saves itself, and the result goes straight to the server.
 //
-// What counts as a change is deliberately narrow. Flags, variables and the bag cover
-// essentially all progression: the script engine reaches them through FlagSet, VarSet,
+// What counts as a change: flags, variables, the bag, money, and any change to the party.
+// The first four are funnels the script engine reaches through; the script engine reaches them through FlagSet, VarSet,
 // AddBagItem and RemoveBagItem, which is where roughly 2,700 script-driven mutations across
 // the game funnel through. Walking does not go through any of them, which is fine -- the
 // server already receives the player's position ten times a second and stores it, so a step
@@ -95,6 +95,19 @@ static void ReportPartyIfChanged(void)
     sLast = sum;
     sHaveSent = TRUE;
     Net_SendParty(gPlayerPartyCount, gPlayerParty, size);
+
+    // A changed party is a change worth saving.
+    //
+    // Without this, levelling up does not autosave at all. The dirty flag is raised by
+    // FlagSet, VarSet, the bag and money, and a Pokemon gaining a level goes through none of
+    // them -- so the comment at the top of this file claiming those cover "essentially all
+    // progression" was wrong about the one kind of progress the game is mostly made of.
+    //
+    // Raised here rather than by hunting down every function that can alter a Pokemon,
+    // because that list is long and gets longer: levelling, evolving, learning a move,
+    // gaining EVs, taking damage, being healed, holding an item, being renamed. Comparing the
+    // bytes catches all of them, including the ones nobody has written yet.
+    MmoAutosave_NoteChange();
 }
 
 
