@@ -27,6 +27,7 @@
 #include "net_client.h"
 #include "save.h"
 #include "script.h"
+#include "pokemon.h"
 
 // Frames of quiet before a change is written out. Long enough that a script setting a run
 // of flags produces one save rather than a dozen; short enough that a player who changes
@@ -57,8 +58,49 @@ void MmoAutosave_Flush(void)
 }
 
 // Ticked once per overworld frame.
+
+// Report the party when it changes.
+//
+// Unlike money and items there is no single chokepoint to hook: a Pokemon changes from levelling,
+// evolving, learning a move, taking damage, holding an item, being caught, being healed, being
+// swapped with the PC. Hooking each would mean finding all of them and staying right as more are
+// added, which is exactly the kind of coverage that quietly rots.
+//
+// So this compares the bytes instead. A summary cannot be out of date in a way nobody notices,
+// because it is derived from the same memory the game is playing from.
+static void ReportPartyIfChanged(void)
+{
+    static u32 sLast;
+    static bool8 sHaveSent;
+    const u8 *bytes = (const u8 *)gPlayerParty;
+    u32 size = sizeof(gPlayerParty);
+    u32 sum = 2166136261u;
+    u32 i;
+
+    if (size != 600)
+        return;
+
+    // FNV-1a. Cheap enough to run every frame and good enough that a real change slipping
+    // through unnoticed is not something worth planning around.
+    for (i = 0; i < size; i++)
+    {
+        sum ^= bytes[i];
+        sum *= 16777619u;
+    }
+    sum ^= gPlayerPartyCount;
+
+    if (sHaveSent && sum == sLast)
+        return;
+
+    sLast = sum;
+    sHaveSent = TRUE;
+    Net_SendParty(gPlayerPartyCount, gPlayerParty, size);
+}
+
 void MmoAutosave_Update(void)
 {
+    ReportPartyIfChanged();
+
     // Offline play keeps the old bargain: there is no server to hold the save, so nothing
     // here should be writing one behind the player's back.
     if (Net_GetAuthState() != NET_AUTH_ONLINE)

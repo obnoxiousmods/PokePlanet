@@ -535,6 +535,36 @@ fn write_slot(mut block1: Vec<u8>, off: usize, item: u16, quantity: u16, key: u3
     block1
 }
 
+/// Where the game keeps how many Pokemon are in the party, immediately before the party.
+const OFFSET_PARTY_COUNT: usize = 0x234;
+
+/// A copy of this save's SaveBlock1 with the party replaced.
+///
+/// The party arrives as the game's own bytes rather than as fields, and that is a deliberate
+/// choice rather than laziness. Each Pokemon carries four substructures encrypted with
+/// `personality ^ ot_id` and *ordered* by `personality % 24`; re-encoding them server-side means
+/// reimplementing both, and that exact decode has already produced a confidently wrong answer
+/// once in this codebase -- one that read correctly, passed its test, and would have cost
+/// players their Pokemon.
+///
+/// Carrying the bytes cannot get that wrong, and gives up nothing that matters: this is strictly
+/// less than the whole save, and it faces the same level, experience and EV checks an uploaded
+/// party does. The server validates what it decodes; it does not have to author what it cannot.
+pub fn with_party(state: &SaveState, count: u8, mons: &[u8]) -> Option<Vec<u8>> {
+    if count as usize > PARTY_SIZE || mons.len() != PARTY_SIZE * MON_SIZE {
+        return None;
+    }
+
+    let mut block1 = state.block1.clone();
+    block1
+        .get_mut(OFFSET_PARTY..OFFSET_PARTY + PARTY_SIZE * MON_SIZE)?
+        .copy_from_slice(mons);
+    block1
+        .get_mut(OFFSET_PARTY_COUNT..OFFSET_PARTY_COUNT + 4)?
+        .copy_from_slice(&(count as u32).to_le_bytes());
+    Some(block1)
+}
+
 /// The game's own checksum: sum of the data as little-endian u32s, folded to sixteen bits.
 ///
 /// Mirrors CalculateChecksum in src/save.c.
@@ -1009,6 +1039,41 @@ mod tests {
             at_cap.impossible().is_none(),
             "a full but legal slot must be accepted"
         );
+    }
+
+    /// A reported party is written, and is still judged by the rules an uploaded one meets.
+    #[test]
+    fn a_reported_party_is_written_and_still_checked() {
+        let mut image = image_with(0, 1, &[0xFF], &[3], 100);
+        sign(&mut image, 0, 2000);
+        let old = parse(&image).expect("readable");
+        assert!(old.party.is_empty(), "the party must start empty or this proves nothing");
+
+        // One Pokemon at a legal level. Level lives at 0x54 within the hundred-byte record.
+        let mut mons = vec![0u8; PARTY_SIZE * MON_SIZE];
+        mons[0..4].copy_from_slice(&0x1234_5678u32.to_le_bytes()); // personality
+        mons[0x54] = 50;
+
+        let block1 = with_party(&old, 1, &mons).expect("a party of one fits");
+        let new = parse(&reauthor(&image, &block1).expect("authoring")).expect("parses");
+        assert_eq!(new.party.len(), 1, "one Pokemon should have been written");
+        assert_eq!(new.party[0].level, 50, "at the level reported");
+        assert!(new.impossible().is_none(), "a level 50 Pokemon is ordinary");
+
+        // Above the level cap: caught after being written, by the rule that catches it in an
+        // uploaded save rather than by a second rule written for this path.
+        let mut cheated = mons.clone();
+        cheated[0x54] = 200;
+        let block1 = with_party(&old, 1, &cheated).expect("writes");
+        let bad = parse(&reauthor(&image, &block1).expect("authoring")).expect("parses");
+        assert!(
+            bad.impossible().is_some(),
+            "a level the game cannot reach must be refused however it arrived"
+        );
+
+        // Refusals rather than guesses about size.
+        assert!(with_party(&old, 1, &mons[..10]).is_none(), "a short party must be refused");
+        assert!(with_party(&old, 9, &mons).is_none(), "more than six must be refused");
     }
 
     /// Build an image with one readable slot, so the layout logic is exercised without

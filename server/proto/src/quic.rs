@@ -76,6 +76,10 @@ pub enum ClientControl {
     ///
     /// Appended so the existing variant numbering does not shift.
     ItemChanged { pocket: u8, item: u16, quantity: u16 },
+    /// The whole party, as the game's own bytes.
+    ///
+    /// Appended so the existing variant numbering does not shift.
+    PartyChanged { count: u8, mons: Vec<u8> },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

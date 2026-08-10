@@ -418,6 +418,60 @@ async fn control_loop(
                         .await;
                 }
             }
+            ClientControl::PartyChanged { count, mons } => {
+                // Bounded before anything else touches it: a length this does not expect is a
+                // client that is broken or probing, and neither should get to choose how much
+                // the server copies.
+                if mons.len() != 600 || count > 6 {
+                    tracing::warn!(player = player_id, len = mons.len(), "refusing a malformed party");
+                    continue;
+                }
+                let Ok(Some(stored)) = db::load_save(&server.db, character_id).await else {
+                    continue;
+                };
+                let Some(old) = crate::save_parse::parse(&stored) else {
+                    tracing::warn!(player = player_id, "party reported against an unreadable save");
+                    continue;
+                };
+                let Some(block1) = crate::save_parse::with_party(&old, count, &mons) else {
+                    tracing::warn!(player = player_id, "could not place the reported party");
+                    continue;
+                };
+                let Some(candidate) = crate::save_parse::reauthor(&stored, &block1) else {
+                    tracing::warn!(player = player_id, "could not rebuild the save to set the party");
+                    continue;
+                };
+                let Some(new) = crate::save_parse::parse(&candidate) else {
+                    tracing::error!(player = player_id, "rebuilt a save that will not parse");
+                    continue;
+                };
+
+                // The same rules an uploaded party meets: level and EV caps, experience
+                // consistent with level, and no rate of gain the configured rates disallow.
+                if let Some(reason) = new
+                    .impossible()
+                    .or_else(|| crate::save_parse::regressed(&old, &new))
+                    .or_else(|| {
+                        last_upload.and_then(|t| {
+                            crate::rates::gained_too_fast(&old, &new, &server.rates, t.elapsed())
+                        })
+                    })
+                {
+                    tracing::warn!(player = player_id, %reason, "refusing a reported party");
+                    continue;
+                }
+
+                last_upload = Some(std::time::Instant::now());
+                db::store_save(&server.db, character_id, &candidate).await?;
+                if let Err(e) = db::store_inventory_and_party(
+                    &server.db, character_id, &new.bag, &new.party,
+                )
+                .await
+                {
+                    tracing::warn!(error = %e, "could not store the party");
+                }
+                tracing::info!(player = player_id, party = new.party.len(), "party set by report");
+            }
             ClientControl::ItemChanged { pocket, item, quantity } => {
                 // Same shape as money: build the save the report implies, then judge it exactly
                 // as an uploaded one. impossible() already knows the per-slot ceiling, so an

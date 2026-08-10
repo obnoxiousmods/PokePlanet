@@ -77,6 +77,8 @@ pub const MSG_HELLO: u8 = 0x8B;
 pub const MSG_MONEY: u8 = 0x8C;
 /// One bag slot changed, reported as a value rather than as a whole save image.
 pub const MSG_ITEM: u8 = 0x8D;
+/// The party, as the game's own bytes.
+pub const MSG_PARTY: u8 = 0x8E;
 
 /// Mirrors `enum NetAuthState` in the C header.
 pub const AUTH_OFFLINE: u8 = 0;
@@ -338,6 +340,8 @@ pub enum GameMessage {
     /// leaves the bag wrong in a way nothing afterwards can detect; a count that arrives twice
     /// is simply the same truth said twice.
     ItemChanged { pocket: u8, item: u16, quantity: u16 },
+    /// The whole party, as the game's own bytes.
+    PartyChanged { count: u8, mons: Vec<u8> },
     /// The game introducing itself, naming the sidecar it means to reach.
     Hello { instance: String },
     /// A game process connected to the sidecar.
@@ -354,6 +358,10 @@ pub fn decode_game_message(body: &[u8]) -> anyhow::Result<GameMessage> {
         .ok_or_else(|| anyhow::anyhow!("empty IPC frame"))?;
     match kind {
         MSG_BATTLE_ENDED => Ok(GameMessage::BattleEnded),
+        MSG_PARTY => {
+            let count = *rest.first().ok_or_else(|| anyhow::anyhow!("short party"))?;
+            Ok(GameMessage::PartyChanged { count, mons: rest[1..].to_vec() })
+        }
         MSG_ITEM => {
             let b = rest
                 .get(..5)

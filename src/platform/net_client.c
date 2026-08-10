@@ -58,6 +58,7 @@
 #define MSG_HELLO           0x8B
 #define MSG_MONEY           0x8C
 #define MSG_ITEM            0x8D
+#define MSG_PARTY           0x8E
 
 // Lives in the SDL backend, like the sidecar port beside it.
 extern const char *Platform_GetInstanceToken(void);
@@ -1106,6 +1107,23 @@ void Net_SendItem(u8 pocket, u16 item, u16 quantity)
     body[4] = (u8)(quantity & 0xFF);
     body[5] = (u8)(quantity >> 8);
     Enqueue(body, sizeof(body));
+}
+
+void Net_SendParty(u8 count, const void *mons, u32 size)
+{
+    u8 body[2 + 600];
+
+    if (!sInitialised)
+        return;
+    // The server refuses anything but the exact size, so sending a different one would be a
+    // silent no-op. Better to notice here than to wonder later why nothing was stored.
+    if (size != 600)
+        return;
+
+    body[0] = MSG_PARTY;
+    body[1] = count;
+    memcpy(body + 2, mons, size);
+    Enqueue(body, 2 + size);
 }
 
 void Net_SendBattleEnded(void)
