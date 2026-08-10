@@ -67,7 +67,8 @@ those two seams.
 - **Local saving removed while signed in.** `SAVE` is gone from the start menu, and the game no
   longer writes a save file that nothing should read.
 - **The server reads the save it stores** — sectors, slots, flags, variables, money, coins, the
-  bag and the party, including the encrypted substruct decode.
+  bag and the party, including the encrypted substruct decode — and projects the flags, vars,
+  bag and party into tables it can query rather than bytes it can only keep.
 
 ### Anti-cheat (see *Not yet cheatproof* below)
 Refused server-side, each verified against real data with a negative control:
@@ -91,6 +92,12 @@ Refused server-side, each verified against real data with a negative control:
 - **Gameplay rates held by the server**: experience, encounters, money, items, catch and shop
   prices, plus per-species encounter rates. Edit one file, restart, every client is told.
 
+### Beyond the hardware
+- **More than four sprite palettes.** The GBA gave the overworld four for everyone who is not
+  the player, with no reference counting, so characters repainted each other. That ceiling was a
+  convention rather than a limit here: sprites now carry a palette of their own, both renderers
+  honour it, and the bank follows fades like any other.
+
 ### Tooling
 - `tools/debug/two-client-battle.sh` — two real clients, one battle, headless.
 - `tools/debug/test-chat-parse.sh` — chat scope parsing, 28 cases on the host.
@@ -100,9 +107,9 @@ Refused server-side, each verified against real data with a negative control:
 
 ## In progress
 
-- **Palettes beyond the hardware's four.** Sprites can carry a palette of their own and both
-  renderers honour it; nothing assigns one yet, and the extended bank does not participate in
-  fades.
+- **Per-player colours.** The palette ceiling is gone — sprites carry their own palette, both
+  renderers honour it, and the bank follows fades — but nothing assigns one yet. Assigning needs
+  a colour on the wire, which neither the remote-player nor the profile message carries.
 
 ---
 
@@ -115,8 +122,8 @@ Refused server-side, each verified against real data with a negative control:
   any random chance, reward, drop rate or price is tunable without a protocol change.
 
 ### Later
-- **Structured progression on the server** — flags, variables, bag and party as data rather
-  than an opaque image, so the save upload can eventually be retired.
+- **Retire the save upload.** The typed tables now exist alongside the image; once they have
+  been seen holding everything over real play, the image stops being the record.
 - **Headless engine.** Running the game's logic server-side. This is the only thing that makes
   a *careful* forgery impossible rather than merely hard, and it is a large piece of work.
 
