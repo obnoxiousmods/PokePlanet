@@ -159,6 +159,18 @@ struct NetState
 static struct NetState sNet;
 static bool8 sInitialised = FALSE;
 
+// Whether the server is known to already hold a save for this character.
+//
+// The save image is no longer how progress reaches the server. Money, the bag, the party, all
+// of SaveBlock1 in chunks, SaveBlock2, the PC boxes and the Hall of Fame each report as
+// themselves. Sending 128KB on top of that is duplication, and it lets the client keep deciding
+// the format the server reads its state out of -- the thing all of that work exists to stop.
+//
+// One exception, and it is not a loophole: a character the server has no save for at all. Every
+// typed report splices into an existing image, so there would be nothing to write into. A
+// character that was sent a save has proved the server has one, and never uploads again.
+static bool8 sServerHasSave;
+
 static u16 GetSidecarPort(void);
 
 // ---------------------------------------------------------------------------
@@ -472,6 +484,10 @@ static void HandleSaveImage(const u8 *payload, u32 len)
 
     if (len < 10u + length)
         return;
+    // Receiving a save proves the server already holds one, which is what retires the upload:
+    // from here on every change travels as itself and the image is never sent again.
+    sServerHasSave = TRUE;
+
     if (total != sizeof(FLASH_BASE))
     {
         SDL_Log("net: ignoring a save of %u bytes; this build expects %u",
@@ -790,7 +806,9 @@ static int NetThreadMain(void *unused)
                 break;
 
             // A save happened; the server's copy is now out of date.
-            if (Net_TakeSaveChanged() && !SendSaveImage(sock))
+            // Uploads are retired for any character the server already has a save for. The
+            // flag is still taken either way, so a change does not sit pending forever.
+            if (Net_TakeSaveChanged() && !sServerHasSave && !SendSaveImage(sock))
                 break;
 
             FD_ZERO(&readable);
