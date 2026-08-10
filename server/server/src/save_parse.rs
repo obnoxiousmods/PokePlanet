@@ -600,19 +600,37 @@ pub fn with_party(state: &SaveState, count: u8, mons: &[u8]) -> Option<Vec<u8>> 
 
 /// The parts of SaveBlock1 a client may report directly, as (offset, length).
 ///
+/// This is all of SaveBlock1 in kilobyte chunks, except one protected span (0x234..0x848)
+/// holding the party count, the party, money, coins and the bag. Those have their own messages
+/// carrying caps, rate ceilings and level consistency checks, and a raw region write would skip
+/// every one of them -- so covering them here would quietly become the way to cheat.
+///
+/// Chunked rather than one entry per field because the fields are not the point: secret bases
+/// alone are 4360 bytes, over the wire limit, and enumerating thirty structures by hand is
+/// thirty chances to get an offset wrong. Chunks are generated, so the only thing that has to
+/// be right is the boundary of the protected span.
+///
 /// An allowlist rather than an offset the client picks, because "write these bytes at this
 /// offset" with no constraint is not a save protocol, it is an arbitrary write into the
 /// player's save. Money and the party have their own messages and are deliberately absent
 /// here: they carry checks -- caps, rate ceilings, level consistency -- that a raw region
 /// write would walk straight past.
 pub const REPORTABLE: &[(usize, usize)] = &[
-    (0x00, 0x24),                              // position, warps, last heal location
-    (OFFSET_SEEN, DEX_FLAG_BYTES),             // Pokedex seen
-    (OFFSET_REMATCHES, REMATCH_BYTES),         // trainer rematch state
-    (OFFSET_FLAGS, FLAG_BYTES),                // story flags
-    (OFFSET_VARS, VAR_COUNT * 2),              // story variables
-    (OFFSET_GAME_STATS, GAME_STAT_COUNT * 4),  // the sixty-four counters
-    (OFFSET_BERRY_TREES, BERRY_TREE_BYTES),    // berry trees
+    (0x0, 0x234),
+    (0x848, 0x400),
+    (0xC48, 0x400),
+    (0x1048, 0x400),
+    (0x1448, 0x400),
+    (0x1848, 0x400),
+    (0x1C48, 0x400),
+    (0x2048, 0x400),
+    (0x2448, 0x400),
+    (0x2848, 0x400),
+    (0x2C48, 0x400),
+    (0x3048, 0x400),
+    (0x3448, 0x400),
+    (0x3848, 0x400),
+    (0x3C48, 0x1B8),
 ];
 
 /// A copy of this save's SaveBlock1 with one allowlisted region replaced.
@@ -1189,13 +1207,21 @@ mod tests {
         assert_eq!(
             REPORTABLE,
             &[
-                (0x00, 0x24),
-                (0x988, 52),
-                (0x9C8, 0x66),
-                (0x1270, 300),
-                (0x139C, 512),
-                (0x159C, 256),
-                (0x169C, 0x400),
+                (0x0, 0x234),
+                (0x848, 0x400),
+                (0xC48, 0x400),
+                (0x1048, 0x400),
+                (0x1448, 0x400),
+                (0x1848, 0x400),
+                (0x1C48, 0x400),
+                (0x2048, 0x400),
+                (0x2448, 0x400),
+                (0x2848, 0x400),
+                (0x2C48, 0x400),
+                (0x3048, 0x400),
+                (0x3448, 0x400),
+                (0x3848, 0x400),
+                (0x3C48, 0x1B8),
             ][..],
             "if this changed, src/mmo_autosave.c must change with it"
         );
@@ -1208,26 +1234,42 @@ mod tests {
         sign(&mut image, 0, 2000);
         let old = parse(&image).expect("readable");
 
-        let mut flags = vec![0u8; FLAG_BYTES];
-        flags[0] = 0xAB;
-        let block1 = with_region(&old, OFFSET_FLAGS, &flags).expect("flags are reportable");
+        // The chunk that happens to contain the story flags, found rather than assumed, so this
+        // keeps working when the chunk boundaries move.
+        let &(at, len) = REPORTABLE
+            .iter()
+            .find(|&&(at, len)| at <= OFFSET_FLAGS && OFFSET_FLAGS < at + len)
+            .expect("the flags must be inside some reportable chunk");
+
+        let mut chunk = old.block1[at..at + len].to_vec();
+        chunk[OFFSET_FLAGS - at] = 0xAB;
+        let block1 = with_region(&old, at, &chunk).expect("a listed chunk is writable");
         let new = parse(&reauthor(&image, &block1).expect("authoring")).expect("parses");
-        assert_eq!(new.flags[0], 0xAB, "the reported flags should be what the save now holds");
+        assert_eq!(new.flags[0], 0xAB, "the reported chunk should be what the save now holds");
         assert_ne!(old.flags[0], 0xAB, "and must not have been that already");
 
-        // An offset nobody listed. This is the case that matters: without the check it is an
-        // arbitrary write into the player's save at a position the client chooses.
+        // An offset nobody listed. Without this check it is an arbitrary write into the
+        // player's save at a position the client chooses.
         assert!(
-            with_region(&old, 0x2BE0, &[0u8; 4]).is_none(),
+            with_region(&old, at + 1, &chunk).is_none(),
             "an unlisted offset must be refused"
         );
-        // A subrange of a listed region is still not a listed region: allowing it would let a
+        // A subrange of a listed chunk is still not a listed chunk: allowing it would let a
         // caller write one byte at a time wherever it liked, which is the same arbitrary write.
         assert!(
-            with_region(&old, OFFSET_FLAGS, &flags[..8]).is_none(),
-            "a partial region must be refused, not padded or merged"
+            with_region(&old, at, &chunk[..8]).is_none(),
+            "a partial chunk must be refused, not padded or merged"
         );
-        // Money and the party are absent on purpose -- they have checks a region write skips.
+
+        // The protected span: money, coins, the bag and the party have their own messages,
+        // which carry caps and rate ceilings a raw region write would skip. No chunk may
+        // overlap them, or this whole mechanism becomes the way around those checks.
+        for &(at, len) in REPORTABLE {
+            assert!(
+                at + len <= 0x234 || at >= 0x848,
+                "chunk at {at:#X} overlaps the protected span"
+            );
+        }
         assert!(
             with_region(&old, OFFSET_MONEY, &[0u8; 4]).is_none(),
             "money must not be writable as a raw region"

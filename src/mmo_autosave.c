@@ -119,13 +119,21 @@ static void ReportPartyIfChanged(void)
 // Money, the bag and the party are absent deliberately: they have their own messages, which
 // carry checks a raw region write would walk straight past.
 static const struct { u32 offset; u32 size; } sReportable[] = {
-    { 0x00,   0x24 },  // position, warps, last heal location
-    { 0x988,  52   },  // Pokedex seen
-    { 0x9C8,  0x66 },  // trainer rematch state
-    { 0x1270, 300  },  // story flags
-    { 0x139C, 512  },  // story variables
-    { 0x159C, 256  },  // the sixty-four counters
-    { 0x169C, 0x400 }, // berry trees
+    { 0x0, 0x234 },
+    { 0x848, 0x400 },
+    { 0xC48, 0x400 },
+    { 0x1048, 0x400 },
+    { 0x1448, 0x400 },
+    { 0x1848, 0x400 },
+    { 0x1C48, 0x400 },
+    { 0x2048, 0x400 },
+    { 0x2448, 0x400 },
+    { 0x2848, 0x400 },
+    { 0x2C48, 0x400 },
+    { 0x3048, 0x400 },
+    { 0x3448, 0x400 },
+    { 0x3848, 0x400 },
+    { 0x3C48, 0x1B8 },
 };
 
 // One region reported per tick at most.
