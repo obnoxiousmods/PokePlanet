@@ -103,6 +103,37 @@ u16 Platform_GetSidecarPort(void)
     return (u16)sSidecarPort;
 }
 
+// Names this launch, so a game and the sidecar it starts can only pair with each other.
+//
+// A port was doing this job and is not up to it: two sidecars can be listening at once -- a
+// player's and a developer's, or one a crash left behind -- and a game that merely connects
+// to a port can be signed in as somebody else's character. Generated once, before anything
+// connects, and never reused.
+//
+// Not a secret and does not need to be. Both ends are on loopback and anything able to read
+// this process's memory has already won; the job is telling two local programs apart, not
+// keeping anyone out.
+static char sInstanceToken[33];
+
+const char *Platform_GetInstanceToken(void)
+{
+    if (sInstanceToken[0] == '\0')
+    {
+        static const char digits[] = "0123456789abcdef";
+        Uint64 seed = SDL_GetPerformanceCounter() ^ ((Uint64)SDL_GetTicks() << 32);
+        int i;
+
+        for (i = 0; i < 32; i++)
+        {
+            seed = seed * 6364136223846793005ULL + 1442695040888963407ULL;
+            sInstanceToken[i] = digits[(seed >> 33) & 0xF];
+        }
+        sInstanceToken[32] = '\0';
+    }
+
+    return sInstanceToken;
+}
+
 // Work out which instance we are from argv[0], and give it its own files.
 //
 // The name is everything after the first underscore in the executable's basename, so
@@ -219,8 +250,10 @@ void Platform_LaunchSidecar(void)
     // the same person already playing the main client -- and the two would fight over one
     // identity rather than being two players who can see each other.
     snprintf(commandLine, sizeof(commandLine),
-             "pokeplanet-net.exe --server %s --port %u --ipc-port %u --token %s --log %s%s",
+             "pokeplanet-net.exe --server %s --port %u --ipc-port %u --token %s --log %s"
+             " --instance %s%s",
              sServerHost, sServerPort, sSidecarPort, sTokenPath, sSidecarLogPath,
+             Platform_GetInstanceToken(),
              sProfile[0] != '\0' ? " --fixed-token" : "");
 
     memset(&startup, 0, sizeof(startup));

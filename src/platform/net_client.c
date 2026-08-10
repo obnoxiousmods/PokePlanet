@@ -54,6 +54,10 @@
 #define MSG_SAVE_CHUNK     0x88
 #define MSG_LINK_BLOCK_SEND 0x89
 #define MSG_BATTLE_ENDED    0x8A
+#define MSG_HELLO           0x8B
+
+// Lives in the SDL backend, like the sidecar port beside it.
+extern const char *Platform_GetInstanceToken(void);
 
 // Big enough that the 128KB image is a few hundred frames rather than thousands, small
 // enough to sit on the stack.
@@ -691,6 +695,24 @@ static int NetThreadMain(void *unused)
             }
             SDL_Delay(RECONNECT_DELAY_MS);
             continue;
+        }
+
+        // Say who we are before anything else.
+        //
+        // A sidecar that was told which game it belongs to will drop this connection if the
+        // token does not match, which is what stops a game attaching to a sidecar that is
+        // not its own and being signed in as somebody else's character. Sent every time the
+        // socket is established, since a reconnect is a new connection to the sidecar.
+        {
+            const char *token = Platform_GetInstanceToken();
+            u8 hello[1 + 32];
+            size_t len = strlen(token);
+
+            if (len > 32)
+                len = 32;
+            hello[0] = MSG_HELLO;
+            memcpy(hello + 1, token, len);
+            Enqueue(hello, (u32)(1 + len));
         }
 
         SDL_Log("net: linked to sidecar on port %u", (unsigned)GetSidecarPort());

@@ -17,6 +17,9 @@ pub struct Settings {
     /// Loopback address the game connects to. Always on 127.0.0.1 so the IPC channel is
     /// never reachable from the network.
     pub ipc_addr: SocketAddr,
+    /// Which game this sidecar belongs to. Empty means it will serve any of them, which is
+    /// how a manually started one behaves; the game always launches its own with a token.
+    pub instance: String,
     /// Where the session token is cached between launches.
     pub token_path: PathBuf,
     /// Skip certificate verification. For pointing a dev build at a self-signed server;
@@ -42,6 +45,7 @@ impl Default for Settings {
             server_host: DEFAULT_SERVER_HOST.to_string(),
             server_port: DEFAULT_SERVER_PORT,
             ipc_addr: SocketAddr::from(([127, 0, 0, 1], DEFAULT_IPC_PORT)),
+            instance: String::new(),
             token_path: PathBuf::from("pokeplanet-auth.json"),
             insecure: false,
             fixed_token: false,
@@ -117,6 +121,12 @@ impl Settings {
                         .parse()?;
                     self.ipc_addr.set_port(port);
                 }
+                "--instance" => {
+                    self.instance = args
+                        .next()
+                        .ok_or_else(|| anyhow::anyhow!("--instance needs a value"))?
+                        .to_string();
+                }
                 "--token" => {
                     self.token_path = args
                         .next()
@@ -139,6 +149,7 @@ impl Settings {
                            --server HOST[:PORT]  game server (default {DEFAULT_SERVER_HOST}:{DEFAULT_SERVER_PORT})\n  \
                            --port PORT           game server port\n  \
                            --ipc-port PORT       loopback port the game connects to (default {DEFAULT_IPC_PORT})\n  \
+                           --instance TOKEN      only serve the game that presents this token\n  \
                            --token PATH          session token cache\n  \
                            --fixed-token         stay signed in as the cached token; never\n                                                 log in through a browser, never rewrite it\n  \
                            --log PATH            also write diagnostics to PATH\n  \

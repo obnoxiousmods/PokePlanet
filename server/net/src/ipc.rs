@@ -149,6 +149,7 @@ pub async fn serve(
     listener: TcpListener,
     link: GameLink,
     commands: mpsc::Sender<GameMessage>,
+    instance: String,
 ) -> anyhow::Result<()> {
     loop {
         let (stream, peer) = listener.accept().await?;
@@ -165,8 +166,9 @@ pub async fn serve(
         let _ = commands.try_send(GameMessage::Attached);
         let link = link.clone();
         let commands = commands.clone();
+        let instance = instance.clone();
         tokio::spawn(async move {
-            if let Err(e) = handle_game(stream, &link, commands).await {
+            if let Err(e) = handle_game(stream, &link, commands, &instance).await {
                 tracing::debug!(error = %e, "game connection ended");
             }
             link.detach().await;
@@ -179,6 +181,7 @@ async fn handle_game(
     stream: TcpStream,
     link: &GameLink,
     commands: mpsc::Sender<GameMessage>,
+    instance: &str,
 ) -> anyhow::Result<()> {
     stream.set_nodelay(true)?;
     let (mut reader, mut writer) = stream.into_split();
@@ -207,6 +210,21 @@ async fn handle_game(
         buf.extend_from_slice(&chunk[..n]);
         while let Some(body) = ipc::take_frame(&mut buf)? {
             match ipc::decode_game_message(&body) {
+                // The game introducing itself. A sidecar told which game it belongs to serves
+                // only that one. A port is not an identity: two sidecars can be listening on
+                // a machine, a player's and a developer's or one left behind by a crash, and
+                // without this a game attaches to whichever answers and is signed in as
+                // somebody else's character. That is not hypothetical; it happened.
+                //
+                // A sidecar started by hand carries no token and still serves anyone, which
+                // is what test harnesses rely on.
+                Ok(GameMessage::Hello { instance: theirs }) => {
+                    if !instance.is_empty() && theirs != instance {
+                        tracing::warn!("refusing a game that belongs to a different sidecar");
+                        anyhow::bail!("instance mismatch");
+                    }
+                    tracing::info!("game identified itself");
+                }
                 Ok(msg) => {
                     if commands.send(msg).await.is_err() {
                         return Ok(()); // session gone

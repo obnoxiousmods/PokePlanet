@@ -419,6 +419,12 @@ impl Session {
                         wire::GameMessage::BattleEnded => {
                             write_control(&mut send, &ClientControl::BattleEnded).await?;
                         }
+                        wire::GameMessage::Hello { .. } => {
+                            // Answered where the connection is accepted, since the point of
+                            // it is deciding whether to serve this game at all. It never
+                            // reaches here; the arm exists so adding a message cannot be
+                            // silently ignored.
+                        }
                         wire::GameMessage::Attached => {
                             // Only worth asking once signed in. Before that the sign-in
                             // exchange is already on its way and brings the same data with

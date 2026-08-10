@@ -22,6 +22,8 @@ async fn main() -> anyhow::Result<()> {
     // detached with no console, so stderr alone means every diagnostic is lost exactly when
     // multiplayer misbehaves for a real player.
     let settings = settings::Settings::load(std::env::args().skip(1))?;
+    // Taken before the settings are handed on, since serve outlives them.
+    let instance = settings.instance.clone();
 
     let filter = || {
         tracing_subscriber::EnvFilter::try_from_default_env()
@@ -76,5 +78,5 @@ async fn main() -> anyhow::Result<()> {
     tokio::spawn(session.run(commands_rx));
 
     // Serving the game is the process's main job; if the listener dies, so do we.
-    ipc::serve(listener, link, commands_tx).await
+    ipc::serve(listener, link, commands_tx, instance).await
 }

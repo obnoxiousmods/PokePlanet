@@ -59,6 +59,13 @@ pub const MSG_SAVE_CHUNK: u8 = 0x88;
 pub const MSG_LINK_BLOCK_SEND: u8 = 0x89;
 /// The battle this player was in has finished. No payload.
 pub const MSG_BATTLE_ENDED: u8 = 0x8A;
+/// First frame a game sends: the instance token of the sidecar it expects to be talking to.
+///
+/// A port is not an identity. Two sidecars can be listening on a machine -- a player's and a
+/// developer's, or one left behind by a crash -- and a game that simply connects to a port
+/// can end up signed in as somebody else's character. This is what makes the pairing
+/// deliberate rather than incidental.
+pub const MSG_HELLO: u8 = 0x8B;
 
 /// Mirrors `enum NetAuthState` in the C header.
 pub const AUTH_OFFLINE: u8 = 0;
@@ -277,6 +284,8 @@ pub enum GameMessage {
     LinkBlock { bytes: Vec<u8> },
     /// The battle this player was in has finished.
     BattleEnded,
+    /// The game introducing itself, naming the sidecar it means to reach.
+    Hello { instance: String },
     /// A game process connected to the sidecar.
     ///
     /// Synthesised locally rather than decoded from a frame: the game cannot send this,
@@ -291,6 +300,11 @@ pub fn decode_game_message(body: &[u8]) -> anyhow::Result<GameMessage> {
         .ok_or_else(|| anyhow::anyhow!("empty IPC frame"))?;
     match kind {
         MSG_BATTLE_ENDED => Ok(GameMessage::BattleEnded),
+        MSG_HELLO => Ok(GameMessage::Hello {
+            instance: String::from_utf8_lossy(rest)
+                .trim_end_matches('\0')
+                .to_string(),
+        }),
         MSG_LINK_BLOCK_SEND => {
             if rest.len() < 2 {
                 anyhow::bail!("short link block");
