@@ -1,5 +1,6 @@
 #include "global.h"
 #include "wild_encounter.h"
+#include "net_client.h"
 #include "pokemon.h"
 #include "metatile_behavior.h"
 #include "fieldmap.h"
@@ -523,6 +524,24 @@ static bool8 WildEncounterCheck(u32 encounterRate, bool8 ignoreAbility)
         else if (ability == ABILITY_SAND_VEIL && gSaveBlock1Ptr->weather == WEATHER_SANDSTORM)
             encounterRate /= 2;
     }
+    // The server's encounter rate, in hundredths, so 100 changes nothing.
+    //
+    // After the abilities and items, and before the cap, on purpose. Applying it first would
+    // let Illuminate or a Repel change how much effect the server's setting had; applying it
+    // after the cap would let it push past a ceiling the game relies on. Here it scales the
+    // rate the game actually decided on, and the cap still means what it means.
+    //
+    // The cap also makes this asymmetric, and deliberately so: a server can always make
+    // encounters rarer, but once the rate is already at the ceiling it cannot make them more
+    // common than the game permits.
+    {
+        struct NetRates rates;
+
+        Net_GetRates(&rates);
+        if (rates.encounter != 100)
+            encounterRate = (encounterRate * rates.encounter) / 100;
+    }
+
     if (encounterRate > MAX_ENCOUNTER_RATE)
         encounterRate = MAX_ENCOUNTER_RATE;
     return EncounterOddsCheck(encounterRate);
