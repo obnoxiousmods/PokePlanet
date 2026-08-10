@@ -166,10 +166,27 @@ Refused server-side, each verified against real data with a negative control:
   and items there is no chokepoint: a Pokemon changes from levelling, evolving, learning a move,
   taking damage, being caught, healed or swapped with the PC.
 
-  **Still to do:** flags, variables, position, the Pokedex and the rest still reach the server
-  only by upload. Money, items and the party are the three that move constantly during play, so
-  the upload is no longer what carries the fast-moving state -- but it is still what carries
-  everything else, and it cannot be switched off until nothing depends on it at all.
+  **Flags, variables, position, the Pokedex, counters, rematches and berry trees** report as
+  allowlisted regions. The allowlist is matched exactly, not by containment: accepting a
+  subrange would let a caller write one byte at a time at an offset of its choosing, which is an
+  arbitrary write into the save with extra steps. Money, the bag and the party are deliberately
+  absent from it -- they have their own messages, carrying caps, rate ceilings and level
+  consistency checks a raw region write would walk straight past.
+
+  **Any block can now be authored**, not only SaveBlock1 (`write_block` / `reauthor_block`).
+  This was the real blocker: the PC boxes live in their own nine sectors and SaveBlock2 in
+  another, so switching the upload off while authoring covered only SaveBlock1 would have meant
+  every Pokemon in a player's PC ceasing to reach the server -- gone at the next sign-in, not
+  degraded.
+
+  **Still to do before the upload can be deleted**, in order:
+  1. The client does not yet *report* PC box or SaveBlock2 contents. The server can write them;
+     nothing sends them.
+  2. Chunked regions for the large SaveBlock1 fields -- secret bases are 4360 bytes against a
+     1024-byte cap, so they need splitting across allowlist entries.
+  3. Only then switch the upload off, after running both paths side by side through real play
+     and comparing. Retiring it while anything still depends on it to carry a field loses that
+     field permanently, with no copy left to restore from.
 
   And the honest limit: even finished, retiring the upload stops the client *choosing the format*
   it reports in, while the client still computes the contents. Real narrowing of the attack
