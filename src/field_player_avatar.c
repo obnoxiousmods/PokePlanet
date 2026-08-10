@@ -7,6 +7,7 @@
 #include "field_effect.h"
 #include "field_effect_helpers.h"
 #include "field_player_avatar.h"
+#include "net_client.h"
 #include "fieldmap.h"
 #include "menu.h"
 #include "metatile_behavior.h"
@@ -1236,6 +1237,24 @@ u8 GetRivalAvatarGraphicsIdByStateIdAndGender(u8 state, u8 gender)
 
 u8 GetPlayerAvatarGraphicsIdByStateIdAndGender(u8 state, u8 gender)
 {
+    // Look like the character everyone else can see.
+    //
+    // The server assigns each character an overworld sprite and every other client draws
+    // them with it. Locally the player was still Brendan or May, so they were the one person
+    // in the world who never saw themselves -- and two players comparing screens saw
+    // different people standing in the same place.
+    //
+    // On foot only. The assigned sprites are ordinary NPC graphics with no frames for
+    // riding a bike, surfing or fishing; those states keep the built-in avatar rather than
+    // asking a sprite to draw something it does not have.
+    if (state == PLAYER_AVATAR_STATE_NORMAL && Net_GetAuthState() == NET_AUTH_ONLINE)
+    {
+        struct NetProfile profile;
+
+        if (Net_GetProfile(&profile) && profile.graphicsId != 0)
+            return profile.graphicsId;
+    }
+
     return sPlayerAvatarGfxIds[state][gender];
 }
 
