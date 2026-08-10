@@ -1,0 +1,69 @@
+name: Bug report
+description: Something in the game or the server behaves wrongly
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Most of the hard bugs here have lived at one of two seams: between the game thread and
+        the SDL event loop, or between the game and the sidecar. The questions below are the
+        ones that have actually narrowed those down.
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you saw, and what you expected instead.
+      placeholder: |
+        Challenged the other client. The versus screen appeared and then nothing moved.
+    validations:
+      required: true
+
+  - type: textarea
+    id: repro
+    attributes:
+      label: How to reproduce
+      description: |
+        Every step, including how many clients were running. "Two clients, one challenged the
+        other" is a different bug from "one client, walked into a building".
+    validations:
+      required: true
+
+  - type: input
+    id: build
+    attributes:
+      label: Build
+      description: The timestamp on pokeplanet.exe, or the commit if you built it yourself.
+      placeholder: "pokeplanet.exe 02:12, or 2e49796"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where does it happen
+      options:
+        - In the overworld
+        - In a battle
+        - Signing in or the title screen
+        - Chat
+        - Server side only
+        - Somewhere else
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: |
+        `pokeplanet.log` next to the executable, and the sidecar log beside it. If the game
+        froze rather than crashed, say what was last on screen -- a freeze after a move message
+        and a freeze on the versus screen are different halves of the same protocol.
+      render: text
+
+  - type: textarea
+    id: media
+    attributes:
+      label: Screenshot or video
+      description: Drag it in. Five seconds of a freeze beats a paragraph describing it.

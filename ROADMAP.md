@@ -12,6 +12,19 @@ polished, authentic, a genuinely fresh take, and **no pay-to-win**.
 
 ---
 
+## See it running
+
+https://ss.obby.ca/t_2026_08_10_02_01_24_DLA0eV.mp4
+
+Two clients on one machine, each signed in as a different account, seeing each other move in
+the same world.
+
+> Clips and screenshots are worth more than a paragraph for anything involving movement,
+> timing or a freeze. When reporting a bug, a few seconds of video says immediately what a
+> description takes several exchanges to pin down.
+
+---
+
 ## Architecture in one paragraph
 
 The game is a 60fps frame-locked GBA program running on two threads: an SDL event loop and an
@@ -86,7 +99,8 @@ Refused server-side, each verified against real data with a negative control:
 - **Battles freeze mid-turn.** A battle now starts, the intro completes and both players reach
   the first turn. It then stops: in play, after the first moves resolve ("Foe A used TACKLE!"),
   and in the headless harness one step earlier, at action selection waiting for the opponent.
-  Both are the same unfinished round trip.
+  It reaches further each time it is measured -- most recently close to a second turn -- which
+  points at a round trip that completes sometimes rather than one that never happens.
 
   The intro freeze is fixed, so controller *data* crosses the link. What is not proven is the
   acknowledgement:  does not clear the exec flag locally on the

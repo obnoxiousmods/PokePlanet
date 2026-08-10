@@ -1,0 +1,71 @@
+name: CI
+
+# What can actually be checked on a runner, checked on every push.
+#
+# The game itself is not built here on purpose: it needs a 32-bit cross toolchain, SDL2 and the
+# decomp's build tools, and a job that takes twenty minutes and breaks for environment reasons
+# gets ignored within a week. The parts below are fast and fail for real reasons.
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  server:
+    name: Server and protocol tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: server
+
+      # The world rules live here: movement validation, chat routing, battle seating, save
+      # parsing and the rate config. This is the suite worth protecting.
+      - name: Tests
+        working-directory: server
+        run: cargo test --all
+
+      - name: Clippy
+        working-directory: server
+        run: cargo clippy --all -- -D warnings
+
+      - name: Formatting
+        working-directory: server
+        run: cargo fmt --all -- --check
+
+  chat-parse:
+    name: Chat scope parsing
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Compiles the game's own parser on the host and runs every case, including the ones
+      # that must NOT be treated as broadcasts. A whisper going to the wrong audience is the
+      # kind of bug that cannot be taken back.
+      - name: Run
+        run: bash tools/debug/test-chat-parse.sh
+
+  roadmap:
+    name: README mirrors ROADMAP
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The two are meant to be byte identical. Left to humans this drifts within a month, and
+      # a roadmap that lags is worse than none because people act on it.
+      - name: Compare
+        run: |
+          if ! cmp -s README.md ROADMAP.md; then
+            echo "README.md and ROADMAP.md have drifted apart."
+            echo "They are meant to be identical -- update both in the same commit."
+            diff README.md ROADMAP.md || true
+            exit 1
+          fi
