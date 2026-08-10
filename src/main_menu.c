@@ -713,7 +713,11 @@ static void EnterMainMenu(u8 taskId)
 
 // How long to wait for the server's save before giving up and using what is here. Two
 // seconds: long enough for 128KB over a real connection, short enough not to look hung.
-#define SERVER_SAVE_WAIT_FRAMES 120
+// Ten seconds at sixty frames. Was two, which is inside the range an ordinary connection can
+// take to deliver sign-in, the profile and a 128KB save -- so a slow link, not a broken one,
+// was enough to drop the player onto stale local data. Waiting is cheap; the alternative is
+// silently playing the wrong character.
+#define SERVER_SAVE_WAIT_FRAMES 600
 
 static void Task_PokePlanetConnect(u8 taskId)
 {
@@ -762,8 +766,31 @@ static void Task_PokePlanetConnect(u8 taskId)
         //
         // Bounded, because a character who has never saved has nothing to send and would
         // otherwise wait here forever.
-        if (!Net_HasServerSave() && ++tHoldTimer < SERVER_SAVE_WAIT_FRAMES)
-            return;
+        //
+        // Waits for the save *and* the profile, not the save alone. They describe the same
+        // character and arrive by different routes, so either can be last; the swap below needs
+        // both. Waiting only on the save meant that whenever the profile lost the race the wait
+        // ended, the swap was skipped, and the player entered the world on the local save --
+        // with the server's copy already sitting in the flash mirror, unused. No retry, no
+        // second look. That is the intermittent "my progress did not save" case.
+        {
+            struct NetProfile pending;
+
+            if ((!Net_HasServerSave() || !Net_GetProfile(&pending))
+                && ++tHoldTimer < SERVER_SAVE_WAIT_FRAMES)
+                return;
+
+            // Falling through means the deadline passed. For a new character that is correct and
+            // expected -- there is nothing to send. For an existing one it means play is about
+            // to begin on local data, which is the failure this whole task exists to prevent,
+            // so say so rather than let it pass unremarked.
+            if (tHoldTimer >= SERVER_SAVE_WAIT_FRAMES)
+                DebugPrintf("PokePlanet: gave up waiting for the server's save after %d frames "
+                            "(save=%d profile=%d)",
+                            SERVER_SAVE_WAIT_FRAMES,
+                            Net_HasServerSave(),
+                            Net_GetProfile(&pending));
+        }
 
         // The server sends its copy of the save right after sign-in, and the network thread
         // has already written it into the flash mirror. The game read the local save at boot,
