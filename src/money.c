@@ -1,5 +1,6 @@
 #include "global.h"
 #include "money.h"
+#include "net_client.h"
 #include "mmo_autosave.h"
 #include "graphics.h"
 #include "event_data.h"
@@ -91,7 +92,19 @@ bool8 IsEnoughMoney(u32 *moneyPtr, u32 cost)
 
 void AddMoney(u32 *moneyPtr, u32 toAdd)
 {
+    struct NetRates rates;
+
     MmoAutosave_NoteChange();
+
+    // The server's money rate, in hundredths, so 100 changes nothing.
+    //
+    // Only on the way in. RemoveMoney is left alone deliberately: a rate is meant to change
+    // how fast a player earns, not to quietly discount what they buy, and scaling both would
+    // make a shop cheaper on a generous server and dearer on a stingy one -- which is not
+    // what anyone setting "money = 3" is asking for.
+    Net_GetRates(&rates);
+    if (rates.money != 100)
+        toAdd = (toAdd * rates.money) / 100;
     u32 toSet = GetMoney(moneyPtr);
 
     // can't have more money than MAX
