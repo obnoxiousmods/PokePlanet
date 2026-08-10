@@ -1294,6 +1294,9 @@ static SDL_mutex *sTextInputLock;
 static char sTextInput[TEXT_INPUT_MAX];
 static u8 sTextInputLength;
 static bool8 sTextInputActive;
+
+// Set when typing ends, cleared once nothing is held. See Platform_GetKeyInput.
+static bool8 sSwallowKeysUntilRelease;
 static u8 sTextInputResult; // 0 none, 1 submitted, 2 cancelled
 
 void Platform_BeginTextInput(void)
@@ -1317,6 +1320,8 @@ void Platform_EndTextInput(void)
     SDL_LockMutex(sTextInputLock);
     sTextInputActive = FALSE;
     SDL_UnlockMutex(sTextInputLock);
+    // Whatever was held while typing must not read as a fresh press now. See below.
+    sSwallowKeysUntilRelease = TRUE;
 }
 
 // Copies what has been typed so far. Returns 0 while still typing, 1 once the player has
@@ -1580,6 +1585,35 @@ u16 Platform_GetKeyInput(void)
     // composing "start again" would press START, SELECT and A along the way.
     if (sTextInputActive)
         return 0;
+
+    // And for a moment afterwards, until everything is released.
+    //
+    // The game works out new presses by comparing this frame's keys against last frame's, and
+    // last frame's were zero because typing was swallowing them. So every key still physically
+    // down when the player finishes typing arrives as a brand new press: the key that opened
+    // the chat box reopens it immediately, and a direction still held walks the player away.
+    // That is the "it closes and instantly comes back, and I am stuck walking" report.
+    //
+    // Waiting for a clean release rather than swallowing a fixed number of frames, because how
+    // long a person keeps a key down is not a number this can guess.
+    {
+        u16 physical;
+
+#ifdef _WIN32
+        physical = GetXInputKeys() | keyboardKeys;
+#elif defined(__ANDROID__)
+        physical = keyboardKeys | controllerKeys | controllerAxisKeys;
+#else
+        physical = keyboardKeys;
+#endif
+
+        if (sSwallowKeysUntilRelease)
+        {
+            if (physical != 0)
+                return 0;
+            sSwallowKeysUntilRelease = FALSE;
+        }
+    }
 
 #ifdef _WIN32
     u16 gamepadKeys = GetXInputKeys();
