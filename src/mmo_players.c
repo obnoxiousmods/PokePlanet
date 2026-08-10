@@ -11,6 +11,7 @@
 #include "event_object_movement.h"
 #include "field_player_avatar.h"
 #include "mmo_autosave.h"
+#include "mmo_colour.h"
 #include "mmo_battle.h"
 #include "mmo_chat.h"
 #include "mmo_players.h"
@@ -199,6 +200,25 @@ static void ApplyCorrection(void)
 }
 
 // Bring one slot in line with what the server says about that player.
+// Give this player their own colours.
+//
+// Derived from the player id, so every client works out the same answer without anything being
+// sent, and a character keeps its look across a restart or a database restore.
+//
+// Reapplied rather than set once: the engine can destroy and rebuild an object event behind us
+// -- a map change does exactly that -- and a rebuilt sprite comes back with the artwork's own
+// palette and no memory of this.
+static void ApplyRemoteColour(struct ObjectEvent *object, u32 playerId)
+{
+    struct Sprite *sprite;
+
+    if (object->spriteId >= MAX_SPRITES)
+        return;
+
+    sprite = &gSprites[object->spriteId];
+    sprite->paletteExtSlot = MmoColour_SlotFor(playerId, sprite->oam.paletteNum);
+}
+
 static void ApplyRemote(u8 slot, const struct NetRemotePlayer *remote)
 {
     struct MmoSlot *state = &sSlots[slot];
@@ -222,6 +242,7 @@ static void ApplyRemote(u8 slot, const struct NetRemotePlayer *remote)
         state->spawned = TRUE;
         state->stalledSteps = 0;
         ObjectEventTurn(&gObjectEvents[objectEventId], remote->facing);
+        ApplyRemoteColour(&gObjectEvents[objectEventId], remote->playerId);
         return;
     }
 

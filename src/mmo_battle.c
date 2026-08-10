@@ -126,5 +126,13 @@ static void CB2_ReturnFromMmoBattle(void)
     LoadPlayerParty();
     SavePlayerBag();
 
-    SetMainCallback2(CB2_ReturnToField);
+    // CB2_ReturnToFieldFromMultiplayer, not CB2_ReturnToField.
+    //
+    // The plain one expects the field to still be standing, which after a battle it is not:
+    // the map, its tilesets and its object events were torn down to make room. The multiplayer
+    // one rebuilds them, which is why every other link battle in the game returns through it.
+    //
+    // Using the wrong one left a black screen that never recovered. The battle had ended
+    // correctly; there was simply no field left to go back to.
+    SetMainCallback2(CB2_ReturnToFieldFromMultiplayer);
 }
