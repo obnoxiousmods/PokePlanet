@@ -16,6 +16,7 @@
 #include "battle.h"
 #include "battle_setup.h"
 #include "link.h"
+#include "load_save.h"
 #include "main.h"
 #include "mmo_battle.h"
 #include "mmo_link.h"
@@ -81,6 +82,16 @@ void MmoBattle_Start(const struct NetBattleStart *start)
     // Blocks only flow while this is set, so it must come before the battle starts asking.
     MmoLink_BeginBattle();
 
+    // Take the party and bag aside for the duration.
+    //
+    // A battle against another player is not supposed to cost anything: no experience is
+    // awarded, and the fainting and the potions spent are undone when it ends. The game does
+    // that by snapshotting both here and restoring them afterwards. Without it a player
+    // walks away from every match with a hurt team and a lighter bag -- and autosave then
+    // makes that permanent on the server, where no amount of healing undoes it.
+    SavePlayerParty();
+    LoadPlayerBag();
+
     PlayMapChosenOrBattleBGM(MUS_VS_TRAINER);
     gBattleTypeFlags = BATTLE_TYPE_LINK | BATTLE_TYPE_TRAINER;
     CleanupOverworldWindowsAndTilemaps();
@@ -98,6 +109,11 @@ static void CB2_ReturnFromMmoBattle(void)
     gReceivedRemoteLinkPlayers = FALSE;
     Link_ClearAssignedMultiplayerId();
     gBattleTypeFlags = 0;
+
+    // Give back what the battle borrowed, and put the map's music back.
+    Overworld_ResetMapMusic();
+    LoadPlayerParty();
+    SavePlayerBag();
 
     SetMainCallback2(CB2_ReturnToField);
 }
