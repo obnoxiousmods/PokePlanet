@@ -136,11 +136,23 @@ Refused server-side, each verified against real data with a negative control:
   bases gone, permanently and without warning. Splicing the server's authoritative fields into
   the preserved block cannot.
 
-  What remains is honest about its own value: retiring the upload stops the client *choosing the
-  format* it reports in, but the client still computes the contents. That is a real narrowing of
-  the attack surface and not the end of it. Parsing continues, because each parsed field is one
-  the server can check rather than merely carry -- and checking is what the headless engine below
-  finishes.
+  The server can now also **author** a save, not only read one (`write_block1` / `reauthor`).
+  That was the missing half: it could understand the image in detail and still not produce one,
+  so the client stayed its origin regardless. Sector checksums are recovered from the image
+  rather than hardcoded, because the size the game checksums over follows `sizeof(SaveBlock1)`
+  and would otherwise break on any future change to that struct; the recovery is then proved on
+  each image by rewriting it unchanged and requiring byte-identical output before any real write
+  is attempted.
+
+  **Still to do:** the client currently reports progress *by uploading the whole image*, so
+  retiring the upload needs structured events for money, items and party in its place, emitted
+  client-side and applied server-side through the authoring path above. The server half of that
+  is built and tested; the client half is not.
+
+  And the honest limit: even finished, retiring the upload stops the client *choosing the format*
+  it reports in, while the client still computes the contents. Real narrowing of the attack
+  surface, not the end of it. Parsing continues, because each parsed field is one the server can
+  check rather than merely carry -- and checking is what the headless engine below finishes.
 - **Headless engine.** Running the game's logic server-side. This is the only thing that makes
   a *careful* forgery impossible rather than merely hard, and it is a large piece of work.
 
