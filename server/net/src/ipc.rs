@@ -82,14 +82,16 @@ impl GameLink {
         // faster than the game could boot -- waits on the connecting screen forever.
         {
             let latched = self.latched.lock().await;
-            // Profile first: the menu reads the save summary as soon as it sees ONLINE.
+            // The profile is deliberately NOT replayed, and this was a real bug rather than
+            // caution. It is not merely a stale badge count: it carries the position the
+            // client adopts, and the save it must agree with arrives on a separate stream
+            // read by a separate task. So the save could finish first and the client would
+            // adopt the position from whenever this sidecar last signed in -- warping the
+            // player to a map they left hours ago, and freezing there, because the rest of
+            // the load path had agreed on somewhere else.
             //
-            // Safe to replay where the save is not: it is a small whole value that the
-            // fresh one replaces outright, so the worst case is the sign-in screen showing
-            // a slightly old badge count for the few milliseconds before the resync lands.
-            if let Some(profile) = latched.profile.as_ref() {
-                let _ = tx.try_send(profile.clone());
-            }
+            // A game that attaches late asks for the current profile with the same Resync
+            // that fetches its save, which is the only copy of either it should act on.
             if let Some(status) = latched.status.as_ref() {
                 let _ = tx.try_send(status.clone());
             }

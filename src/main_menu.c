@@ -769,10 +769,17 @@ static void Task_PokePlanetConnect(u8 taskId)
         // has already written it into the flash mirror. The game read the local save at boot,
         // long before any of this, so reload from what just arrived: after this the player is
         // continuing the character the server holds rather than whatever is on this machine.
-        if (Net_TakeServerSave())
-        {
-            struct NetProfile profile;
+        // Both, or neither.
+        //
+        // The save and the profile describe the same character and arrive by different
+        // routes -- the profile on the control stream, the save on a stream of its own read
+        // by a separate task -- so one can be ready while the other is not. Taking the save
+        // and continuing without the profile would put the player wherever the save image
+        // says, which is the position the server has already decided is not authoritative.
+        struct NetProfile profile;
 
+        if (Net_HasServerSave() && Net_GetProfile(&profile) && Net_TakeServerSave())
+        {
             ReloadSave();
             gSaveFileStatus = SAVE_STATUS_OK;
 
@@ -781,7 +788,6 @@ static void Task_PokePlanetConnect(u8 taskId)
             // one of them has to win; the server is the one everyone else agrees with, and
             // letting the save win is what had the client and the server correcting each
             // other ten times a second the moment the player appeared.
-            if (Net_GetProfile(&profile))
             {
                 // The server holds runtime coordinates, which is what the client reports
                 // and what every other player is drawn at. SaveBlock1's own position is in
