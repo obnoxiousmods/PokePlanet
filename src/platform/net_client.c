@@ -57,6 +57,7 @@
 #define MSG_BATTLE_ENDED    0x8A
 #define MSG_HELLO           0x8B
 #define MSG_MONEY           0x8C
+#define MSG_ITEM            0x8D
 
 // Lives in the SDL backend, like the sidecar port beside it.
 extern const char *Platform_GetInstanceToken(void);
@@ -1088,6 +1089,22 @@ void Net_SendMoney(u32 amount)
     body[2] = (u8)((amount >> 8) & 0xFF);
     body[3] = (u8)((amount >> 16) & 0xFF);
     body[4] = (u8)((amount >> 24) & 0xFF);
+    Enqueue(body, sizeof(body));
+}
+
+void Net_SendItem(u8 pocket, u16 item, u16 quantity)
+{
+    u8 body[6];
+
+    if (!sInitialised)
+        return;
+
+    body[0] = MSG_ITEM;
+    body[1] = pocket;
+    body[2] = (u8)(item & 0xFF);
+    body[3] = (u8)(item >> 8);
+    body[4] = (u8)(quantity & 0xFF);
+    body[5] = (u8)(quantity >> 8);
     Enqueue(body, sizeof(body));
 }
 

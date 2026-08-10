@@ -484,6 +484,57 @@ pub fn with_money(state: &SaveState, amount: u32) -> Vec<u8> {
     block1
 }
 
+/// A copy of this save's SaveBlock1 with one item set to `quantity` in `pocket`.
+///
+/// A quantity of zero clears the slot, which is how the game empties one -- an item at zero
+/// still occupying a slot would show up in the bag as a ghost entry.
+///
+/// Returns None when the pocket does not exist or is full, rather than dropping the change
+/// silently. A player whose bag is full should be told no by the game before it ever reports,
+/// so reaching that here means the two disagree, and guessing which is right is how saves get
+/// quietly wrong.
+pub fn with_item(
+    state: &SaveState,
+    pocket: u8,
+    item: u16,
+    quantity: u16,
+) -> Option<Vec<u8>> {
+    let (at, slots) = *BAG_POCKETS.get(pocket as usize)?;
+    let mut block1 = state.block1.clone();
+
+    let mut empty = None;
+    for slot in 0..slots {
+        let off = at + slot * 4;
+        let raw = block1.get(off..off + 4)?;
+        let here = u16::from_le_bytes([raw[0], raw[1]]);
+
+        if here == item {
+            return Some(write_slot(block1, off, item, quantity, state.encryption_key));
+        }
+        if here == 0 && empty.is_none() {
+            empty = Some(off);
+        }
+    }
+
+    // Nothing to do: removing an item that is not there is already the state asked for.
+    if quantity == 0 {
+        return Some(block1);
+    }
+
+    let off = empty?;
+    block1 = write_slot(block1, off, item, quantity, state.encryption_key);
+    Some(block1)
+}
+
+fn write_slot(mut block1: Vec<u8>, off: usize, item: u16, quantity: u16, key: u32) -> Vec<u8> {
+    let (item, quantity) = if quantity == 0 { (0, 0) } else { (item, quantity) };
+    block1[off..off + 2].copy_from_slice(&item.to_le_bytes());
+    // Quantities carry the low half of the same key as money, per GetBagItemQuantity.
+    let hidden = quantity ^ (key as u16);
+    block1[off + 2..off + 4].copy_from_slice(&hidden.to_le_bytes());
+    block1
+}
+
 /// The game's own checksum: sum of the data as little-endian u32s, folded to sixteen bits.
 ///
 /// Mirrors CalculateChecksum in src/save.c.
@@ -897,6 +948,66 @@ mod tests {
         assert!(
             new.impossible().is_none(),
             "a normal amount must pass, otherwise the rule catches nothing in particular"
+        );
+    }
+
+    /// A reported item lands in the pocket it was reported for, at the count reported.
+    #[test]
+    fn reported_items_are_written_where_they_belong() {
+        let mut image = image_with(0, 1, &[0xFF], &[3], 100);
+        sign(&mut image, 0, 2000);
+        let old = parse(&image).expect("readable");
+        assert!(old.bag.is_empty(), "the bag must start empty or this proves nothing");
+
+        // Key items are second in the save even though POCKET_KEY_ITEMS is 5. Writing to
+        // pocket 1 and reading it back as pocket 1 is what pins that down: if the write and
+        // the read disagreed about the order, an item would surface in the wrong pocket.
+        let block1 = with_item(&old, 1, 260, 1).expect("a free slot exists");
+        let new = parse(&reauthor(&image, &block1).expect("authoring")).expect("parses");
+        assert_eq!(new.bag, vec![(1u8, 260u16, 1u16)], "one key item, in the key item pocket");
+
+        // The offsets are far enough apart that a pocket mix-up shows up as a different index.
+        let block1 = with_item(&old, 4, 133, 7).expect("a free slot exists");
+        let new = parse(&reauthor(&image, &block1).expect("authoring")).expect("parses");
+        assert_eq!(new.bag, vec![(4u8, 133u16, 7u16)], "berries land in the berry pocket");
+
+        // Adding to an existing entry sets the count rather than making a second slot.
+        let block1 = with_item(&new, 4, 133, 12).expect("the slot is already there");
+        let again = parse(&reauthor(&image, &block1).expect("authoring")).expect("parses");
+        assert_eq!(again.bag, vec![(4u8, 133u16, 12u16)], "one slot, updated");
+
+        // Zero clears the slot entirely: an item at zero still occupying one would show up in
+        // the bag as an entry the player cannot use and cannot get rid of.
+        let block1 = with_item(&again, 4, 133, 0).expect("clearing works");
+        let gone = parse(&reauthor(&image, &block1).expect("authoring")).expect("parses");
+        assert!(gone.bag.is_empty(), "a count of zero should leave no slot behind");
+
+        // A pocket that does not exist is refused rather than written somewhere convenient.
+        assert!(with_item(&old, 9, 1, 1).is_none(), "there is no ninth pocket");
+    }
+
+    /// An over-full slot is caught after being written, by the same rule that catches it in an
+    /// uploaded save.
+    #[test]
+    fn a_reported_item_above_the_cap_is_still_refused() {
+        let mut image = image_with(0, 1, &[0xFF], &[3], 100);
+        sign(&mut image, 0, 2000);
+        let old = parse(&image).expect("readable");
+
+        let over = with_item(&old, 0, 13, MAX_ITEM_QUANTITY + 1).expect("writes");
+        let over = parse(&reauthor(&image, &over).expect("authoring")).expect("parses");
+        assert!(
+            over.impossible().is_some(),
+            "more than a slot can hold must be caught however it arrived"
+        );
+
+        // Negative control: the largest legitimate amount must pass, or the check above is
+        // just rejecting everything and proving nothing about the cap.
+        let at_cap = with_item(&old, 0, 13, MAX_ITEM_QUANTITY).expect("writes");
+        let at_cap = parse(&reauthor(&image, &at_cap).expect("authoring")).expect("parses");
+        assert!(
+            at_cap.impossible().is_none(),
+            "a full but legal slot must be accepted"
         );
     }
 

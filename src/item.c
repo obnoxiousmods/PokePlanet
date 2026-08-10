@@ -237,7 +237,7 @@ bool8 CheckBagHasSpace(u16 itemId, u16 count)
     return TRUE;
 }
 
-bool8 AddBagItem(u16 itemId, u16 count)
+static bool8 AddBagItem_Inner(u16 itemId, u16 count)
 {
     MmoAutosave_NoteChange();
     u8 i;
@@ -345,7 +345,7 @@ bool8 AddBagItem(u16 itemId, u16 count)
     }
 }
 
-bool8 RemoveBagItem(u16 itemId, u16 count)
+static bool8 RemoveBagItem_Inner(u16 itemId, u16 count)
 {
     MmoAutosave_NoteChange();
     u8 i;
@@ -686,6 +686,57 @@ u16 CountTotalItemQuantityInBag(u16 itemId)
     }
 
     return ownedCount;
+}
+
+// The save lays its pockets out in a different order from the POCKET_* constants: key items
+// come second in SaveBlock1 but are numbered last. Mapping here rather than on the server so
+// the one place that knows the game's own layout is the one compiled against it -- a server
+// guessing this wrong would file items into the wrong pocket, which looks like losing them.
+static s8 BagPocketIndex(u16 itemId)
+{
+    switch (GetItemPocket(itemId))
+    {
+    case POCKET_ITEMS:      return 0;
+    case POCKET_KEY_ITEMS:  return 1;
+    case POCKET_POKE_BALLS: return 2;
+    case POCKET_TM_HM:      return 3;
+    case POCKET_BERRIES:    return 4;
+    default:                return -1;
+    }
+}
+
+// Report the count the bag now holds, not the amount that moved.
+//
+// A delta that arrives twice, or not at all, leaves the bag wrong in a way nothing afterwards
+// can notice. A count that arrives twice is the same truth said twice.
+static void ReportBagItem(u16 itemId)
+{
+    s8 pocket = BagPocketIndex(itemId);
+
+    if (pocket >= 0)
+        Net_SendItem((u8)pocket, itemId, CountTotalItemQuantityInBag(itemId));
+}
+
+bool8 AddBagItem(u16 itemId, u16 count)
+{
+    bool8 ok = AddBagItem_Inner(itemId, count);
+
+    // Only on success: a refused add changed nothing, and reporting it would tell the server
+    // a quantity the player does not have.
+    if (ok)
+        ReportBagItem(itemId);
+
+    return ok;
+}
+
+bool8 RemoveBagItem(u16 itemId, u16 count)
+{
+    bool8 ok = RemoveBagItem_Inner(itemId, count);
+
+    if (ok)
+        ReportBagItem(itemId);
+
+    return ok;
 }
 
 static bool8 CheckPyramidBagHasItem(u16 itemId, u16 count)

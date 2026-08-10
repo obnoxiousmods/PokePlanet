@@ -75,6 +75,8 @@ pub const MSG_BATTLE_ENDED: u8 = 0x8A;
 pub const MSG_HELLO: u8 = 0x8B;
 /// Money changed, reported as a value rather than as a whole save image.
 pub const MSG_MONEY: u8 = 0x8C;
+/// One bag slot changed, reported as a value rather than as a whole save image.
+pub const MSG_ITEM: u8 = 0x8D;
 
 /// Mirrors `enum NetAuthState` in the C header.
 pub const AUTH_OFFLINE: u8 = 0;
@@ -330,6 +332,12 @@ pub enum GameMessage {
     /// Reporting a field directly lets the server write that field into its own copy, so for
     /// money specifically the upload stops being the thing that carries it.
     MoneyChanged { amount: u32 },
+    /// This character now holds `quantity` of `item`, in `pocket`.
+    ///
+    /// A count rather than a delta, deliberately. A delta that arrives twice, or not at all,
+    /// leaves the bag wrong in a way nothing afterwards can detect; a count that arrives twice
+    /// is simply the same truth said twice.
+    ItemChanged { pocket: u8, item: u16, quantity: u16 },
     /// The game introducing itself, naming the sidecar it means to reach.
     Hello { instance: String },
     /// A game process connected to the sidecar.
@@ -346,6 +354,16 @@ pub fn decode_game_message(body: &[u8]) -> anyhow::Result<GameMessage> {
         .ok_or_else(|| anyhow::anyhow!("empty IPC frame"))?;
     match kind {
         MSG_BATTLE_ENDED => Ok(GameMessage::BattleEnded),
+        MSG_ITEM => {
+            let b = rest
+                .get(..5)
+                .ok_or_else(|| anyhow::anyhow!("short item message"))?;
+            Ok(GameMessage::ItemChanged {
+                pocket: b[0],
+                item: u16::from_le_bytes([b[1], b[2]]),
+                quantity: u16::from_le_bytes([b[3], b[4]]),
+            })
+        }
         MSG_MONEY => {
             let b = rest
                 .get(..4)

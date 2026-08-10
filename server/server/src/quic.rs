@@ -418,6 +418,53 @@ async fn control_loop(
                         .await;
                 }
             }
+            ClientControl::ItemChanged { pocket, item, quantity } => {
+                // Same shape as money: build the save the report implies, then judge it exactly
+                // as an uploaded one. impossible() already knows the per-slot ceiling, so an
+                // over-full slot is refused here by the rule that refuses it there.
+                let Ok(Some(stored)) = db::load_save(&server.db, character_id).await else {
+                    tracing::warn!(player = player_id, "item reported with no save to apply it to");
+                    continue;
+                };
+                let Some(old) = crate::save_parse::parse(&stored) else {
+                    tracing::warn!(player = player_id, "item reported against an unreadable save");
+                    continue;
+                };
+                let Some(block1) = crate::save_parse::with_item(&old, pocket, item, quantity)
+                else {
+                    tracing::warn!(
+                        player = player_id, pocket, item,
+                        "no room for a reported item, or no such pocket"
+                    );
+                    continue;
+                };
+                let Some(candidate) = crate::save_parse::reauthor(&stored, &block1) else {
+                    tracing::warn!(player = player_id, "could not rebuild the save to set an item");
+                    continue;
+                };
+                let Some(new) = crate::save_parse::parse(&candidate) else {
+                    tracing::error!(player = player_id, "rebuilt a save that will not parse");
+                    continue;
+                };
+
+                if let Some(reason) = new
+                    .impossible()
+                    .or_else(|| crate::save_parse::regressed(&old, &new))
+                {
+                    tracing::warn!(player = player_id, %reason, "refusing a reported item");
+                    continue;
+                }
+
+                db::store_save(&server.db, character_id, &candidate).await?;
+                if let Err(e) = db::store_inventory_and_party(
+                    &server.db, character_id, &new.bag, &new.party,
+                )
+                .await
+                {
+                    tracing::warn!(error = %e, "could not store the bag");
+                }
+                tracing::info!(player = player_id, item, quantity, "item set by report");
+            }
             ClientControl::MoneyChanged { amount } => {
                 // The server writes this into its own copy of the save rather than waiting to
                 // be handed a new image. That is the whole point: for money, the upload is no

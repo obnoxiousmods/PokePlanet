@@ -72,6 +72,10 @@ pub enum ClientControl {
     /// positional, so inserting one anywhere else silently changes what every older client's
     /// messages decode as.
     MoneyChanged { amount: u32 },
+    /// This character now holds `quantity` of `item`, in `pocket`.
+    ///
+    /// Appended so the existing variant numbering does not shift.
+    ItemChanged { pocket: u8, item: u16, quantity: u16 },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
