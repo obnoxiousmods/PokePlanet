@@ -144,10 +144,16 @@ Refused server-side, each verified against real data with a negative control:
   each image by rewriting it unchanged and requiring byte-identical output before any real write
   is attempted.
 
-  **Still to do:** the client currently reports progress *by uploading the whole image*, so
-  retiring the upload needs structured events for money, items and party in its place, emitted
-  client-side and applied server-side through the authoring path above. The server half of that
-  is built and tested; the client half is not.
+  **Money now travels on its own** -- the first field to do so. The game reports the value from
+  `SetMoney` (the one place `AddMoney` and `RemoveMoney` both end up, and so the only place that
+  sees every change), and the server writes it into its own copy through the authoring path.
+  Reported values get exactly the checks an uploaded save gets: same caps, same
+  no-going-backwards rule, same rate ceiling. A second, laxer set of rules for the direct path
+  would just make the direct path the way to cheat.
+
+  **Still to do:** the same treatment for items, party and the rest. Each is the same shape as
+  money -- find the chokepoint, report the value, write and re-check server-side -- and the
+  upload can only be switched off once nothing still depends on it to carry a field.
 
   And the honest limit: even finished, retiring the upload stops the client *choosing the format*
   it reports in, while the client still computes the contents. Real narrowing of the attack
