@@ -157,11 +157,19 @@ Refused server-side, each verified against real data with a negative control:
   differently from the `POCKET_*` constants and a server guessing that wrong would file items
   into the wrong pocket, which to a player is indistinguishable from losing them.
 
-  **Still to do:** the party, and the remaining fields after it. Each is the same shape --
-  find the chokepoint, report the value, write and re-check server-side. The upload can only be
-  switched off once nothing still depends on it to carry a field, and the party is the largest
-  of those: six Pokemon of a hundred bytes each, with encrypted substructures whose order
-  depends on personality, so it is the one most worth doing carefully rather than quickly.
+  **The party travels on its own too**, as the game's own bytes rather than as fields. Each
+  Pokemon carries four substructures encrypted with `personality ^ ot_id` and ordered by
+  `personality % 24`; re-encoding them server-side means reimplementing both, and that decode has
+  already produced one confidently wrong answer in this codebase. Carrying the bytes cannot get
+  it wrong and gives up nothing -- it is strictly less than the whole save and meets the same
+  level, experience and EV checks. Reported by hashing the party each tick, because unlike money
+  and items there is no chokepoint: a Pokemon changes from levelling, evolving, learning a move,
+  taking damage, being caught, healed or swapped with the PC.
+
+  **Still to do:** flags, variables, position, the Pokedex and the rest still reach the server
+  only by upload. Money, items and the party are the three that move constantly during play, so
+  the upload is no longer what carries the fast-moving state -- but it is still what carries
+  everything else, and it cannot be switched off until nothing depends on it at all.
 
   And the honest limit: even finished, retiring the upload stops the client *choosing the format*
   it reports in, while the client still computes the contents. Real narrowing of the attack
