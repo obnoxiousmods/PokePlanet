@@ -44,10 +44,7 @@ pub const MAX_COINS: u16 = 9_999;
 
 /// Caps the game enforces on a Pokemon, from src/pokemon.c and include/constants/pokemon.h.
 pub const MAX_LEVEL: u8 = 100;
-/// Not yet enforced -- see `impossible` for why.
-#[allow(dead_code)]
 pub const MAX_EV_PER_STAT: u16 = 255;
-#[allow(dead_code)]
 pub const MAX_EV_TOTAL: u16 = 510;
 
 /// Offsets within SaveBlock1. From the annotated struct in include/global.h.
@@ -58,6 +55,8 @@ const MON_SIZE: usize = 100;
 const MON_OFFSET_LEVEL: usize = 0x54;
 /// Within a `struct BoxPokemon`: where the four obfuscated substructs begin.
 const BOX_OFFSET_SECURE: usize = 32;
+/// And where the checksum over those substructs is stored.
+const BOX_OFFSET_CHECKSUM: usize = 28;
 
 /// Which physical slot each substruct type occupies, chosen by personality % 24.
 ///
@@ -90,6 +89,13 @@ pub struct PartyMon {
     pub experience: u32,
     /// HP, Attack, Defence, Speed, Sp. Attack, Sp. Defence.
     pub evs: [u8; 6],
+    /// Whether the decrypted substructs add up to the checksum stored alongside them.
+    ///
+    /// This is what says the decode worked. The game writes the sum of the plain substruct
+    /// bytes into the record, so an exclusive-or with the wrong key produces bytes that sum
+    /// to something else with overwhelming probability -- there is no reading of a wrong
+    /// key that quietly agrees. The game itself treats a mismatch as a bad egg.
+    pub checksum_ok: bool,
 }
 
 /// Pull one `struct Pokemon` apart.
@@ -108,6 +114,14 @@ fn read_mon(bytes: &[u8]) -> Option<PartyMon> {
         let word = u32::from_le_bytes(chunk.try_into().ok()?) ^ key;
         plain[i * 4..i * 4 + 4].copy_from_slice(&word.to_le_bytes());
     }
+
+    // The game's own sum: every decrypted substruct byte, as 16-bit words.
+    let computed: u16 = plain
+        .chunks_exact(2)
+        .fold(0u16, |acc, c| acc.wrapping_add(u16::from_le_bytes([c[0], c[1]])));
+    let stored = u16::from_le_bytes(
+        bytes.get(BOX_OFFSET_CHECKSUM..BOX_OFFSET_CHECKSUM + 2)?.try_into().ok()?,
+    );
 
     let order = SUBSTRUCT_ORDER[(personality % 24) as usize];
     let growth = order[0] * 12;
@@ -129,6 +143,7 @@ fn read_mon(bytes: &[u8]) -> Option<PartyMon> {
         level: *bytes.get(MON_OFFSET_LEVEL)?,
         experience,
         evs,
+        checksum_ok: computed == stored,
     })
 }
 
@@ -186,24 +201,43 @@ impl SaveState {
             ));
         }
 
-        // Level only, and deliberately not the rest of the party yet.
-        //
-        // Level is read straight out of `struct Pokemon` at an offset checked against the
-        // running game: it reported 5 for a save this parser also reads as 5, so both the
-        // party offset and the hundred-byte stride are known good.
-        //
-        // Species, experience and effort points come through the substruct decode instead --
-        // an exclusive-or and a shuffle chosen by personality -- and that has *not* been
-        // confirmed against the game. A wrong decode there yields plausible-looking numbers
-        // rather than an obvious failure, and refusing a save on the strength of it would
-        // lock honest players out over the server's own arithmetic. They are parsed and
-        // recorded so the decode can be checked against real data; they are not yet grounds
-        // for refusing anything.
         for (i, mon) in self.party.iter().enumerate() {
+            // Level is read straight out of `struct Pokemon`, at an offset confirmed against
+            // the running game: it reported level 5 for a save this parser also reads as 5.
             if mon.level > MAX_LEVEL {
                 return Some(format!(
                     "party slot {} is level {}, above the maximum of {}",
                     i + 1, mon.level, MAX_LEVEL
+                ));
+            }
+
+            // Everything below came through the substruct decode, so it is only trusted on
+            // a record whose decrypted bytes add up to the checksum stored beside them. A
+            // wrong decode yields plausible-looking numbers rather than an obvious failure,
+            // and refusing a save on the strength of one would lock an honest player out
+            // over the server's own arithmetic. The checksum is what rules that out.
+            //
+            // A record that does not verify is left alone rather than refused: the game
+            // treats one as a bad egg, which is already its own punishment, and a save can
+            // hold one through corruption rather than cheating.
+            if !mon.checksum_ok {
+                continue;
+            }
+
+            // Both the per-stat cap and the total, because a save can break one without the
+            // other: six stats of 85 is a legal total made of legal parts, and one stat of
+            // 510 is a legal total made of an illegal part.
+            let total: u16 = mon.evs.iter().map(|e| *e as u16).sum();
+            if total > MAX_EV_TOTAL {
+                return Some(format!(
+                    "party slot {} has {} effort points, above the maximum of {}",
+                    i + 1, total, MAX_EV_TOTAL
+                ));
+            }
+            if let Some(ev) = mon.evs.iter().find(|e| **e as u16 > MAX_EV_PER_STAT) {
+                return Some(format!(
+                    "party slot {} has {} effort points in one stat, above the maximum of {}",
+                    i + 1, ev, MAX_EV_PER_STAT
                 ));
             }
         }
@@ -423,6 +457,17 @@ mod tests {
 
         assert_eq!(state.flags.len(), FLAG_BYTES);
         assert_eq!(state.vars.len(), VAR_COUNT);
+
+        // Every Pokemon in a save the game wrote should decode to bytes that agree with
+        // its own checksum. This is what proves the exclusive-or and the personality shuffle
+        // are right, without needing to ask the game for a second opinion.
+        for (i, mon) in state.party.iter().enumerate() {
+            assert!(
+                mon.checksum_ok,
+                "party slot {} did not verify: the substruct decode is wrong (species {}, level {})",
+                i + 1, mon.species, mon.level
+            );
+        }
 
         if let Ok(expected) = std::env::var("POKEPLANET_SAVE_MONEY") {
             let expected: u32 = expected.parse().expect("money should be a number");
