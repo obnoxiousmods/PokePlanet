@@ -418,6 +418,54 @@ async fn control_loop(
                         .await;
                 }
             }
+            ClientControl::MoneyChanged { amount } => {
+                // The server writes this into its own copy of the save rather than waiting to
+                // be handed a new image. That is the whole point: for money, the upload is no
+                // longer what carries the value.
+                //
+                // Reported values are not trusted any further than uploaded ones. The candidate
+                // save is built, then run through exactly the checks an upload gets -- the same
+                // caps, the same no-going-backwards rule, the same rate ceiling. Writing a
+                // second, laxer set of rules for the direct path would make the direct path the
+                // way to cheat.
+                let Ok(Some(stored)) = db::load_save(&server.db, character_id).await else {
+                    tracing::warn!(player = player_id, "money reported with no save to apply it to");
+                    continue;
+                };
+                let Some(old) = crate::save_parse::parse(&stored) else {
+                    tracing::warn!(player = player_id, "money reported against an unreadable save");
+                    continue;
+                };
+
+                let block1 = crate::save_parse::with_money(&old, amount);
+                let Some(candidate) = crate::save_parse::reauthor(&stored, &block1) else {
+                    // reauthor proves it can rebuild this image faithfully before writing to
+                    // it, so declining here means the save was not one it could author safely.
+                    tracing::warn!(player = player_id, "could not rebuild the save to set money");
+                    continue;
+                };
+                let Some(new) = crate::save_parse::parse(&candidate) else {
+                    tracing::error!(player = player_id, "rebuilt a save that will not parse");
+                    continue;
+                };
+
+                if let Some(reason) = new
+                    .impossible()
+                    .or_else(|| crate::save_parse::regressed(&old, &new))
+                    .or_else(|| {
+                        last_upload.and_then(|t| {
+                            crate::rates::gained_too_fast(&old, &new, &server.rates, t.elapsed())
+                        })
+                    })
+                {
+                    tracing::warn!(player = player_id, %reason, "refusing reported money");
+                    continue;
+                }
+
+                last_upload = Some(std::time::Instant::now());
+                db::store_save(&server.db, character_id, &candidate).await?;
+                tracing::info!(player = player_id, money = new.money(), "money set by report");
+            }
             ClientControl::SaveUpload { offset, total, bytes } => {
                 // A save is never larger than the flash image the game actually has, so a
                 // client claiming otherwise is either broken or probing; refuse rather than

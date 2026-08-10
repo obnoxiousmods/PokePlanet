@@ -469,6 +469,21 @@ fn saveblock1(image: &[u8], slot: usize) -> Option<Vec<u8>> {
     Some(out)
 }
 
+/// A copy of this save's SaveBlock1 with money set to `amount`.
+///
+/// Money is stored XOR'd with the save's own key, so setting it means encoding it the way the
+/// game would rather than writing the number down. Returned as a block for the caller to hand
+/// to `reauthor`, so that producing a candidate and accepting it stay separate steps -- the
+/// value still has to survive the same checks an uploaded save does.
+pub fn with_money(state: &SaveState, amount: u32) -> Vec<u8> {
+    let mut block1 = state.block1.clone();
+    if block1.len() >= OFFSET_MONEY + 4 {
+        let raw = amount ^ state.encryption_key;
+        block1[OFFSET_MONEY..OFFSET_MONEY + 4].copy_from_slice(&raw.to_le_bytes());
+    }
+    block1
+}
+
 /// The game's own checksum: sum of the data as little-endian u32s, folded to sixteen bits.
 ///
 /// Mirrors CalculateChecksum in src/save.c.
@@ -844,6 +859,44 @@ mod tests {
         assert!(
             reauthor(&broken, &block1).is_none(),
             "an unrecoverable size must stop authoring, not produce a corrupt save"
+        );
+    }
+
+    /// A reported money value lands in the save as that value, and nothing else moves.
+    ///
+    /// This is the path that replaces the upload for money: the server builds the save itself
+    /// from a number the client reported, instead of being handed an image to inspect.
+    #[test]
+    fn reported_money_is_written_and_still_checkable() {
+        let mut image = image_with(0, 1, &[0xFF, 0x0F], &[7, 9], 1234);
+        poke(&mut image, 0, 0x2BE0, 0xA7);
+        sign(&mut image, 0, 2000);
+
+        let old = parse(&image).expect("readable");
+        assert_eq!(old.money(), 1234, "the starting point must not already be the answer");
+
+        let candidate =
+            reauthor(&image, &with_money(&old, 8000)).expect("authoring should succeed");
+        let new = parse(&candidate).expect("the rebuilt save must parse");
+
+        assert_eq!(new.money(), 8000, "the reported value should be what the save now holds");
+        assert_eq!(new.flags, old.flags, "nothing else should move");
+        assert_eq!(new.block1[0x2BE0], 0xA7, "including what nothing parses");
+
+        // The point of building a candidate rather than trusting the number: it can still be
+        // judged. A wildly high report is refused by the same rule an uploaded save would be.
+        let absurd = reauthor(&image, &with_money(&old, 9_999_999)).expect("authoring");
+        let absurd = parse(&absurd).expect("parses");
+        assert!(
+            absurd.impossible().is_some(),
+            "a value above what the game clamps to must still be caught after being written"
+        );
+
+        // Negative control: the ordinary value must NOT trip that rule, or the check above
+        // would be passing for the trivial reason that everything looks impossible.
+        assert!(
+            new.impossible().is_none(),
+            "a normal amount must pass, otherwise the rule catches nothing in particular"
         );
     }
 

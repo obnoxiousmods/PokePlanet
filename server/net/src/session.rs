@@ -429,6 +429,13 @@ impl Session {
                         wire::GameMessage::LinkBlock { bytes } => {
                             write_control(&mut send, &ClientControl::LinkBlock { bytes }).await?;
                         }
+                        wire::GameMessage::MoneyChanged { amount } => {
+                            write_control(
+                                &mut send,
+                                &ClientControl::MoneyChanged { amount },
+                            )
+                            .await?;
+                        }
                         wire::GameMessage::BattleEnded => {
                             write_control(&mut send, &ClientControl::BattleEnded).await?;
                         }

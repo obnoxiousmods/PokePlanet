@@ -204,6 +204,7 @@ bool8 Net_PopLinkBlock(struct NetLinkBlock *out);
 
 // Tell the server the battle is over, so it stops forwarding blocks to the opponent.
 void Net_SendBattleEnded(void);
+void Net_SendMoney(u32 amount);
 
 // The server's gameplay rates, as hundredths of the original game: 100 is Emerald exactly,
 // 250 is two and a half times, 25 is a quarter.

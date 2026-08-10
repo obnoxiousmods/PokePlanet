@@ -66,6 +66,12 @@ pub enum ClientControl {
     /// Without it the server only ever unseats someone when they disconnect, so blocks from
     /// a finished battle keep being forwarded to an opponent who has walked away from it.
     BattleEnded,
+    /// This character's money is now this.
+    ///
+    /// Appended so the existing variant numbering does not shift: bincode discriminants are
+    /// positional, so inserting one anywhere else silently changes what every older client's
+    /// messages decode as.
+    MoneyChanged { amount: u32 },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

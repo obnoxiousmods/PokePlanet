@@ -73,6 +73,8 @@ pub const MSG_BATTLE_ENDED: u8 = 0x8A;
 /// can end up signed in as somebody else's character. This is what makes the pairing
 /// deliberate rather than incidental.
 pub const MSG_HELLO: u8 = 0x8B;
+/// Money changed, reported as a value rather than as a whole save image.
+pub const MSG_MONEY: u8 = 0x8C;
 
 /// Mirrors `enum NetAuthState` in the C header.
 pub const AUTH_OFFLINE: u8 = 0;
@@ -320,6 +322,14 @@ pub enum GameMessage {
     LinkBlock { bytes: Vec<u8> },
     /// The battle this player was in has finished.
     BattleEnded,
+    /// This character's money is now this.
+    ///
+    /// The first field reported as itself instead of by uploading the entire save. The save
+    /// image is how everything travels today, which means the client decides the *format* the
+    /// server reads its state out of, and the server can only ever audit what it is handed.
+    /// Reporting a field directly lets the server write that field into its own copy, so for
+    /// money specifically the upload stops being the thing that carries it.
+    MoneyChanged { amount: u32 },
     /// The game introducing itself, naming the sidecar it means to reach.
     Hello { instance: String },
     /// A game process connected to the sidecar.
@@ -336,6 +346,14 @@ pub fn decode_game_message(body: &[u8]) -> anyhow::Result<GameMessage> {
         .ok_or_else(|| anyhow::anyhow!("empty IPC frame"))?;
     match kind {
         MSG_BATTLE_ENDED => Ok(GameMessage::BattleEnded),
+        MSG_MONEY => {
+            let b = rest
+                .get(..4)
+                .ok_or_else(|| anyhow::anyhow!("short money message"))?;
+            Ok(GameMessage::MoneyChanged {
+                amount: u32::from_le_bytes([b[0], b[1], b[2], b[3]]),
+            })
+        }
         MSG_HELLO => Ok(GameMessage::Hello {
             instance: String::from_utf8_lossy(rest)
                 .trim_end_matches('\0')

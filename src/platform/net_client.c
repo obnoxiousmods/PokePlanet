@@ -56,6 +56,7 @@
 #define MSG_LINK_BLOCK_SEND 0x89
 #define MSG_BATTLE_ENDED    0x8A
 #define MSG_HELLO           0x8B
+#define MSG_MONEY           0x8C
 
 // Lives in the SDL backend, like the sidecar port beside it.
 extern const char *Platform_GetInstanceToken(void);
@@ -1063,6 +1064,31 @@ void Net_SendLinkBlock(const void *src, u16 size)
     body[2] = (u8)(size >> 8);
     memcpy(body + 3, src, size);
     Enqueue(body, 3 + size);
+}
+
+void Net_SendMoney(u32 amount)
+{
+    // Only when it actually changes. Money is read far more often than it is spent, and the
+    // server does a database write and a save rebuild per report, so sending it every frame
+    // would turn a wallet into a workload.
+    static u32 sLast;
+    static bool8 sHaveSent;
+    u8 body[5];
+
+    if (!sInitialised)
+        return;
+    if (sHaveSent && amount == sLast)
+        return;
+
+    sLast = amount;
+    sHaveSent = TRUE;
+
+    body[0] = MSG_MONEY;
+    body[1] = (u8)(amount & 0xFF);
+    body[2] = (u8)((amount >> 8) & 0xFF);
+    body[3] = (u8)((amount >> 16) & 0xFF);
+    body[4] = (u8)((amount >> 24) & 0xFF);
+    Enqueue(body, sizeof(body));
 }
 
 void Net_SendBattleEnded(void)

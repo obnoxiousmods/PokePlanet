@@ -80,6 +80,18 @@ void SetMoney(u32 *moneyPtr, u32 newValue)
 {
     MmoAutosave_NoteChange();
     *moneyPtr = gSaveBlock2Ptr->encryptionKey ^ newValue;
+
+    // Tell the server the value, not the whole save.
+    //
+    // Every path that changes money comes through here -- AddMoney and RemoveMoney both end
+    // with a call to it -- so this is the one place that has to report, and the only place
+    // that can do so without being sometimes wrong.
+    //
+    // Guarded on the pointer because this is also called for money that is not the player's:
+    // reporting a scratch copy as the character's balance would hand the server a number that
+    // never belonged to them.
+    if (moneyPtr == &gSaveBlock1Ptr->money)
+        Net_SendMoney(newValue);
 }
 
 bool8 IsEnoughMoney(u32 *moneyPtr, u32 cost)
