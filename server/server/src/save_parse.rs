@@ -47,6 +47,16 @@ pub const MAX_LEVEL: u8 = 100;
 pub const MAX_EV_PER_STAT: u16 = 255;
 pub const MAX_EV_TOTAL: u16 = 510;
 
+/// Experience bounds, read out of gExperienceTables in the compiled game rather than
+/// transcribed from the macros that generate it.
+///
+/// The six growth rates need, at level 100: 600000 erratic, 800000 fast, 1000000 medium
+/// fast, 1059860 medium slow, 1250000 slow, 1640000 fluctuating. Which curve a species uses
+/// is not known here, so only the two bounds that hold whatever it is are used -- no species
+/// can pass the highest, and none can reach level 100 below the lowest.
+pub const MAX_EXPERIENCE: u32 = 1_640_000;
+pub const MIN_EXPERIENCE_AT_MAX_LEVEL: u32 = 600_000;
+
 /// Offsets within SaveBlock1. From the annotated struct in include/global.h.
 const OFFSET_PARTY: usize = 0x238;
 const PARTY_SIZE: usize = 6;
@@ -299,6 +309,24 @@ impl SaveState {
             // hold one through corruption rather than cheating.
             if !mon.checksum_ok {
                 continue;
+            }
+
+            // Experience past what the slowest curve asks for level 100 belongs to no
+            // species in the game.
+            if mon.experience > MAX_EXPERIENCE {
+                return Some(format!(
+                    "party slot {} has {} experience, above the {} any species can hold",
+                    i + 1, mon.experience, MAX_EXPERIENCE
+                ));
+            }
+            // And a Pokemon at the maximum level must have earned at least what the fastest
+            // curve asks for it. This is what a level set by hand looks like: the level says
+            // one thing and the experience behind it says another.
+            if mon.level == MAX_LEVEL && mon.experience < MIN_EXPERIENCE_AT_MAX_LEVEL {
+                return Some(format!(
+                    "party slot {} is level {} on {} experience, below the {} it would need",
+                    i + 1, mon.level, mon.experience, MIN_EXPERIENCE_AT_MAX_LEVEL
+                ));
             }
 
             // Both the per-stat cap and the total, because a save can break one without the
