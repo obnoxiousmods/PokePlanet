@@ -122,15 +122,25 @@ Refused server-side, each verified against real data with a negative control:
   any random chance, reward, drop rate or price is tunable without a protocol change.
 
 ### Later
-- **Retire the save upload.** *Blocked on parsing coverage, not on effort.* The typed tables
-  hold flags, variables, money, coins, the bag and the party, and now the Pokedex and the sixty-four
-  game counters. SaveBlock1 holds roughly thirty more fields that nothing reads
-  yet: mail, the daycare, secret bases, contest winners, decorations, heal location, link
-  battle records, easy-chat phrases and the rest.
-  Retiring the image means rebuilding a save from the tables at sign-in, so every unparsed
-  field would come back as zero -- a player would keep their party and lose everything else,
-  permanently and without warning. The order has to be: parse the rest, run both side by side
-  through real play, compare, and only then stop accepting the image.
+- **Retire the save upload.** *No longer blocked on data loss; blocked on being worth doing.*
+  The typed tables hold flags, variables, money, coins, the bag, the party, the Pokedex, the
+  sixty-four game counters, berry trees and trainer rematches. SaveBlock1 holds roughly thirty
+  fields that nothing parses -- mail, the daycare, secret bases, contest winners, decorations,
+  heal location, link battle records, easy-chat phrases and the rest.
+
+  The server now keeps SaveBlock1 **whole**, alongside the parsed fields. That separates two
+  things that were tangled together: *understanding* a field, which is needed to validate it,
+  and *preserving* one, which is needed not to destroy it. Preservation is the lower bar, and it
+  is the one that governs whether retiring the image is safe. Rebuilding a save from parsed
+  tables alone would have returned every unparsed field as zero -- party kept, mail and secret
+  bases gone, permanently and without warning. Splicing the server's authoritative fields into
+  the preserved block cannot.
+
+  What remains is honest about its own value: retiring the upload stops the client *choosing the
+  format* it reports in, but the client still computes the contents. That is a real narrowing of
+  the attack surface and not the end of it. Parsing continues, because each parsed field is one
+  the server can check rather than merely carry -- and checking is what the headless engine below
+  finishes.
 - **Headless engine.** Running the game's logic server-side. This is the only thing that makes
   a *careful* forgery impossible rather than merely hard, and it is a large piece of work.
 
