@@ -94,6 +94,8 @@ struct NetState
     bool8 linked;
 
     u8 authState;
+    // Whether this session has ever reached ONLINE. See Net_WasOnline.
+    bool8 wasOnline;
     char playerName[NET_NAME_LEN];
     char loginUrl[NET_URL_LEN];
 
@@ -238,6 +240,8 @@ static void HandleStatus(const u8 *payload, u32 len)
 
     SDL_LockMutex(sNet.lock);
     sNet.authState = payload[0];
+    if (sNet.authState == NET_AUTH_ONLINE)
+        sNet.wasOnline = TRUE;
     CopyField(sNet.playerName, payload + 1, NET_NAME_LEN);
     CopyField(sNet.loginUrl, payload + 1 + NET_NAME_LEN, NET_URL_LEN);
     SDL_UnlockMutex(sNet.lock);
@@ -998,6 +1002,19 @@ void Net_SendBattleEnded(void)
 
     body[0] = MSG_BATTLE_ENDED;
     Enqueue(body, sizeof(body));
+}
+
+bool8 Net_WasOnline(void)
+{
+    bool8 was;
+
+    if (!sInitialised)
+        return FALSE;
+
+    SDL_LockMutex(sNet.lock);
+    was = sNet.wasOnline;
+    SDL_UnlockMutex(sNet.lock);
+    return was;
 }
 
 bool8 Net_PopLinkBlock(struct NetLinkBlock *out)

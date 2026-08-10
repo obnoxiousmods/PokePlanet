@@ -337,7 +337,12 @@ static void BuildNormalStartMenu(void)
     // itself whenever anything changes, so offering the option would be offering a
     // choice that does not exist -- and inviting the old habit of losing an afternoon
     // by forgetting. Offline play has no server to save to, so it keeps the option.
-    if (Net_GetAuthState() != NET_AUTH_ONLINE)
+    //
+    // Asked as "has this session ever signed in", not "is it signed in right now". The
+    // live state dips during a reconnect or a resync, and this menu is built once when it
+    // opens: catch it mid-dip and SAVE appears and stays there until the menu is closed.
+    // Whether the character belongs to the server is not something that should flicker.
+    if (!Net_WasOnline())
         AddStartMenuAction(MENU_ACTION_SAVE);
 
     AddStartMenuAction(MENU_ACTION_OPTION);

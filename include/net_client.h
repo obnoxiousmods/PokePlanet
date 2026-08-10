@@ -201,4 +201,12 @@ bool8 Net_PopLinkBlock(struct NetLinkBlock *out);
 // Tell the server the battle is over, so it stops forwarding blocks to the opponent.
 void Net_SendBattleEnded(void);
 
+// Has this session ever been signed in?
+//
+// Distinct from Net_GetAuthState, which is a live value and dips during a reconnect. For
+// decisions that must not change under the player mid-session -- whether this character
+// belongs to the server, and so whether saving is theirs to ask for -- the live state is
+// the wrong question.
+bool8 Net_WasOnline(void);
+
 #endif // GUARD_NET_CLIENT_H

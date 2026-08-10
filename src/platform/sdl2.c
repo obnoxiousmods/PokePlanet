@@ -284,6 +284,10 @@ int main(int argc, char **argv)
     if (sProfile[0] != '\0')
         SDL_Log("profile: %s (save %s, sidecar port %u)", sProfile, sSavePath, sSidecarPort);
 
+    // ReadConfigFile is called later during video setup, but the sidecar needs the
+    // server address before it launches, so read the file once up front.
+    ReadConfigFile();
+
     // A port for tests to use, so a harness can never take a player's session.
     //
     // WSL forwards localhost, so a headless test binding the default port in Linux is
@@ -305,10 +309,6 @@ int main(int argc, char **argv)
             }
         }
     }
-
-    // ReadConfigFile is called later during video setup, but the sidecar needs the
-    // server address before it launches, so read the file once up front.
-    ReadConfigFile();
     Platform_LaunchSidecar();
     Net_Init();
 
