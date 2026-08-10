@@ -35,9 +35,15 @@
 // next one.
 static bool8 sInBattle;
 
+// A block taken off the queue that the game has not had room for yet. See MmoLink_Update.
+static struct NetLinkBlock sPending;
+static bool8 sHasPending;
+
+
 void MmoLink_BeginBattle(void)
 {
     sInBattle = TRUE;
+    sHasPending = FALSE;
     ResetBlockReceivedFlags();
 }
 
@@ -49,6 +55,7 @@ void MmoLink_EndBattle(void)
         Net_SendBattleEnded();
 
     sInBattle = FALSE;
+    sHasPending = FALSE;
     ResetBlockReceivedFlags();
 }
 
@@ -82,24 +89,42 @@ bool8 MmoLink_SendBlock(const void *src, u16 size)
     return TRUE;
 }
 
-// Drain whatever the opponent sent. Called once per frame from the battle's main loop, so a
-// block is available on the frame after it arrives rather than whenever the game next
-// happens to ask.
+// Deliver what the opponent sent, one block at a time, and only into a slot the game has
+// finished reading.
+//
+// gBlockRecvBuffer holds exactly one block per player, and the received flag is how the game
+// says it has taken the last one. Delivering everything queued in a single frame overwrites
+// that buffer repeatedly and only the last block survives -- which is silent, and shows up as
+// a battle that gets a little further each time it is played rather than as an obvious break.
+//
+// So a block that arrives while the previous one is still unread is held, not dropped and not
+// forced in. It goes in on the frame after the game catches up.
 void MmoLink_Update(void)
 {
-    struct NetLinkBlock block;
-
     if (!sInBattle)
         return;
 
-    while (Net_PopLinkBlock(&block))
+    for (;;)
     {
-        // Our own slot is filled by the echo at send time. A block claiming to come from it
-        // is the server confused or a client lying, and filing it would overwrite what we
-        // are still waiting to have read.
-        if (block.fromSlot == GetMultiplayerId())
-            continue;
+        if (!sHasPending)
+        {
+            if (!Net_PopLinkBlock(&sPending))
+                return;
 
-        Deliver(block.fromSlot, block.bytes, block.len);
+            // Our own slot is filled by the echo at send time. A block claiming to come from
+            // it is the server confused or a client lying, and filing it would overwrite what
+            // we are still waiting to have read.
+            if (sPending.fromSlot == GetMultiplayerId())
+                continue;
+
+            sHasPending = TRUE;
+        }
+
+        // The game has not read the last block for this player yet. Try again next frame.
+        if (GetBlockReceivedStatus() & (1 << sPending.fromSlot))
+            return;
+
+        Deliver(sPending.fromSlot, sPending.bytes, sPending.len);
+        sHasPending = FALSE;
     }
 }
