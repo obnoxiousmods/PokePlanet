@@ -163,6 +163,24 @@ const EXPERIENCE_PER_SECOND: f32 = 30_000.0;
 ///
 /// Deliberately generous, and only ever a ceiling. Returns None when nothing is provably
 /// impossible -- not when the save is proven honest.
+/// The multiplier to scale a ceiling by, for a configured rate.
+///
+/// Clamped against zero and nonsense, *not* against 1.0. Using `rate.max(1.0)` meant a server
+/// configured below 1.0 -- deliberately stingy, which is exactly the setup where a suspicious
+/// gain stands out most -- kept the same ceiling as a 1.0 server, so the tightening the operator
+/// asked for silently did not apply to the anti-cheat. A rate of 0.1 should mean a tenth of the
+/// headroom, not the same headroom.
+///
+/// The floor is a small positive number rather than zero so that a rate of 0 (an event server
+/// with earning switched off, say) still permits the rounding and one-off scripted rewards that
+/// do not go through the rate at all, instead of refusing every report.
+fn ceiling_scale(rate: f32) -> f32 {
+    if !rate.is_finite() || rate <= 0.0 {
+        return 0.01;
+    }
+    rate
+}
+
 pub fn gained_too_fast(
     before: &crate::save_parse::SaveState,
     after: &crate::save_parse::SaveState,
@@ -177,7 +195,7 @@ pub fn gained_too_fast(
     let money_after = after.money();
     if money_after > money_before {
         let gained = (money_after - money_before) as f32;
-        let allowed = MONEY_PER_SECOND * rates.money.max(1.0) * seconds;
+        let allowed = MONEY_PER_SECOND * ceiling_scale(rates.money) * seconds;
         if gained > allowed {
             return Some(format!(
                 "gained {gained:.0} money in {seconds:.0}s, above the {allowed:.0} these rates allow"
@@ -200,7 +218,7 @@ pub fn gained_too_fast(
         }
         if new.experience > old.experience {
             let gained = (new.experience - old.experience) as f32;
-            let allowed = EXPERIENCE_PER_SECOND * rates.experience.max(1.0) * seconds;
+            let allowed = EXPERIENCE_PER_SECOND * ceiling_scale(rates.experience) * seconds;
             if gained > allowed {
                 return Some(format!(
                     "a Pokemon gained {gained:.0} experience in {seconds:.0}s, above the \
@@ -246,6 +264,31 @@ mod tests {
 
     fn secs(n: u64) -> std::time::Duration {
         std::time::Duration::from_secs(n)
+    }
+
+    /// A stingy server actually tightens the ceiling.
+    #[test]
+    fn a_rate_below_one_lowers_the_ceiling() {
+        let mut r = Rates::default();
+        r.experience = 0.1;
+
+        // A tenth of the rate means a tenth of the headroom: 30_000 * 0.1 * 1s = 3_000.
+        assert!(
+            gained_too_fast(&state(0, 0), &state(0, 10_000), &r, secs(1)).is_some(),
+            "a 0.1x server must refuse a gain a 1.0x server would allow"
+        );
+        // Negative control: within the lowered ceiling is still fine, so this is a ceiling and
+        // not a blanket refusal.
+        assert!(
+            gained_too_fast(&state(0, 0), &state(0, 2_000), &r, secs(1)).is_none(),
+            "a gain inside the lowered ceiling must still pass"
+        );
+        // And the same gain is fine on a default server, which is what makes the first
+        // assertion about the rate rather than about the amount.
+        assert!(
+            gained_too_fast(&state(0, 0), &state(0, 10_000), &Rates::default(), secs(1)).is_none(),
+            "the refused gain must be acceptable at 1.0x"
+        );
     }
 
     /// Ordinary play is never accused.

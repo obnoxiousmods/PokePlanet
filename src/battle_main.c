@@ -6,6 +6,7 @@
 #include "battle_controllers.h"
 #include "battle_interface.h"
 #include "battle_main.h"
+#include "mmo_autosave.h"
 #include "battle_message.h"
 #include "battle_pyramid.h"
 #include "battle_scripts.h"
@@ -1862,6 +1863,12 @@ static void CB2_HandleStartMultiBattle(void)
 
 void BattleMainCB2(void)
 {
+    // A battle is where levels, experience and learned moves actually change, and it is the one
+    // place the reporters were never reached from -- so all of it waited for the return to the
+    // field, and a quit from the summary screen threw the battle away. Reporting only reads
+    // memory and enqueues; it writes no save, so it is safe here.
+    MmoAutosave_Report();
+
     AnimateSprites();
     BuildOamBuffer();
     RunTextPrinters();

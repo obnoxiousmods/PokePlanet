@@ -315,13 +315,28 @@ static void ReportBlocksIfChanged(void)
     }
 }
 
-void MmoAutosave_Update(void)
+// Send whatever has changed, without saving anything.
+//
+// Separate from MmoAutosave_Update because the two have different safety requirements. Writing a
+// save copies the party out of gPlayerParty and rewrites fourteen sectors, which must not happen
+// underneath a running script or a battle. *Reporting* only reads memory and hands bytes to a
+// queue, so it is safe anywhere -- and it needs to run in more places than the save does.
+//
+// Called from the overworld and from the battle loop. Previously reporting happened only in
+// OverworldBasic, so a whole battle's worth of experience, levels and learned moves was reported
+// in one go on return to the field, and quitting from the battle summary lost all of it.
+void MmoAutosave_Report(void)
 {
     ReportBlocksIfChanged();
 
     ReportRegionsIfChanged();
 
     ReportPartyIfChanged();
+}
+
+void MmoAutosave_Update(void)
+{
+    MmoAutosave_Report();
 
     // Offline play keeps the old bargain: there is no server to hold the save, so nothing
     // here should be writing one behind the player's back.

@@ -10,4 +10,7 @@ void MmoAutosave_Flush(void);
 // Ticked once per overworld frame.
 void MmoAutosave_Update(void);
 
+// Report changes without writing a save. Safe during battle, unlike the above.
+void MmoAutosave_Report(void);
+
 #endif // GUARD_MMO_AUTOSAVE_H
