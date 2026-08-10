@@ -166,12 +166,25 @@ enum
     LAG_SLAVE,
 };
 
+// The widest name a link player can carry. Matches the account name length the server
+// sends, so a name never arrives wider than the field holding it.
+#define LINK_PLAYER_NAME_LENGTH 16
+
 struct LinkPlayer
 {
     /* 0x00 */ u16 version;
     /* 0x02 */ u16 lp_field_2;
     /* 0x04 */ u32 trainerId;
-    /* 0x08 */ u8 name[PLAYER_NAME_LENGTH + 1];
+    // Wider than the save trainer name, which is seven characters.
+    //
+    // gLinkPlayers is runtime only and never written to disk, and this port fills it locally
+    // rather than exchanging LinkPlayerBlock down a cable, so widening it costs nothing and
+    // no save format changes. Without this the versus screen and every battle line naming
+    // the opponent cut an account name to seven characters.
+    //
+    // Safe against the sixty-odd readers: they take a terminated string. The writers copy
+    // short names into a bigger buffer, and the two whole-struct copies use sizeof.
+    /*0x08*/ u8 name[LINK_PLAYER_NAME_LENGTH + 1];
     /* 0x10 */ u8 progressFlags; // (& 0x0F) is hasNationalDex, (& 0xF0) is hasClearedGame
     /* 0x11 */ u8 neverRead;
     /* 0x12 */ u8 progressFlagsCopy;

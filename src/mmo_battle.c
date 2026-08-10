@@ -52,7 +52,7 @@ static void SeatPlayer(u8 slot, const char *name, u32 trainerId, u8 gender)
     p->gender = gender;
     p->linkType = LINKTYPE_BATTLE;
     p->id = slot;
-    MmoText_FromAscii(p->name, name, PLAYER_NAME_LENGTH + 1);
+    MmoText_FromAscii(p->name, name, LINK_PLAYER_NAME_LENGTH + 1);
 }
 
 // Both players agreed and the server has assigned the slots. Go.
