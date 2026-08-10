@@ -450,6 +450,39 @@ fn newest_slot(image: &[u8]) -> Option<usize> {
     best.map(|(slot, _)| slot)
 }
 
+/// Reassemble any block from the sectors that hold it, indexed by footer id.
+pub fn read_block(image: &[u8], sectors: &[u16]) -> Option<Vec<u8>> {
+    let slot = newest_slot(image)?;
+    let mut out = Vec::with_capacity(sectors.len() * SECTOR_DATA_SIZE);
+
+    for want in sectors {
+        let mut found = None;
+        for i in 0..SECTORS_PER_SLOT {
+            let sector = read_sector(image, slot * SECTORS_PER_SLOT + i)?;
+            if sector.signature == SECTOR_SIGNATURE && sector.id == *want {
+                found = Some(sector.data);
+                break;
+            }
+        }
+        out.extend_from_slice(found?);
+    }
+
+    Some(out)
+}
+
+/// Rebuild an image with a replacement for any block, proving authoring is faithful first.
+///
+/// The same identity check `reauthor` makes, generalised: rewrite the block unchanged and
+/// require byte-identical output before trusting a real write. Declining costs the player one
+/// update; a wrong write costs them the block.
+pub fn reauthor_block(image: &[u8], sectors: &[u16], data: &[u8]) -> Option<Vec<u8>> {
+    let original = read_block(image, sectors)?;
+    if write_block(image, sectors, &original)? != image {
+        return None;
+    }
+    write_block(image, sectors, data)
+}
+
 /// Reassemble SaveBlock1 from the sectors that hold it, indexed by footer id.
 fn saveblock1(image: &[u8], slot: usize) -> Option<Vec<u8>> {
     let mut out = Vec::with_capacity(SAVEBLOCK1_SECTORS.len() * SECTOR_DATA_SIZE);
@@ -633,8 +666,28 @@ fn declared_size(data: &[u8], stored: u16) -> Option<usize> {
 /// to rebuild leaves the player exactly where they were; a save rebuilt wrongly corrupts a
 /// character permanently, so every uncertain case takes the first outcome.
 pub fn write_block1(image: &[u8], block1: &[u8]) -> Option<Vec<u8>> {
+    write_block(image, &SAVEBLOCK1_SECTORS, block1)
+}
+
+/// The sectors holding SaveBlock2: the player's name, gender, playtime and encryption key.
+pub const SAVEBLOCK2_SECTORS: [u16; 1] = [0];
+
+/// The sectors holding PokemonStorage -- the PC boxes.
+///
+/// Nine sectors, and by far the largest thing in the save. Until this existed the boxes could
+/// not be written at all, which is why the save upload could not be retired: switching it off
+/// would have meant every Pokemon in a player's PC silently ceasing to reach the server.
+pub const STORAGE_SECTORS: [u16; 9] = [5, 6, 7, 8, 9, 10, 11, 12, 13];
+
+/// Write any run of sectors back into an image.
+///
+/// The same work `write_block1` was doing, with the sector list as a parameter. Nothing about
+/// recovering the checksum size was ever specific to SaveBlock1 -- it reads the size out of the
+/// sector in front of it -- so the restriction to one block was an accident of how this grew
+/// rather than anything the format requires.
+pub fn write_block(image: &[u8], sectors: &[u16], data: &[u8]) -> Option<Vec<u8>> {
     if image.len() != NUM_SECTORS * SECTOR_SIZE
-        || block1.len() != SAVEBLOCK1_SECTORS.len() * SECTOR_DATA_SIZE
+        || data.len() != sectors.len() * SECTOR_DATA_SIZE
     {
         return None;
     }
@@ -642,7 +695,7 @@ pub fn write_block1(image: &[u8], block1: &[u8]) -> Option<Vec<u8>> {
     let slot = newest_slot(image)?;
     let mut out = image.to_vec();
 
-    for (n, want) in SAVEBLOCK1_SECTORS.iter().enumerate() {
+    for (n, want) in sectors.iter().enumerate() {
         let mut wrote = false;
 
         for i in 0..SECTORS_PER_SLOT {
@@ -660,7 +713,7 @@ pub fn write_block1(image: &[u8], block1: &[u8]) -> Option<Vec<u8>> {
 
             let from = n * SECTOR_DATA_SIZE;
             out[start..start + SECTOR_DATA_SIZE]
-                .copy_from_slice(&block1[from..from + SECTOR_DATA_SIZE]);
+                .copy_from_slice(&data[from..from + SECTOR_DATA_SIZE]);
 
             let fresh = checksum(&out[start..start + SECTOR_DATA_SIZE], size);
             out[footer + 2..footer + 4].copy_from_slice(&fresh.to_le_bytes());
@@ -1163,6 +1216,55 @@ mod tests {
             with_region(&old, OFFSET_MONEY, &[0u8; 4]).is_none(),
             "money must not be writable as a raw region"
         );
+    }
+
+    /// The PC boxes and SaveBlock2 can be written, not only SaveBlock1.
+    ///
+    /// This is the capability whose absence blocked retiring the save upload. The boxes live in
+    /// their own nine sectors, so authoring that only covered SaveBlock1 meant switching the
+    /// upload off would have stopped every Pokemon in a player's PC from reaching the server --
+    /// not degraded, gone at the next sign-in.
+    #[test]
+    fn any_block_can_be_authored_not_just_saveblock1() {
+        let mut image = image_with(0, 1, &[0xFF], &[3], 100);
+        sign(&mut image, 0, 2000);
+
+        for sectors in [&STORAGE_SECTORS[..], &SAVEBLOCK2_SECTORS[..]] {
+            let original = read_block(&image, sectors).expect("the block should be readable");
+            assert_eq!(
+                original.len(),
+                sectors.len() * SECTOR_DATA_SIZE,
+                "a block should come back whole"
+            );
+
+            let mut changed = original.clone();
+            changed[0] = 0x5A;
+            changed[original.len() - 1] = 0xC3;
+
+            let rebuilt = reauthor_block(&image, sectors, &changed).expect("authoring");
+            let back = read_block(&rebuilt, sectors).expect("readable after writing");
+            assert_eq!(back, changed, "what was written should be what comes back");
+            assert_eq!(rebuilt.len(), image.len(), "the image must keep its shape");
+
+            // Negative control: without it this passes on a no-op that returns the input.
+            assert_ne!(
+                back, original,
+                "the block must actually have changed, or this proves nothing"
+            );
+
+            // SaveBlock1 must be untouched by writing a different block -- the sectors are
+            // interleaved in the slot, so a wrong index lands in someone else's data.
+            assert_eq!(
+                read_block(&rebuilt, &SAVEBLOCK1_SECTORS).unwrap(),
+                read_block(&image, &SAVEBLOCK1_SECTORS).unwrap(),
+                "writing one block must not disturb another"
+            );
+
+            assert!(
+                reauthor_block(&image, sectors, &changed[..10]).is_none(),
+                "a block of the wrong length must be refused"
+            );
+        }
     }
 
     /// Build an image with one readable slot, so the layout logic is exercised without
