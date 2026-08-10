@@ -1,5 +1,6 @@
 #ifdef RENDERER_FAST_DRAW
 #include "global.h"
+#include "obj_palette_ext.h"
 #include <stdbool.h>
 #include "platform/dma.h"
 
@@ -1847,7 +1848,16 @@ static void DrawSpritesWinMask(struct scanlineData* scanline, uint16_t vcount)
                         pixel >>= 4;
                     else
                         pixel &= 0xF;
-                    palette += oam->paletteNum * 16;
+                    {
+                        // A sprite that has been given a palette of its own draws with it;
+                        // anything else falls through to the hardware behaviour untouched.
+                        int extSlot = gObjPaletteExtSlot[oam - (struct OamData *)OAM];
+
+                        if (extSlot != 0)
+                            palette = gObjPaletteExt[extSlot - 1];
+                        else
+                            palette += oam->paletteNum * 16;
+                    }
                 }
                 else
                 {
@@ -2024,7 +2034,16 @@ static void inline_hack DrawAffineSprite(int SpriteIndex, struct scanlineData* s
                     pixel >>= 4;
                 else
                     pixel &= 0xF;
-                palette += oam->paletteNum * 16;
+                {
+                        // A sprite that has been given a palette of its own draws with it;
+                        // anything else falls through to the hardware behaviour untouched.
+                        int extSlot = gObjPaletteExtSlot[oam - (struct OamData *)OAM];
+
+                        if (extSlot != 0)
+                            palette = gObjPaletteExt[extSlot - 1];
+                        else
+                            palette += oam->paletteNum * 16;
+                    }
             }
             else
             {
@@ -2143,7 +2162,16 @@ static void inline_hack DrawNonAffineSprite(int SpriteIndex, struct scanlineData
         bool flipY  = !isAffine && ((oam->matrixNum >> 4) & 1);
         uint8_t *tiledata = (uint8_t *)objtiles;
         uint16_t *palette = (uint16_t *)OBJ_PLTT;
-        palette += oam->paletteNum * 16; //choose the palette
+        {
+                        // A sprite that has been given a palette of its own draws with it;
+                        // anything else falls through to the hardware behaviour untouched.
+                        int extSlot = gObjPaletteExtSlot[oam - (struct OamData *)OAM];
+
+                        if (extSlot != 0)
+                            palette = gObjPaletteExt[extSlot - 1];
+                        else
+                            palette += oam->paletteNum * 16;
+                    } //choose the palette
         int tex_y = local_y + (height / 2);
         if (flipY)
             tex_y = height - tex_y - 1;

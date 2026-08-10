@@ -1,5 +1,6 @@
 #ifdef RENDERER_EASY_DRAW
 #include "global.h"
+#include "obj_palette_ext.h"
 #include <stdbool.h>
 #include "platform/dma.h"
 
@@ -613,7 +614,16 @@ static void DrawSprites(struct scanlineData* scanline, uint16_t vcount, bool win
                         pixel >>= 4;
                     else
                         pixel &= 0xF;
-                    palette += oam->paletteNum * 16;
+                    {
+                        // A sprite that has been given a palette of its own draws with it;
+                        // anything else falls through to the hardware behaviour untouched.
+                        int extSlot = gObjPaletteExtSlot[oam - (struct OamData *)OAM];
+
+                        if (extSlot != 0)
+                            palette = gObjPaletteExt[extSlot - 1];
+                        else
+                            palette += oam->paletteNum * 16;
+                    }
                 }
                 else
                 {
