@@ -30,6 +30,8 @@ const MAX_LINK_BLOCK: usize = 256;
 
 pub struct Server {
     pub cfg: Arc<Config>,
+    /// The gameplay rates this server publishes. See rates.rs.
+    pub rates: Arc<crate::rates::Rates>,
     pub db: Db,
     pub world: SharedWorld,
     pub http: reqwest::Client,

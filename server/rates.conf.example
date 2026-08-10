@@ -1,0 +1,41 @@
+# PokePlanet gameplay rates.
+#
+# Every value is a multiplier on what the original game does:
+#
+#   1.0   Emerald exactly
+#   2.0   double
+#   0.1   a tenth
+#   0     off
+#
+# Any positive number works; these are dials, not presets. Copy this to rates.conf (or set
+# POKEPLANET_RATES_FILE) and restart the server. A missing file means the original game.
+#
+# A misspelt key or an unparseable value stops the server rather than being ignored. That is
+# deliberate: a typo that silently became 1.0 would not be noticed until the economy was
+# wrong and players had already lived with it.
+#
+# These are held here rather than in the client because a rate a client applies is a rate a
+# patched client ignores. The server publishing them is also what lets it bound what a save
+# may have gained between uploads.
+
+# Experience from battles.
+experience = 1.0
+
+# How often wild encounters happen at all.
+encounter = 1.0
+
+# Prize money, sales, and every other source of pokedollars.
+money = 1.0
+
+# Items found, given and dropped.
+items = 1.0
+
+# Catch probability.
+catch = 1.0
+
+# Per-species encounter rates, by the game's internal species number. These multiply the
+# global encounter rate rather than replacing it, so halving encounters everywhere still
+# halves them for a species that was already doubled. Anything not named here is 1.0.
+#
+# species.25 = 4.0     # four times as many of species 25
+# species.132 = 0.05   # a twentieth as many of species 132

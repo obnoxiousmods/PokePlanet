@@ -13,6 +13,7 @@ mod config;
 mod db;
 mod http;
 mod irc;
+mod rates;
 mod quic;
 mod save_parse;
 mod world;
@@ -35,6 +36,14 @@ async fn main() -> anyhow::Result<()> {
         .map_err(|_| anyhow::anyhow!("could not install the rustls crypto provider"))?;
 
     let cfg = Arc::new(config::Config::from_env().context("loading configuration")?);
+
+    // Read before anything can serve a player, and fatal if it will not parse: running with
+    // rates nobody chose, while believing otherwise, is worse than not starting.
+    let rates_path = std::env::var("POKEPLANET_RATES_FILE")
+        .unwrap_or_else(|_| "rates.conf".to_string());
+    let rates = Arc::new(
+        rates::Rates::load(std::path::Path::new(&rates_path)).context("loading rates")?,
+    );
     let db = db::connect(&cfg.database_url).await?;
     // A missing table is not fatal: the server still refuses teleports, it just cannot
     // tell a wall from a path. Say so loudly rather than silently allowing it.
@@ -58,6 +67,7 @@ async fn main() -> anyhow::Result<()> {
 
     let server = Arc::new(quic::Server {
         cfg: cfg.clone(),
+        rates: rates.clone(),
         db: db.clone(),
         world: world.clone(),
         http: reqwest::Client::builder()
