@@ -314,6 +314,8 @@ static void HandleProfile(const u8 *payload, u32 len)
     sNet.profile.x = ReadS16(payload + 16);
     sNet.profile.y = ReadS16(payload + 18);
     CopyField(sNet.profile.name, payload + 20, NET_NAME_LEN);
+    // Appended after the name on the wire, so everything before it keeps its offset.
+    sNet.profile.playerId = ReadU32(payload + 20 + NET_NAME_LEN);
     sNet.hasProfile = TRUE;
     SDL_UnlockMutex(sNet.lock);
 }

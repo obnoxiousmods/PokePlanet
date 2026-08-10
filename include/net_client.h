@@ -67,6 +67,10 @@ struct NetChatLine
 // rather than reading progress from any local file.
 struct NetProfile
 {
+    // This character own id, so the client can work out its own appearance the same way it
+    // works out everyone else: every client derives a player look from their id, and without
+    // this the player would be the one person whose colours they could not compute.
+    u32 playerId;
     char name[NET_NAME_LEN];
     u8 graphicsId;
     u8 badges;

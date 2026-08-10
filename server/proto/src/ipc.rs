@@ -240,7 +240,7 @@ pub fn encode_snapshot(players: &[SnapshotEntry]) -> Vec<u8> {
 
 /// The save summary the sign-in screen displays. Fixed layout, so the game reads it
 /// field by field with no parser.
-pub fn encode_profile(profile: &crate::quic::CharacterProfile) -> Vec<u8> {
+pub fn encode_profile(profile: &crate::quic::CharacterProfile, player_id: PlayerId) -> Vec<u8> {
     let mut b = Vec::with_capacity(2 + 13 + NAME_LEN);
     b.push(MSG_PROFILE);
     b.push(profile.graphics_id);
@@ -254,6 +254,12 @@ pub fn encode_profile(profile: &crate::quic::CharacterProfile) -> Vec<u8> {
     b.extend_from_slice(&profile.x.to_le_bytes());
     b.extend_from_slice(&profile.y.to_le_bytes());
     put_str(&mut b, &profile.name, NAME_LEN);
+    // Appended after the name rather than inserted, so the fixed offsets above do not shift.
+    //
+    // The client needs its own id to work out its own colours: every client derives a player's
+    // appearance from it, and without this the player would be the one person whose colours
+    // they could not compute -- and so the only person who does not look like themselves.
+    b.extend_from_slice(&player_id.to_le_bytes());
     frame(b)
 }
 

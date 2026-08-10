@@ -477,6 +477,23 @@ void MmoPlayers_Update(void)
     ApplyCorrection();
     CheckForBattleStart();
     ReportSelf();
+
+    // The player's own colours.
+    //
+    // Without this they would be the only person in the world who does not look like
+    // themselves -- the same complaint the sprite assignment fixed, one layer down.
+    //
+    // Every frame rather than once, because the player's object event is rebuilt on every map
+    // load and comes back wearing the artwork's palette with no memory of this. The work is a
+    // bounds check and a byte store once the palette is built, so the cost is not worth a flag
+    // to avoid it.
+    if (gPlayerAvatar.objectEventId < OBJECT_EVENTS_COUNT)
+    {
+        struct NetProfile self;
+
+        if (Net_GetProfile(&self))
+            ApplyRemoteColour(&gObjectEvents[gPlayerAvatar.objectEventId], self.playerId);
+    }
     CheckForBattleInvite();
     CheckForBattleOutcome();
 
