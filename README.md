@@ -78,6 +78,9 @@ Refused server-side, each verified against real data with a negative control:
 - Experience above 1,640,000, and a level 100 with too little experience behind it.
 - Per-Pokémon checksum integrity.
 - **Progress going backwards** — a Pokémon losing experience or levels.
+- **Gaining faster than the published rates allow** — money or experience appearing in less
+  time than any amount of play could produce, measured against the rates the server itself
+  publishes, so the ceiling widens on a generous server rather than accusing it.
 
 ### Multiplayer features
 - **Chat** with global, map and private scopes, bridged to IRC, with `/s`, `/w NAME` and `/r`.
@@ -123,8 +126,6 @@ Refused server-side, each verified against real data with a negative control:
   and surfing stop breaking the illusion; colour derived deterministically from character id.
 - **Everything configurable.** Extend the rate config from named scalars to a general table so
   any random chance, reward, drop rate or price is tunable without a protocol change.
-- **Rate-based enforcement.** The published rates are what let the server bound what a save may
-  have gained between uploads, without having to enumerate every legitimate source first.
 
 ### Later
 - **Structured progression on the server** — flags, variables, bag and party as data rather

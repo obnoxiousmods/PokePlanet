@@ -381,6 +381,10 @@ async fn control_loop(
 ) -> anyhow::Result<()> {
     // Save slices are reassembled here, per connection.
     let mut save_image: Vec<u8> = Vec::new();
+    // When this character last uploaded, so the server knows how long it had to earn what it
+    // now claims. Per connection: a first upload has nothing to compare against and is not
+    // judged on rate at all.
+    let mut last_upload: Option<std::time::Instant> = None;
 
     while let Some(frame) = read_frame(recv).await? {
         match quic::decode::<ClientControl>(&frame)? {
@@ -462,7 +466,15 @@ async fn control_loop(
                             (parsed.as_ref(), db::load_save(&server.db, character_id).await)
                         {
                             if let Some(old) = crate::save_parse::parse(&old_image) {
-                                if let Some(reason) = crate::save_parse::regressed(&old, new) {
+                                if let Some(reason) = crate::save_parse::regressed(&old, new)
+                                    .or_else(|| {
+                                        last_upload.and_then(|t| {
+                                            crate::rates::gained_too_fast(
+                                                &old, new, &server.rates, t.elapsed(),
+                                            )
+                                        })
+                                    })
+                                {
                                     tracing::warn!(
                                         player = player_id, %reason,
                                         "refusing a save that undoes progress"
@@ -473,6 +485,7 @@ async fn control_loop(
                             }
                         }
 
+                        last_upload = Some(std::time::Instant::now());
                         db::store_save(&server.db, character_id, &save_image).await?;
                         tracing::info!(
                             player = player_id, bytes = save_image.len(), "save stored"

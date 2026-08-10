@@ -138,9 +138,153 @@ impl Rates {
     }
 }
 
+/// The most money the game can hand a player in a second, before the server's rate.
+///
+/// Deliberately far above anything real play produces. The job is catching a client that
+/// awards itself a fortune between two saves, not policing an efficient player, and a rule
+/// that refuses an honest save is worse than the cheating it prevents. A whole bag of Nuggets
+/// sold at once is a few tens of thousands; this allows that every second, forever.
+const MONEY_PER_SECOND: f32 = 50_000.0;
+
+/// The most experience one Pokemon can earn in a second, before the server's rate.
+///
+/// A level 100 needs at most 1,640,000 in total, so this allows a Pokemon to go from nothing
+/// to fully levelled in under a minute of continuous battling. Nothing legitimate comes close.
+const EXPERIENCE_PER_SECOND: f32 = 30_000.0;
+
+/// Whatever the rates are, a save cannot have gained more than this in the time available.
+///
+/// This is the rule the server could not write before it published the rates: bounding income
+/// used to mean enumerating every legitimate source in the game, and a missed one refuses an
+/// honest player. Now the server states the rates and refuses what exceeds them.
+///
+/// `elapsed` is the time since this character last uploaded. A first upload has no previous
+/// save to compare against and is not checked here at all.
+///
+/// Deliberately generous, and only ever a ceiling. Returns None when nothing is provably
+/// impossible -- not when the save is proven honest.
+pub fn gained_too_fast(
+    before: &crate::save_parse::SaveState,
+    after: &crate::save_parse::SaveState,
+    rates: &Rates,
+    elapsed: std::time::Duration,
+) -> Option<String> {
+    // A clock that has barely moved must still allow a whole save's worth of progress, or a
+    // player who saves twice in quick succession is accused of something. One second minimum.
+    let seconds = elapsed.as_secs_f32().max(1.0);
+
+    let money_before = before.money();
+    let money_after = after.money();
+    if money_after > money_before {
+        let gained = (money_after - money_before) as f32;
+        let allowed = MONEY_PER_SECOND * rates.money.max(1.0) * seconds;
+        if gained > allowed {
+            return Some(format!(
+                "gained {gained:.0} money in {seconds:.0}s, above the {allowed:.0} these rates allow"
+            ));
+        }
+    }
+
+    for old in &before.party {
+        let Some(new) = after
+            .party
+            .iter()
+            .find(|m| m.personality == old.personality && m.ot_id == old.ot_id)
+        else {
+            continue;
+        };
+        // Only records whose decrypted bytes agree with their own checksum are judged; the
+        // rest are left alone rather than accused of something the decode may have invented.
+        if !new.checksum_ok || !old.checksum_ok {
+            continue;
+        }
+        if new.experience > old.experience {
+            let gained = (new.experience - old.experience) as f32;
+            let allowed = EXPERIENCE_PER_SECOND * rates.experience.max(1.0) * seconds;
+            if gained > allowed {
+                return Some(format!(
+                    "a Pokemon gained {gained:.0} experience in {seconds:.0}s, above the \
+                     {allowed:.0} these rates allow"
+                ));
+            }
+        }
+    }
+
+    None
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use crate::save_parse::{PartyMon, SaveState};
+
+    fn state(money_raw: u32, exp: u32) -> SaveState {
+        SaveState {
+            flags: vec![],
+            vars: vec![],
+            money_raw,
+            coins_raw: 0,
+            encryption_key: 0,
+            bag: vec![],
+            party: vec![PartyMon {
+                personality: 7,
+                ot_id: 7,
+                species: 1,
+                level: 5,
+                experience: exp,
+                evs: [0; 6],
+                checksum_ok: true,
+            }],
+        }
+    }
+
+    fn secs(n: u64) -> std::time::Duration {
+        std::time::Duration::from_secs(n)
+    }
+
+    /// Ordinary play is never accused.
+    #[test]
+    fn a_normal_session_is_allowed() {
+        let r = Rates::default();
+        assert_eq!(gained_too_fast(&state(1000, 0), &state(50_000, 20_000), &r, secs(60)), None);
+    }
+
+    /// A client awarding itself a fortune between two saves is not.
+    #[test]
+    fn a_sudden_fortune_is_refused() {
+        let r = Rates::default();
+        let out = gained_too_fast(&state(0, 0), &state(900_000, 0), &r, secs(1));
+        assert!(out.is_some(), "900k in a second is not play");
+    }
+
+    #[test]
+    fn a_sudden_level_is_refused() {
+        let r = Rates::default();
+        let out = gained_too_fast(&state(0, 0), &state(0, 1_600_000), &r, secs(1));
+        assert!(out.is_some(), "a full experience bar in a second is not play");
+    }
+
+    /// A generous server must allow generously, or its own rates become an accusation.
+    #[test]
+    fn the_servers_own_rates_widen_the_ceiling() {
+        let mut r = Rates::default();
+        let fast = gained_too_fast(&state(0, 0), &state(900_000, 0), &r, secs(1));
+        assert!(fast.is_some());
+        r.money = 100.0;
+        assert_eq!(
+            gained_too_fast(&state(0, 0), &state(900_000, 0), &r, secs(1)),
+            None,
+            "a server running 100x money must not refuse 100x money"
+        );
+    }
+
+    /// Losing money is regression, not a gain, and is not this rule's business.
+    #[test]
+    fn spending_is_not_a_gain() {
+        let r = Rates::default();
+        assert_eq!(gained_too_fast(&state(900_000, 0), &state(10, 0), &r, secs(1)), None);
+    }
 
     #[test]
     fn nothing_configured_is_the_original_game() {
