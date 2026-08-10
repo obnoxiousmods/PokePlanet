@@ -469,6 +469,26 @@ impl World {
         Ok(())
     }
 
+    /// End the battle this player is in, on both sides.
+    ///
+    /// Taken on the player's word, which is safe because the only thing a seat grants is
+    /// being able to send blocks to one specific person who agreed to receive them. Ending
+    /// a battle early is a thing a player can already do by walking out of the game, and it
+    /// costs the other side nothing they had.
+    pub async fn clear_battle(&self, id: PlayerId) {
+        let mut players = self.players.write().await;
+        let peer = players.get_mut(&id).and_then(|p| p.battle.take()).map(|s| s.peer);
+        if let Some(peer) = peer {
+            if let Some(p) = players.get_mut(&peer) {
+                // Only if they still name this player; they may already have moved on to
+                // another battle, and unseating them from that one would break it.
+                if p.battle.map(|s| s.peer) == Some(id) {
+                    p.battle = None;
+                }
+            }
+        }
+    }
+
     /// Forward one block of battle traffic to whoever the sender is battling.
     ///
     /// Returns false when there is nobody to forward to, which is the normal answer for a
@@ -931,6 +951,24 @@ mod tests {
 
         assert!(!world.route_link_block(1, vec![1]).await);
         assert!(!world.route_link_block(2, vec![1]).await);
+    }
+
+    /// Ending a battle unseats both sides, so blocks stop being forwarded to an opponent
+    /// who has already walked away from it.
+    #[tokio::test]
+    async fn ending_a_battle_unseats_both() {
+        let world = World::new();
+        let (a, _ra) = presence(1, "Ash", 0, 0);
+        let (b, _rb) = presence(2, "Misty", 0, 0);
+        world.join(1, a).await;
+        world.join(2, b).await;
+        world.invite_to_battle(1, 2).await.unwrap();
+        world.answer_battle(2, 1, true).await.unwrap();
+        assert!(world.route_link_block(1, vec![1]).await, "seated to begin with");
+
+        world.clear_battle(1).await;
+        assert!(!world.route_link_block(1, vec![1]).await, "the ender is unseated");
+        assert!(!world.route_link_block(2, vec![1]).await, "and so is the opponent");
     }
 
     /// When one player drops, the other must not be left seated against a ghost.

@@ -542,6 +542,9 @@ async fn control_loop(
                 }
                 server.world.route_link_block(player_id, bytes).await;
             }
+            ClientControl::BattleEnded => {
+                server.world.clear_battle(player_id).await;
+            }
             ClientControl::Goodbye => break,
             ClientControl::Hello { .. } | ClientControl::BeginLogin | ClientControl::PollLogin { .. } => {
                 // Already authenticated; nothing to do.

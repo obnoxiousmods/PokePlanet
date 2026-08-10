@@ -198,4 +198,7 @@ void Net_SendLinkBlock(const void *src, u16 size);
 // Take the oldest block the opponent sent, if there is one.
 bool8 Net_PopLinkBlock(struct NetLinkBlock *out);
 
+// Tell the server the battle is over, so it stops forwarding blocks to the opponent.
+void Net_SendBattleEnded(void);
+
 #endif // GUARD_NET_CLIENT_H

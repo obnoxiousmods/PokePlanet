@@ -61,6 +61,11 @@ pub enum ClientControl {
     /// here; it knows who is battling whom and forwards. `BLOCK_BUFFER_SIZE` in the game
     /// is 256 bytes, which is the ceiling this must respect.
     LinkBlock { bytes: Vec<u8> },
+    /// This player's battle is over.
+    ///
+    /// Without it the server only ever unseats someone when they disconnect, so blocks from
+    /// a finished battle keep being forwarded to an opponent who has walked away from it.
+    BattleEnded,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

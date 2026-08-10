@@ -416,6 +416,9 @@ impl Session {
                         wire::GameMessage::LinkBlock { bytes } => {
                             write_control(&mut send, &ClientControl::LinkBlock { bytes }).await?;
                         }
+                        wire::GameMessage::BattleEnded => {
+                            write_control(&mut send, &ClientControl::BattleEnded).await?;
+                        }
                         wire::GameMessage::Attached => {
                             // Only worth asking once signed in. Before that the sign-in
                             // exchange is already on its way and brings the same data with

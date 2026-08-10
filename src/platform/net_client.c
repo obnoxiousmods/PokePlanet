@@ -53,6 +53,7 @@
 #define MSG_BATTLE_RESPOND 0x87
 #define MSG_SAVE_CHUNK     0x88
 #define MSG_LINK_BLOCK_SEND 0x89
+#define MSG_BATTLE_ENDED    0x8A
 
 // Big enough that the 128KB image is a few hundred frames rather than thousands, small
 // enough to sit on the stack.
@@ -986,6 +987,17 @@ void Net_SendLinkBlock(const void *src, u16 size)
     body[2] = (u8)(size >> 8);
     memcpy(body + 3, src, size);
     Enqueue(body, 3 + size);
+}
+
+void Net_SendBattleEnded(void)
+{
+    u8 body[1];
+
+    if (!sInitialised)
+        return;
+
+    body[0] = MSG_BATTLE_ENDED;
+    Enqueue(body, sizeof(body));
 }
 
 bool8 Net_PopLinkBlock(struct NetLinkBlock *out)

@@ -57,6 +57,8 @@ pub const MSG_BATTLE_RESPOND: u8 = 0x87;
 pub const MSG_SAVE_CHUNK: u8 = 0x88;
 /// One block of link-battle traffic for the opponent: u16 len, bytes.
 pub const MSG_LINK_BLOCK_SEND: u8 = 0x89;
+/// The battle this player was in has finished. No payload.
+pub const MSG_BATTLE_ENDED: u8 = 0x8A;
 
 /// Mirrors `enum NetAuthState` in the C header.
 pub const AUTH_OFFLINE: u8 = 0;
@@ -273,6 +275,8 @@ pub enum GameMessage {
     SaveChunk { offset: u32, total: u32, bytes: Vec<u8> },
     /// One block of link-battle traffic, bound for whoever this player is battling.
     LinkBlock { bytes: Vec<u8> },
+    /// The battle this player was in has finished.
+    BattleEnded,
     /// A game process connected to the sidecar.
     ///
     /// Synthesised locally rather than decoded from a frame: the game cannot send this,
@@ -286,6 +290,7 @@ pub fn decode_game_message(body: &[u8]) -> anyhow::Result<GameMessage> {
         .split_first()
         .ok_or_else(|| anyhow::anyhow!("empty IPC frame"))?;
     match kind {
+        MSG_BATTLE_ENDED => Ok(GameMessage::BattleEnded),
         MSG_LINK_BLOCK_SEND => {
             if rest.len() < 2 {
                 anyhow::bail!("short link block");

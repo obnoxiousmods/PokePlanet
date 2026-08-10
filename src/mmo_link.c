@@ -43,6 +43,11 @@ void MmoLink_BeginBattle(void)
 
 void MmoLink_EndBattle(void)
 {
+    // Only worth saying once, and only if there was a battle: this is also reached on paths
+    // that tidy up when none was running.
+    if (sInBattle)
+        Net_SendBattleEnded();
+
     sInBattle = FALSE;
     ResetBlockReceivedFlags();
 }
