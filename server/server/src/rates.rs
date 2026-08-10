@@ -229,6 +229,8 @@ mod tests {
             bag: vec![],
             seen: vec![],
             game_stats: vec![],
+            berry_trees: vec![],
+            rematches: vec![],
             party: vec![PartyMon {
                 personality: 7,
                 ot_id: 7,

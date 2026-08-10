@@ -105,6 +105,13 @@ const OFFSET_SEEN: usize = 0x988;
 /// Sixty-four counters -- steps taken, battles won, Pokemon caught, and so on.
 const OFFSET_GAME_STATS: usize = 0x159C;
 const GAME_STAT_COUNT: usize = 64;
+/// Berry trees: what is planted where and how far along it is. 0x169C to 0x1A9C.
+const OFFSET_BERRY_TREES: usize = 0x169C;
+const BERRY_TREE_BYTES: usize = 0x400;
+/// Trainer rematch state and the step counter that drives it. 0x9C8 to 0xA2E.
+const OFFSET_REMATCHES: usize = 0x9C8;
+const REMATCH_BYTES: usize = 0x66;
+
 /// ROUND_BITS_TO_BYTES(NUM_SPECIES) in the game.
 const DEX_FLAG_BYTES: usize = 52;
 const OFFSET_VARS: usize = 0x139C;
@@ -205,6 +212,13 @@ pub struct SaveState {
     pub bag: Vec<(u8, u16, u16)>,
     /// Which species have been seen, as the game's own bitfield.
     pub seen: Vec<u8>,
+    /// Berry trees and trainer rematch state, kept as the game's own bytes.
+    ///
+    /// Raw for the same reason flags and vars are: reproducing every structure in the save
+    /// would be a great deal of code to answer questions nobody is asking yet, where keeping
+    /// the bytes is enough both to notice a change and to put it back.
+    pub berry_trees: Vec<u8>,
+    pub rematches: Vec<u8>,
     /// The sixty-four game counters, in the game's own order.
     ///
     /// Kept as numbers rather than named, for the same reason flags and vars are kept raw:
@@ -521,6 +535,15 @@ pub fn parse(image: &[u8]) -> Option<SaveState> {
         })
         .unwrap_or_default();
 
+    let berry_trees = block
+        .get(OFFSET_BERRY_TREES..OFFSET_BERRY_TREES + BERRY_TREE_BYTES)
+        .map(|b| b.to_vec())
+        .unwrap_or_default();
+    let rematches = block
+        .get(OFFSET_REMATCHES..OFFSET_REMATCHES + REMATCH_BYTES)
+        .map(|b| b.to_vec())
+        .unwrap_or_default();
+
     Some(SaveState {
         flags,
         vars,
@@ -531,6 +554,8 @@ pub fn parse(image: &[u8]) -> Option<SaveState> {
         bag,
         seen,
         game_stats,
+        berry_trees,
+        rematches,
     })
 }
 
