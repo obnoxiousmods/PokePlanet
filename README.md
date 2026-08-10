@@ -123,10 +123,10 @@ Refused server-side, each verified against real data with a negative control:
 
 ### Later
 - **Retire the save upload.** *Blocked on parsing coverage, not on effort.* The typed tables
-  hold flags, variables, money, coins, the bag and the party. SaveBlock1 holds roughly forty
-  more fields that nothing reads yet: game stats, the Pokedex, mail, berry trees, the daycare,
-  secret bases, contest winners, decorations, trainer rematches, heal location, link battle
-  records, easy-chat phrases and the rest.
+  hold flags, variables, money, coins, the bag and the party, and now the Pokedex and the sixty-four
+  game counters. SaveBlock1 holds roughly thirty-five more fields that nothing reads yet: mail,
+  berry trees, the daycare, secret bases, contest winners, decorations, trainer rematches, heal
+  location, link battle records, easy-chat phrases and the rest.
   Retiring the image means rebuilding a save from the tables at sign-in, so every unparsed
   field would come back as zero -- a player would keep their party and lose everything else,
   permanently and without warning. The order has to be: parse the rest, run both side by side

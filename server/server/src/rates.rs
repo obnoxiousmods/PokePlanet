@@ -227,6 +227,8 @@ mod tests {
             coins_raw: 0,
             encryption_key: 0,
             bag: vec![],
+            seen: vec![],
+            game_stats: vec![],
             party: vec![PartyMon {
                 personality: 7,
                 ot_id: 7,

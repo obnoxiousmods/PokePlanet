@@ -100,6 +100,13 @@ const BAG_POCKETS: [(usize, usize); 5] = [
 /// What one slot can hold, from MAX_BAG_ITEM_CAPACITY in include/constants/items.h.
 pub const MAX_ITEM_QUANTITY: u16 = 99;
 const OFFSET_FLAGS: usize = 0x1270;
+/// Which species this character has seen. A bitfield, one bit per species.
+const OFFSET_SEEN: usize = 0x988;
+/// Sixty-four counters -- steps taken, battles won, Pokemon caught, and so on.
+const OFFSET_GAME_STATS: usize = 0x159C;
+const GAME_STAT_COUNT: usize = 64;
+/// ROUND_BITS_TO_BYTES(NUM_SPECIES) in the game.
+const DEX_FLAG_BYTES: usize = 52;
 const OFFSET_VARS: usize = 0x139C;
 
 pub const FLAG_BYTES: usize = OFFSET_VARS - OFFSET_FLAGS; // 300
@@ -196,6 +203,14 @@ pub struct SaveState {
     pub party: Vec<PartyMon>,
     /// The bag: (pocket, item id, quantity), empty slots omitted.
     pub bag: Vec<(u8, u16, u16)>,
+    /// Which species have been seen, as the game's own bitfield.
+    pub seen: Vec<u8>,
+    /// The sixty-four game counters, in the game's own order.
+    ///
+    /// Kept as numbers rather than named, for the same reason flags and vars are kept raw:
+    /// naming them would mean encoding what each one counts, and the useful questions -- has
+    /// this moved, could it have moved that way -- do not need it.
+    pub game_stats: Vec<u32>,
 }
 
 /// What could not have happened between two saves of the same character.
@@ -489,7 +504,34 @@ pub fn parse(image: &[u8]) -> Option<SaveState> {
         }
     }
 
-    Some(SaveState { flags, vars, money_raw, coins_raw, encryption_key, party, bag })
+    let seen = block
+        .get(OFFSET_SEEN..OFFSET_SEEN + DEX_FLAG_BYTES)
+        .map(|b| b.to_vec())
+        .unwrap_or_default();
+
+    let game_stats = block
+        .get(OFFSET_GAME_STATS..OFFSET_GAME_STATS + GAME_STAT_COUNT * 4)
+        .map(|b| {
+            b.chunks_exact(4)
+                // Obfuscated with the same key as money, per GetGameStat in the game. Read
+                // raw they come out as near-identical nine-digit numbers -- which is what
+                // gave this away, since nothing counting steps or battles looks like that.
+                .map(|c| u32::from_le_bytes([c[0], c[1], c[2], c[3]]) ^ encryption_key)
+                .collect()
+        })
+        .unwrap_or_default();
+
+    Some(SaveState {
+        flags,
+        vars,
+        money_raw,
+        coins_raw,
+        encryption_key,
+        party,
+        bag,
+        seen,
+        game_stats,
+    })
 }
 
 #[cfg(test)]
@@ -658,6 +700,7 @@ mod tests {
         assert!(parse(&broken).is_none(), "an incomplete slot is not loadable");
     }
 }
+
 
 
 
