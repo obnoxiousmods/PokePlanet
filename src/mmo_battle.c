@@ -75,6 +75,17 @@ void MmoBattle_Start(const struct NetBattleStart *start)
     // the length of the battle rather than changing every frame.
     SeatPlayer(theirs, start->opponentName, start->opponent, 0);
 
+    // What the cable handshake would also have settled.
+    //
+    // gLocalLinkPlayerId is the slot the rest of the link code reads when it wants to know
+    // which player this machine is, and gWirelessCommType decides whether the block layer
+    // talks to the cable or to the wireless adapter. Left alone, the second is whatever the
+    // last thing to touch it wanted -- and if it is not zero, GetBlockReceivedStatus asks
+    // the RFU code about blocks that were delivered here instead, and the battle waits on an
+    // answer that never comes.
+    gLocalLinkPlayerId = mine;
+    gWirelessCommType = 0;
+
     // The link layer normally sets this once both sides have introduced themselves. Nothing
     // will do it here, and CB2_HandleStartBattle waits on it before sending anything.
     gReceivedRemoteLinkPlayers = TRUE;
