@@ -213,6 +213,9 @@ struct NetRates
     u16 money;
     u16 items;
     u16 catch;
+    // What a shop charges. Applied to the asking price, so the shown and charged price
+    // cannot disagree.
+    u16 shopPrice;
 };
 
 // The rates this server runs. Returns the original game's rates until the server has said

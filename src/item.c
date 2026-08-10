@@ -1,6 +1,7 @@
 #include "global.h"
 #include "item.h"
 #include "mmo_autosave.h"
+#include "net_client.h"
 #include "berry.h"
 #include "string_util.h"
 #include "text.h"
@@ -888,7 +889,21 @@ u16 GetItemId(u16 itemId)
 
 u16 GetItemPrice(u16 itemId)
 {
-    return gItems[SanitizeItemId(itemId)].price;
+    u32 price = gItems[SanitizeItemId(itemId)].price;
+    struct NetRates rates;
+
+    // The server's shop price rate. One hook for both the displayed price and the charged
+    // price, since every shop path asks this -- so the two cannot drift apart and tell the
+    // player one thing while taking another.
+    Net_GetRates(&rates);
+    if (rates.shopPrice != 100)
+    {
+        price = (price * rates.shopPrice) / 100;
+        if (price > 0xFFFF)
+            price = 0xFFFF; // the field is a u16; a huge rate must saturate, not wrap to free
+    }
+
+    return (u16)price;
 }
 
 u8 GetItemHoldEffect(u16 itemId)

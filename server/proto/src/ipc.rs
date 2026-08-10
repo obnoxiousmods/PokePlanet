@@ -269,13 +269,21 @@ pub fn encode_chat(kind: u8, from: &str, text: &str) -> Vec<u8> {
 /// The gameplay rates, as hundredths. Anything beyond what a u16 can hold is clamped: a
 /// multiplier over 650 is not a rate anyone chose on purpose, and refusing to encode it
 /// would take the server down over a typo in a file it already accepted.
-pub fn encode_rates(experience: f32, encounter: f32, money: f32, items: f32, catch: f32) -> Vec<u8> {
+#[allow(clippy::too_many_arguments)]
+pub fn encode_rates(
+    experience: f32,
+    encounter: f32,
+    money: f32,
+    items: f32,
+    catch: f32,
+    shop_price: f32,
+) -> Vec<u8> {
     fn hundredths(rate: f32) -> u16 {
         (rate * 100.0).round().clamp(0.0, u16::MAX as f32) as u16
     }
 
     let mut b = vec![MSG_RATES];
-    for rate in [experience, encounter, money, items, catch] {
+    for rate in [experience, encounter, money, items, catch, shop_price] {
         b.extend_from_slice(&hundredths(rate).to_le_bytes());
     }
     frame(b)

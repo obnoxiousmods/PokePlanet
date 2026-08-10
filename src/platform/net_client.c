@@ -320,7 +320,7 @@ static void HandleProfile(const u8 *payload, u32 len)
 
 static void HandleRates(const u8 *payload, u32 len)
 {
-    if (len < 10)
+    if (len < 12)
         return;
 
     SDL_LockMutex(sNet.lock);
@@ -329,6 +329,7 @@ static void HandleRates(const u8 *payload, u32 len)
     sNet.rates.money      = (u16)(payload[4] | (payload[5] << 8));
     sNet.rates.items      = (u16)(payload[6] | (payload[7] << 8));
     sNet.rates.catch      = (u16)(payload[8] | (payload[9] << 8));
+    sNet.rates.shopPrice  = (u16)(payload[10] | (payload[11] << 8));
     SDL_UnlockMutex(sNet.lock);
     SDL_Log("net: rates x%u.%02u exp, x%u.%02u encounter, x%u.%02u money",
             sNet.rates.experience / 100, sNet.rates.experience % 100,
@@ -349,6 +350,7 @@ void Net_GetRates(struct NetRates *out)
     out->money = 100;
     out->items = 100;
     out->catch = 100;
+    out->shopPrice = 100;
 
     if (!sInitialised)
         return;

@@ -259,6 +259,7 @@ async fn run_session(
             money: server.rates.money,
             items: server.rates.items,
             catch: server.rates.catch,
+            shop_price: server.rates.shop_price,
         },
     )
     .await?;
@@ -545,6 +546,7 @@ async fn control_loop(
                             money: server.rates.money,
                             items: server.rates.items,
                             catch: server.rates.catch,
+                            shop_price: server.rates.shop_price,
                         },
                     )
                     .await;

@@ -294,15 +294,15 @@ impl Session {
                                 .await;
                         }
                         ServerControl::Rates {
-                            experience, encounter, money, items, catch,
+                            experience, encounter, money, items, catch, shop_price,
                         } => {
                             tracing::info!(
-                                experience, encounter, money, items, catch,
+                                experience, encounter, money, items, catch, shop_price,
                                 "server gameplay rates"
                             );
                             self.link
                                 .send(wire::encode_rates(
-                                    experience, encounter, money, items, catch,
+                                    experience, encounter, money, items, catch, shop_price,
                                 ))
                                 .await;
                         }

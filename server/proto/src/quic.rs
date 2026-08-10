@@ -168,6 +168,7 @@ pub enum ServerControl {
         money: f32,
         items: f32,
         catch: f32,
+        shop_price: f32,
     },
 }
 

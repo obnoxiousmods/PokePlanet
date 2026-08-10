@@ -36,6 +36,7 @@
 #include "rotating_tile_puzzle.h"
 #include "rtc.h"
 #include "script.h"
+#include "net_client.h"
 #include "script_menu.h"
 #include "script_movement.h"
 #include "script_pokemon_util.h"
@@ -492,6 +493,33 @@ bool8 ScrCmd_additem(struct ScriptContext *ctx)
 {
     u16 itemId = VarGet(ScriptReadHalfword(ctx));
     u32 quantity = VarGet(ScriptReadHalfword(ctx));
+
+    // The server's item rate, on items the player is given or finds.
+    //
+    // Deliberately here and not in AddBagItem. giveitem and finditem both route through this
+    // command, while shops call AddBagItem directly -- so hooking the funnel would hand out
+    // three Potions for the price of one, which is not what "items = 3" asks for, and is the
+    // same mistake as scaling RemoveMoney.
+    //
+    // Clamped before the cast, because the count is truncated to u8 here: without the clamp a
+    // rate applied to a stack of 99 wraps to something small and looks like the rate went
+    // backwards. Capped at a single stack so a generous rate cannot silently turn into "no
+    // room" and flip the script onto its failure message.
+    {
+        struct NetRates rates;
+
+        Net_GetRates(&rates);
+        if (rates.items != 100)
+        {
+            u32 scaled = ((u32)quantity * rates.items) / 100;
+
+            if (scaled > MAX_BAG_ITEM_CAPACITY)
+                scaled = MAX_BAG_ITEM_CAPACITY;
+            if (scaled == 0 && quantity != 0)
+                scaled = 1; // a rate should not make a reward disappear entirely
+            quantity = (u16)scaled;
+        }
+    }
 
     gSpecialVar_Result = AddBagItem(itemId, (u8)quantity);
     return FALSE;

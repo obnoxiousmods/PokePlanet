@@ -10029,6 +10029,20 @@ static void Cmd_handleballthrow(void)
         if (gBattleMons[gBattlerTarget].status1 & (STATUS1_POISON | STATUS1_BURN | STATUS1_PARALYSIS | STATUS1_TOXIC_POISON))
             odds = (odds * 15) / 10;
 
+        // The server's catch rate, in hundredths, so 100 changes nothing.
+        //
+        // After the status bonuses, so sleep and paralysis keep meaning what they mean, and
+        // before the ball is examined, so the Master Ball's guarantee below still guarantees.
+        // A rate that could weaken that would turn the one item in the game that always works
+        // into one that usually does.
+        {
+            struct NetRates rates;
+
+            Net_GetRates(&rates);
+            if (rates.catch != 100)
+                odds = (odds * rates.catch) / 100;
+        }
+
         if (gLastUsedItem != ITEM_SAFARI_BALL)
         {
             if (gLastUsedItem == ITEM_MASTER_BALL)

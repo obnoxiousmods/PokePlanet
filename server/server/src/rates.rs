@@ -39,6 +39,8 @@ pub struct Rates {
     pub items: f32,
     /// Catch probability.
     pub catch: f32,
+    /// What shops charge.
+    pub shop_price: f32,
     /// Per-species encounter multipliers, applied on top of `encounter`.
     ///
     /// Keyed by the game's internal species number. A species not named here uses 1.0, so a
@@ -55,6 +57,7 @@ impl Default for Rates {
             money: 1.0,
             items: 1.0,
             catch: 1.0,
+            shop_price: 1.0,
             species_encounter: HashMap::new(),
         }
     }
@@ -94,6 +97,7 @@ impl Rates {
                 "money" => rates.money = rate,
                 "items" => rates.items = rate,
                 "catch" => rates.catch = rate,
+                "shop_price" => rates.shop_price = rate,
                 other => {
                     let species = other
                         .strip_prefix("species.")
