@@ -42,7 +42,38 @@ const OFFSET_ENCRYPTION_KEY: usize = 0xAC;
 pub const MAX_MONEY: u32 = 999_999;
 pub const MAX_COINS: u16 = 9_999;
 
+/// Caps the game enforces on a Pokemon, from src/pokemon.c and include/constants/pokemon.h.
+pub const MAX_LEVEL: u8 = 100;
+/// Not yet enforced -- see `impossible` for why.
+#[allow(dead_code)]
+pub const MAX_EV_PER_STAT: u16 = 255;
+#[allow(dead_code)]
+pub const MAX_EV_TOTAL: u16 = 510;
+
 /// Offsets within SaveBlock1. From the annotated struct in include/global.h.
+const OFFSET_PARTY: usize = 0x238;
+const PARTY_SIZE: usize = 6;
+const MON_SIZE: usize = 100;
+/// Within a `struct Pokemon`: the box data, then status, then the level.
+const MON_OFFSET_LEVEL: usize = 0x54;
+/// Within a `struct BoxPokemon`: where the four obfuscated substructs begin.
+const BOX_OFFSET_SECURE: usize = 32;
+
+/// Which physical slot each substruct type occupies, chosen by personality % 24.
+///
+/// Straight from GetSubstruct in src/pokemon.c: row[type] is the slot that type sits in.
+/// The shuffle exists to make naive save editing harder, and reading it wrong yields
+/// plausible-looking nonsense rather than an obvious failure -- which is why this is copied
+/// rather than reasoned about.
+const SUBSTRUCT_ORDER: [[usize; 4]; 24] = [
+    [0, 1, 2, 3], [0, 1, 3, 2], [0, 2, 1, 3], [0, 3, 1, 2],
+    [0, 2, 3, 1], [0, 3, 2, 1], [1, 0, 2, 3], [1, 0, 3, 2],
+    [2, 0, 1, 3], [3, 0, 1, 2], [2, 0, 3, 1], [3, 0, 2, 1],
+    [1, 2, 0, 3], [1, 3, 0, 2], [2, 1, 0, 3], [3, 1, 0, 2],
+    [2, 3, 0, 1], [3, 2, 0, 1], [1, 2, 3, 0], [1, 3, 2, 0],
+    [2, 1, 3, 0], [3, 1, 2, 0], [2, 3, 1, 0], [3, 2, 1, 0],
+];
+
 const OFFSET_MONEY: usize = 0x490;
 const OFFSET_COINS: usize = 0x494;
 const OFFSET_FLAGS: usize = 0x1270;
@@ -50,6 +81,56 @@ const OFFSET_VARS: usize = 0x139C;
 
 pub const FLAG_BYTES: usize = OFFSET_VARS - OFFSET_FLAGS; // 300
 pub const VAR_COUNT: usize = 256;
+
+/// One Pokemon, as much of it as validation needs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PartyMon {
+    pub species: u16,
+    pub level: u8,
+    pub experience: u32,
+    /// HP, Attack, Defence, Speed, Sp. Attack, Sp. Defence.
+    pub evs: [u8; 6],
+}
+
+/// Pull one `struct Pokemon` apart.
+///
+/// Returns None for an empty slot. The four substructs are exclusive-ored with
+/// personality ^ otId and shuffled by personality % 24; both have to be undone before any
+/// of it means anything.
+fn read_mon(bytes: &[u8]) -> Option<PartyMon> {
+    let personality = u32::from_le_bytes(bytes.get(0..4)?.try_into().ok()?);
+    let ot_id = u32::from_le_bytes(bytes.get(4..8)?.try_into().ok()?);
+    let key = personality ^ ot_id;
+
+    let secure = bytes.get(BOX_OFFSET_SECURE..BOX_OFFSET_SECURE + 48)?;
+    let mut plain = [0u8; 48];
+    for (i, chunk) in secure.chunks_exact(4).enumerate() {
+        let word = u32::from_le_bytes(chunk.try_into().ok()?) ^ key;
+        plain[i * 4..i * 4 + 4].copy_from_slice(&word.to_le_bytes());
+    }
+
+    let order = SUBSTRUCT_ORDER[(personality % 24) as usize];
+    let growth = order[0] * 12;
+    let evs_at = order[2] * 12;
+
+    let species = u16::from_le_bytes([plain[growth], plain[growth + 1]]);
+    if species == 0 {
+        return None; // an empty slot
+    }
+    let experience = u32::from_le_bytes([
+        plain[growth + 4], plain[growth + 5], plain[growth + 6], plain[growth + 7],
+    ]);
+
+    let mut evs = [0u8; 6];
+    evs.copy_from_slice(&plain[evs_at..evs_at + 6]);
+
+    Some(PartyMon {
+        species,
+        level: *bytes.get(MON_OFFSET_LEVEL)?,
+        experience,
+        evs,
+    })
+}
 
 /// What the server takes from a save image.
 ///
@@ -66,6 +147,8 @@ pub struct SaveState {
     pub coins_raw: u16,
     /// The key the save was written with, from SaveBlock2.
     pub encryption_key: u32,
+    /// The party, empty slots omitted.
+    pub party: Vec<PartyMon>,
 }
 
 impl SaveState {
@@ -102,6 +185,29 @@ impl SaveState {
                 MAX_COINS
             ));
         }
+
+        // Level only, and deliberately not the rest of the party yet.
+        //
+        // Level is read straight out of `struct Pokemon` at an offset checked against the
+        // running game: it reported 5 for a save this parser also reads as 5, so both the
+        // party offset and the hundred-byte stride are known good.
+        //
+        // Species, experience and effort points come through the substruct decode instead --
+        // an exclusive-or and a shuffle chosen by personality -- and that has *not* been
+        // confirmed against the game. A wrong decode there yields plausible-looking numbers
+        // rather than an obvious failure, and refusing a save on the strength of it would
+        // lock honest players out over the server's own arithmetic. They are parsed and
+        // recorded so the decode can be checked against real data; they are not yet grounds
+        // for refusing anything.
+        for (i, mon) in self.party.iter().enumerate() {
+            if mon.level > MAX_LEVEL {
+                return Some(format!(
+                    "party slot {} is level {}, above the maximum of {}",
+                    i + 1, mon.level, MAX_LEVEL
+                ));
+            }
+        }
+
         None
     }
 }
@@ -215,7 +321,17 @@ pub fn parse(image: &[u8]) -> Option<SaveState> {
     let coins_bytes = block.get(OFFSET_COINS..OFFSET_COINS + 2)?;
     let coins_raw = u16::from_le_bytes(coins_bytes.try_into().ok()?);
 
-    Some(SaveState { flags, vars, money_raw, coins_raw, encryption_key })
+    let mut party = Vec::new();
+    for i in 0..PARTY_SIZE {
+        let at = OFFSET_PARTY + i * MON_SIZE;
+        if let Some(bytes) = block.get(at..at + MON_SIZE) {
+            if let Some(mon) = read_mon(bytes) {
+                party.push(mon);
+            }
+        }
+    }
+
+    Some(SaveState { flags, vars, money_raw, coins_raw, encryption_key, party })
 }
 
 #[cfg(test)]
@@ -362,3 +478,4 @@ mod tests {
         assert!(parse(&broken).is_none(), "an incomplete slot is not loadable");
     }
 }
+
