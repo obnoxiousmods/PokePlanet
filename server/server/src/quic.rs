@@ -509,8 +509,20 @@ async fn control_loop(
                                 {
                                     tracing::warn!(error = %e, "could not store story state");
                                 }
+
+                                // Beside the story state: the same save, projected into tables
+                                // the server can query instead of bytes it can only keep.
+                                if let Err(e) = db::store_inventory_and_party(
+                                    &server.db, character_id, &state.bag, &state.party,
+                                )
+                                .await
+                                {
+                                    tracing::warn!(error = %e, "could not store bag and party");
+                                }
+
                                 tracing::info!(
                                     player = player_id, money = state.money(),
+                                    items = state.bag.len(), party = state.party.len(),
                                     "progress read from the save"
                                 );
                             }

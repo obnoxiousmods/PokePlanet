@@ -327,6 +327,79 @@ pub async fn ensure_character(
 /// Kept as the game's own flag bitfield and var array rather than interpreted: the useful
 /// questions -- has this changed, could it have changed that way -- do not need to know what
 /// any individual flag means, and encoding that would mean encoding every script in the game.
+/// Replace this character's bag and party with what was read out of their save.
+///
+/// The save image is still the record; these tables are a projection of it, kept so the server
+/// holds progress as data it can query rather than 128KB it can only store. Retiring the image
+/// depends on these having been seen to hold everything first.
+///
+/// Written in one transaction and replaced wholesale rather than merged. A bag is a set, not a
+/// log: working out which rows changed would be more code and more ways to be subtly wrong than
+/// simply saying what it is now.
+pub async fn store_inventory_and_party(
+    db: &Db,
+    character_id: i64,
+    bag: &[(u8, u16, u16)],
+    party: &[crate::save_parse::PartyMon],
+) -> anyhow::Result<()> {
+    let mut client = db.get().await?;
+    let tx = client.transaction().await?;
+
+    tx.execute("DELETE FROM inventory WHERE character_id = $1", &[&character_id])
+        .await?;
+    for (slot, (pocket, item, quantity)) in bag.iter().enumerate() {
+        // The parser has already refused zero and over-99 quantities, so anything here is
+        // storable; the CHECK on the column is the backstop rather than the gate.
+        tx.execute(
+            "INSERT INTO inventory (character_id, pocket, slot, item_id, quantity)
+             VALUES ($1, $2, $3, $4, $5)",
+            &[
+                &character_id,
+                &(*pocket as i16),
+                &(slot as i16),
+                &(*item as i32),
+                &(*quantity as i32),
+            ],
+        )
+        .await?;
+    }
+
+    // box_id 0 is the party. The PC boxes are not parsed yet and are left untouched rather
+    // than deleted, so this cannot quietly empty something it does not know how to fill.
+    tx.execute(
+        "DELETE FROM pokemon WHERE character_id = $1 AND box_id = 0",
+        &[&character_id],
+    )
+    .await?;
+    for (slot, mon) in party.iter().enumerate() {
+        // A record whose decrypted bytes disagree with its own checksum is not stored. The
+        // game treats one as a bad egg, and projecting invented numbers into a table that is
+        // meant to become authoritative would be worse than having no row at all.
+        if !mon.checksum_ok {
+            continue;
+        }
+        tx.execute(
+            "INSERT INTO pokemon
+                (character_id, box_id, slot, species, level, experience, personality, ot_id, evs)
+             VALUES ($1, 0, $2, $3, $4, $5, $6, $7, $8)",
+            &[
+                &character_id,
+                &(slot as i16),
+                &(mon.species as i32),
+                &(mon.level as i16),
+                &(mon.experience as i32),
+                &(mon.personality as i64),
+                &(mon.ot_id as i64),
+                &mon.evs.iter().map(|e| *e as i16).collect::<Vec<i16>>(),
+            ],
+        )
+        .await?;
+    }
+
+    tx.commit().await?;
+    Ok(())
+}
+
 pub async fn store_story_state(
     db: &Db,
     character_id: i64,
