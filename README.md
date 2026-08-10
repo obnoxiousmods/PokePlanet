@@ -83,10 +83,19 @@ Refused server-side, each verified against real data with a negative control:
 
 ## In progress
 
-- **Battles freeze mid-turn.** A battle now starts, both players choose actions and the first
-  moves execute — then it stops after a move message. The intro-stage freeze is fixed; this is
-  the next one along the same path, most likely the `B_COMM_CONTROLLER_IS_DONE` acknowledgement
-  round trip that clears the per-player exec bits.
+- **Battles freeze mid-turn.** A battle now starts, the intro completes and both players reach
+  the first turn. It then stops: in play, after the first moves resolve ("Foe A used TACKLE!"),
+  and in the headless harness one step earlier, at action selection waiting for the opponent.
+  Both are the same unfinished round trip.
+
+  The intro freeze is fixed, so controller *data* crosses the link. What is not proven is the
+  acknowledgement:  does not clear the exec flag locally on the
+  link branch -- it queues  and depends on that block coming back,
+  which is what clears the per-player bits. Note also that the responder never reaches the
+  action-selection stage in the harness, which is expected for the non-master (its engine is a
+  dummy and its controllers are driven by the master) but should be confirmed rather than
+  assumed.
+
 - **Palettes beyond the hardware's four.** Sprites can carry a palette of their own and both
   renderers honour it; nothing assigns one yet, and the extended bank does not participate in
   fades.
