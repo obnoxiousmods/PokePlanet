@@ -33,7 +33,20 @@
 // server has seated. Outside that, arriving blocks are dropped rather than filed: a block
 // written into gBlockRecvBuffer between battles would be read as the first block of the
 // next one.
+// Counters rather than log lines, because this is game code and the logger is on the other
+// side of the platform boundary. Deliberately not static: the point of them is that a
+// debugger, or a later diagnostic, can ask whether the link ever lost anything. Both should
+// be zero forever; either being non-zero explains a battle that stopped for no visible reason.
+u32 gMmoLinkOversizeBlocks;
+u32 gMmoLinkDroppedEchoes;
+
 static bool8 sInBattle;
+
+// Our own blocks, waiting for the game to have read the last one. See MmoLink_SendBlock.
+#define ECHO_QUEUE_LEN 8
+static struct NetLinkBlock sEchoQueue[ECHO_QUEUE_LEN];
+static u8 sEchoTail;
+static u8 sEchoCount;
 
 // A block taken off the queue that the game has not had room for yet. See MmoLink_Update.
 static struct NetLinkBlock sPending;
@@ -44,6 +57,8 @@ void MmoLink_BeginBattle(void)
 {
     sInBattle = TRUE;
     sHasPending = FALSE;
+    sEchoTail = 0;
+    sEchoCount = 0;
     ResetBlockReceivedFlags();
 }
 
@@ -56,6 +71,7 @@ void MmoLink_EndBattle(void)
 
     sInBattle = FALSE;
     sHasPending = FALSE;
+    sEchoCount = 0;
     ResetBlockReceivedFlags();
 }
 
@@ -80,12 +96,45 @@ static void Deliver(u8 slot, const u8 *bytes, u16 size)
 // completed. Nothing above this distinguishes the two.
 bool8 MmoLink_SendBlock(const void *src, u16 size)
 {
-    if (!sInBattle || src == NULL || size == 0 || size > BLOCK_BUFFER_SIZE)
+    if (!sInBattle || src == NULL || size == 0)
         return FALSE;
 
+    // A block too big for the buffer it is destined for cannot be delivered, and the caller
+    // discards this return value -- Task_HandleSendLinkBuffersData advances regardless, so the
+    // block would leave the send queue and simply cease to exist. Every wait in the battle is
+    // on an acknowledgement that would then never come, with nothing on screen to say why.
+    // Say so loudly rather than losing a battle to silence.
+    if (size > BLOCK_BUFFER_SIZE)
+    {
+        gMmoLinkOversizeBlocks++;
+        return FALSE;
+    }
+
     Net_SendLinkBlock(src, size);
-    // The echo. Without it the handshake waits forever for a block it sent itself.
-    Deliver(GetMultiplayerId(), src, size);
+
+    // The echo, queued rather than written straight in.
+    //
+    // On real hardware a machine sees its own transmissions, and the handshake depends on it.
+    // But writing it directly would overwrite a block the game has not read yet -- the same
+    // fault that was fixed for arriving blocks, and it would be inconsistent to gate one and
+    // not the other. Two sends between two drains is rare and entirely possible, and losing
+    // one wedges the battle with no diagnostic.
+    if (sEchoCount < ECHO_QUEUE_LEN)
+    {
+        struct NetLinkBlock *slot = &sEchoQueue[(sEchoTail + sEchoCount) % ECHO_QUEUE_LEN];
+
+        slot->fromSlot = GetMultiplayerId();
+        slot->len = size;
+        memcpy(slot->bytes, src, size);
+        sEchoCount++;
+    }
+    else
+    {
+        // Never observed, and if it happens the battle is already wedged -- but silently is
+        // the one way it must not happen.
+        gMmoLinkDroppedEchoes++;
+    }
+
     return TRUE;
 }
 
@@ -103,6 +152,20 @@ void MmoLink_Update(void)
 {
     if (!sInBattle)
         return;
+
+    // Our own echoes first: they were produced before anything that arrived since, and the
+    // game's protocol assumes a client sees its own messages in the order it sent them.
+    while (sEchoCount != 0)
+    {
+        struct NetLinkBlock *echo = &sEchoQueue[sEchoTail];
+
+        if (GetBlockReceivedStatus() & (1 << echo->fromSlot))
+            return;
+
+        Deliver(echo->fromSlot, echo->bytes, echo->len);
+        sEchoTail = (sEchoTail + 1) % ECHO_QUEUE_LEN;
+        sEchoCount--;
+    }
 
     for (;;)
     {
