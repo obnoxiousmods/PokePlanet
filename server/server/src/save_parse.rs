@@ -75,6 +75,20 @@ const SUBSTRUCT_ORDER: [[usize; 4]; 24] = [
 
 const OFFSET_MONEY: usize = 0x490;
 const OFFSET_COINS: usize = 0x494;
+
+/// The bag, pocket by pocket: offset and slot count, from the annotated SaveBlock1 struct
+/// and BAG_*_COUNT in include/constants/global.h. The two agree -- each pocket's offset plus
+/// four bytes a slot lands exactly on the next -- which is what makes them trustworthy.
+const BAG_POCKETS: [(usize, usize); 5] = [
+    (0x560, 30), // Items
+    (0x5D8, 30), // Key Items
+    (0x650, 16), // Poke Balls
+    (0x690, 64), // TMs and HMs
+    (0x790, 46), // Berries
+];
+
+/// What one slot can hold, from MAX_BAG_ITEM_CAPACITY in include/constants/items.h.
+pub const MAX_ITEM_QUANTITY: u16 = 99;
 const OFFSET_FLAGS: usize = 0x1270;
 const OFFSET_VARS: usize = 0x139C;
 
@@ -164,6 +178,8 @@ pub struct SaveState {
     pub encryption_key: u32,
     /// The party, empty slots omitted.
     pub party: Vec<PartyMon>,
+    /// The bag: (pocket, item id, quantity), empty slots omitted.
+    pub bag: Vec<(u8, u16, u16)>,
 }
 
 impl SaveState {
@@ -200,6 +216,20 @@ impl SaveState {
                 MAX_COINS
             ));
         }
+
+        // The bag is deliberately not grounds for refusing a save yet.
+        //
+        // A slot holds at most ninety-nine of anything and never zero, so the rule itself is
+        // sound -- but the quantities it would judge come out of an obfuscation that has not
+        // been checked against real data. Both saves available to test with have empty bags,
+        // which makes the check that was meant to prove the decode pass without examining
+        // anything, and an attempt to plant a known item did not survive to the server. A
+        // wrong decode would scatter quantities across the whole 16-bit range and refuse
+        // every honest save that carried an item.
+        //
+        // The argument that it is right -- the key is the same one money is proven with, and
+        // the pocket offsets and counts agree with each other exactly -- is a good argument
+        // and not evidence. The bag is parsed and recorded so the evidence can be had.
 
         for (i, mon) in self.party.iter().enumerate() {
             // Level is read straight out of `struct Pokemon`, at an offset confirmed against
@@ -355,6 +385,25 @@ pub fn parse(image: &[u8]) -> Option<SaveState> {
     let coins_bytes = block.get(OFFSET_COINS..OFFSET_COINS + 2)?;
     let coins_raw = u16::from_le_bytes(coins_bytes.try_into().ok()?);
 
+    // Quantities are obfuscated with the low half of the same key as money, per
+    // GetBagItemQuantity in src/item.c.
+    let mut bag = Vec::new();
+    for (pocket, (at, slots)) in BAG_POCKETS.iter().enumerate() {
+        for slot in 0..*slots {
+            let off = at + slot * 4;
+            let Some(raw) = block.get(off..off + 4) else {
+                continue;
+            };
+            let item = u16::from_le_bytes([raw[0], raw[1]]);
+            if item == 0 {
+                continue;
+            }
+            let quantity =
+                u16::from_le_bytes([raw[2], raw[3]]) ^ (encryption_key as u16);
+            bag.push((pocket as u8, item, quantity));
+        }
+    }
+
     let mut party = Vec::new();
     for i in 0..PARTY_SIZE {
         let at = OFFSET_PARTY + i * MON_SIZE;
@@ -365,7 +414,7 @@ pub fn parse(image: &[u8]) -> Option<SaveState> {
         }
     }
 
-    Some(SaveState { flags, vars, money_raw, coins_raw, encryption_key, party })
+    Some(SaveState { flags, vars, money_raw, coins_raw, encryption_key, party, bag })
 }
 
 #[cfg(test)]
@@ -458,6 +507,17 @@ mod tests {
         assert_eq!(state.flags.len(), FLAG_BYTES);
         assert_eq!(state.vars.len(), VAR_COUNT);
 
+        // A real save's bag must decode to quantities the game could actually store. This
+        // is the check that the quantity obfuscation was undone correctly: a wrong key
+        // gives values scattered across the whole 16-bit range, which this catches at once.
+        for (pocket, item, quantity) in &state.bag {
+            assert!(
+                *quantity > 0 && *quantity <= MAX_ITEM_QUANTITY,
+                "pocket {} item {} decoded to {}, so the quantity key is wrong",
+                pocket, item, quantity
+            );
+        }
+
         // Every Pokemon in a save the game wrote should decode to bytes that agree with
         // its own checksum. This is what proves the exclusive-or and the personality shuffle
         // are right, without needing to ask the game for a second opinion.
@@ -523,4 +583,5 @@ mod tests {
         assert!(parse(&broken).is_none(), "an incomplete slot is not loadable");
     }
 }
+
 
