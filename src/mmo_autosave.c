@@ -97,8 +97,65 @@ static void ReportPartyIfChanged(void)
     Net_SendParty(gPlayerPartyCount, gPlayerParty, size);
 }
 
+
+// The regions of SaveBlock1 the server accepts directly. Must match REPORTABLE in
+// server/src/save_parse.rs -- the server refuses anything not on its own list exactly, so a
+// disagreement here shows up as a region that is simply never stored rather than as a crash.
+//
+// Money, the bag and the party are absent deliberately: they have their own messages, which
+// carry checks a raw region write would walk straight past.
+static const struct { u32 offset; u32 size; } sReportable[] = {
+    { 0x00,   0x24 },  // position, warps, last heal location
+    { 0x988,  52   },  // Pokedex seen
+    { 0x9C8,  0x66 },  // trainer rematch state
+    { 0x1270, 300  },  // story flags
+    { 0x139C, 512  },  // story variables
+    { 0x159C, 256  },  // the sixty-four counters
+    { 0x169C, 0x400 }, // berry trees
+};
+
+// One region reported per tick at most.
+//
+// Berry trees alone are a kilobyte, and sending every changed region in the same frame would
+// put several kilobytes through the pipe at once for what is usually a single flag flipping.
+// Round-robin instead: each region is checked in turn, so a burst of changes costs a few
+// frames rather than one large stall, and nothing is ever skipped.
+static void ReportRegionsIfChanged(void)
+{
+    static u32 sLast[ARRAY_COUNT(sReportable)];
+    static bool8 sHaveSent[ARRAY_COUNT(sReportable)];
+    static u32 sNext;
+
+    const u8 *base = (const u8 *)gSaveBlock1Ptr;
+    u32 which = sNext;
+    u32 sum = 2166136261u;
+    u32 i;
+
+    sNext = (sNext + 1) % ARRAY_COUNT(sReportable);
+
+    if (base == NULL)
+        return;
+
+    for (i = 0; i < sReportable[which].size; i++)
+    {
+        sum ^= base[sReportable[which].offset + i];
+        sum *= 16777619u;
+    }
+
+    if (sHaveSent[which] && sum == sLast[which])
+        return;
+
+    sLast[which] = sum;
+    sHaveSent[which] = TRUE;
+    Net_SendRegion(sReportable[which].offset,
+                   base + sReportable[which].offset,
+                   sReportable[which].size);
+}
+
 void MmoAutosave_Update(void)
 {
+    ReportRegionsIfChanged();
+
     ReportPartyIfChanged();
 
     // Offline play keeps the old bargain: there is no server to hold the save, so nothing

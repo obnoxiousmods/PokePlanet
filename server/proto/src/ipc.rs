@@ -79,6 +79,8 @@ pub const MSG_MONEY: u8 = 0x8C;
 pub const MSG_ITEM: u8 = 0x8D;
 /// The party, as the game's own bytes.
 pub const MSG_PARTY: u8 = 0x8E;
+/// One allowlisted region of SaveBlock1.
+pub const MSG_REGION: u8 = 0x8F;
 
 /// Mirrors `enum NetAuthState` in the C header.
 pub const AUTH_OFFLINE: u8 = 0;
@@ -342,6 +344,8 @@ pub enum GameMessage {
     ItemChanged { pocket: u8, item: u16, quantity: u16 },
     /// The whole party, as the game's own bytes.
     PartyChanged { count: u8, mons: Vec<u8> },
+    /// One allowlisted region of SaveBlock1, as the game's own bytes.
+    RegionChanged { offset: u32, bytes: Vec<u8> },
     /// The game introducing itself, naming the sidecar it means to reach.
     Hello { instance: String },
     /// A game process connected to the sidecar.
@@ -358,6 +362,13 @@ pub fn decode_game_message(body: &[u8]) -> anyhow::Result<GameMessage> {
         .ok_or_else(|| anyhow::anyhow!("empty IPC frame"))?;
     match kind {
         MSG_BATTLE_ENDED => Ok(GameMessage::BattleEnded),
+        MSG_REGION => {
+            let head = rest.get(..4).ok_or_else(|| anyhow::anyhow!("short region"))?;
+            Ok(GameMessage::RegionChanged {
+                offset: u32::from_le_bytes([head[0], head[1], head[2], head[3]]),
+                bytes: rest[4..].to_vec(),
+            })
+        }
         MSG_PARTY => {
             let count = *rest.first().ok_or_else(|| anyhow::anyhow!("short party"))?;
             Ok(GameMessage::PartyChanged { count, mons: rest[1..].to_vec() })

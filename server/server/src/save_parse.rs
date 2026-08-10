@@ -565,6 +565,38 @@ pub fn with_party(state: &SaveState, count: u8, mons: &[u8]) -> Option<Vec<u8>> 
     Some(block1)
 }
 
+/// The parts of SaveBlock1 a client may report directly, as (offset, length).
+///
+/// An allowlist rather than an offset the client picks, because "write these bytes at this
+/// offset" with no constraint is not a save protocol, it is an arbitrary write into the
+/// player's save. Money and the party have their own messages and are deliberately absent
+/// here: they carry checks -- caps, rate ceilings, level consistency -- that a raw region
+/// write would walk straight past.
+pub const REPORTABLE: &[(usize, usize)] = &[
+    (0x00, 0x24),                              // position, warps, last heal location
+    (OFFSET_SEEN, DEX_FLAG_BYTES),             // Pokedex seen
+    (OFFSET_REMATCHES, REMATCH_BYTES),         // trainer rematch state
+    (OFFSET_FLAGS, FLAG_BYTES),                // story flags
+    (OFFSET_VARS, VAR_COUNT * 2),              // story variables
+    (OFFSET_GAME_STATS, GAME_STAT_COUNT * 4),  // the sixty-four counters
+    (OFFSET_BERRY_TREES, BERRY_TREE_BYTES),    // berry trees
+];
+
+/// A copy of this save's SaveBlock1 with one allowlisted region replaced.
+///
+/// Refuses any (offset, length) not on the list exactly. Not "within" a listed region --
+/// exactly, because accepting a subrange lets a caller write one byte at a time at an offset
+/// of its choosing, which is the same arbitrary write with extra steps.
+pub fn with_region(state: &SaveState, offset: usize, bytes: &[u8]) -> Option<Vec<u8>> {
+    if !REPORTABLE.iter().any(|&(at, len)| at == offset && len == bytes.len()) {
+        return None;
+    }
+
+    let mut block1 = state.block1.clone();
+    block1.get_mut(offset..offset + bytes.len())?.copy_from_slice(bytes);
+    Some(block1)
+}
+
 /// The game's own checksum: sum of the data as little-endian u32s, folded to sixteen bits.
 ///
 /// Mirrors CalculateChecksum in src/save.c.
@@ -1074,6 +1106,63 @@ mod tests {
         // Refusals rather than guesses about size.
         assert!(with_party(&old, 1, &mons[..10]).is_none(), "a short party must be refused");
         assert!(with_party(&old, 9, &mons).is_none(), "more than six must be refused");
+    }
+
+    /// The allowlist, written out as literals.
+    ///
+    /// The game carries the same table in src/mmo_autosave.c, and the two are matched by value
+    /// rather than shared, because one is C and the other Rust. A mismatch does not crash or
+    /// warn -- the server simply refuses that region forever and the field silently stops being
+    /// saved, which is the worst way for this to fail. Spelling the numbers out here means
+    /// changing a constant breaks this test instead of quietly breaking the game.
+    #[test]
+    fn the_allowlist_is_what_the_game_was_told() {
+        assert_eq!(
+            REPORTABLE,
+            &[
+                (0x00, 0x24),
+                (0x988, 52),
+                (0x9C8, 0x66),
+                (0x1270, 300),
+                (0x139C, 512),
+                (0x159C, 256),
+                (0x169C, 0x400),
+            ][..],
+            "if this changed, src/mmo_autosave.c must change with it"
+        );
+    }
+
+    /// Regions are written when listed, and refused otherwise.
+    #[test]
+    fn only_listed_regions_can_be_written() {
+        let mut image = image_with(0, 1, &[0xFF], &[3], 100);
+        sign(&mut image, 0, 2000);
+        let old = parse(&image).expect("readable");
+
+        let mut flags = vec![0u8; FLAG_BYTES];
+        flags[0] = 0xAB;
+        let block1 = with_region(&old, OFFSET_FLAGS, &flags).expect("flags are reportable");
+        let new = parse(&reauthor(&image, &block1).expect("authoring")).expect("parses");
+        assert_eq!(new.flags[0], 0xAB, "the reported flags should be what the save now holds");
+        assert_ne!(old.flags[0], 0xAB, "and must not have been that already");
+
+        // An offset nobody listed. This is the case that matters: without the check it is an
+        // arbitrary write into the player's save at a position the client chooses.
+        assert!(
+            with_region(&old, 0x2BE0, &[0u8; 4]).is_none(),
+            "an unlisted offset must be refused"
+        );
+        // A subrange of a listed region is still not a listed region: allowing it would let a
+        // caller write one byte at a time wherever it liked, which is the same arbitrary write.
+        assert!(
+            with_region(&old, OFFSET_FLAGS, &flags[..8]).is_none(),
+            "a partial region must be refused, not padded or merged"
+        );
+        // Money and the party are absent on purpose -- they have checks a region write skips.
+        assert!(
+            with_region(&old, OFFSET_MONEY, &[0u8; 4]).is_none(),
+            "money must not be writable as a raw region"
+        );
     }
 
     /// Build an image with one readable slot, so the layout logic is exercised without

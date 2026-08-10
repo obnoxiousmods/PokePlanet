@@ -429,6 +429,13 @@ impl Session {
                         wire::GameMessage::LinkBlock { bytes } => {
                             write_control(&mut send, &ClientControl::LinkBlock { bytes }).await?;
                         }
+                        wire::GameMessage::RegionChanged { offset, bytes } => {
+                            write_control(
+                                &mut send,
+                                &ClientControl::RegionChanged { offset, bytes },
+                            )
+                            .await?;
+                        }
                         wire::GameMessage::PartyChanged { count, mons } => {
                             write_control(
                                 &mut send,

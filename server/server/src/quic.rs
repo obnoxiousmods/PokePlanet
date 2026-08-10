@@ -418,6 +418,50 @@ async fn control_loop(
                         .await;
                 }
             }
+            ClientControl::RegionChanged { offset, bytes } => {
+                // Bounded before it is used for anything: the allowlist inside with_region is
+                // the real check, but a length the wire chose should never reach a copy.
+                if bytes.len() > 0x400 {
+                    tracing::warn!(player = player_id, len = bytes.len(), "refusing a large region");
+                    continue;
+                }
+                let Ok(Some(stored)) = db::load_save(&server.db, character_id).await else {
+                    continue;
+                };
+                let Some(old) = crate::save_parse::parse(&stored) else {
+                    continue;
+                };
+                let Some(block1) =
+                    crate::save_parse::with_region(&old, offset as usize, &bytes)
+                else {
+                    tracing::warn!(player = player_id, offset, "refusing a region not on the list");
+                    continue;
+                };
+                let Some(candidate) = crate::save_parse::reauthor(&stored, &block1) else {
+                    continue;
+                };
+                let Some(new) = crate::save_parse::parse(&candidate) else {
+                    tracing::error!(player = player_id, "rebuilt a save that will not parse");
+                    continue;
+                };
+
+                if let Some(reason) = new
+                    .impossible()
+                    .or_else(|| crate::save_parse::regressed(&old, &new))
+                {
+                    tracing::warn!(player = player_id, %reason, "refusing a reported region");
+                    continue;
+                }
+
+                db::store_save(&server.db, character_id, &candidate).await?;
+                let vars: Vec<u8> = new.vars.iter().flat_map(|v| v.to_le_bytes()).collect();
+                if let Err(e) =
+                    db::store_story_state(&server.db, character_id, &new.flags, &vars).await
+                {
+                    tracing::warn!(error = %e, "could not store story state");
+                }
+                tracing::debug!(player = player_id, offset, "region set by report");
+            }
             ClientControl::PartyChanged { count, mons } => {
                 // Bounded before anything else touches it: a length this does not expect is a
                 // client that is broken or probing, and neither should get to choose how much
