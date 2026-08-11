@@ -145,12 +145,33 @@ impl GameLink {
 }
 
 /// Accept game connections forever, forwarding decoded messages to `commands`.
+/// How long a freshly started sidecar waits for a game before giving up.
+///
+/// Generous, because it has to cover the game's whole boot. The point is not to be prompt; it is
+/// that a sidecar nobody ever attached to must not live forever.
+const STARTUP_GRACE: std::time::Duration = std::time::Duration::from_secs(90);
+
 pub async fn serve(
     listener: TcpListener,
     link: GameLink,
     commands: mpsc::Sender<GameMessage>,
     instance: String,
 ) -> anyhow::Result<()> {
+    // Nothing has ever attached, so detach() -- the only other way out -- is unreachable. Without
+    // this, a sidecar that binds the port and never sees a game runs until it is killed by hand.
+    // That happens whenever the game is closed during the seconds between spawning its sidecar
+    // and connecting to it.
+    {
+        let generation = link.generation.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(STARTUP_GRACE).await;
+            if generation.load(Ordering::SeqCst) == 0 {
+                tracing::info!("no game ever attached; shutting down");
+                std::process::exit(0);
+            }
+        });
+    }
+
     loop {
         let (stream, peer) = listener.accept().await?;
         // Defence in depth: the listener is bound to loopback, but reject anything else
@@ -190,8 +211,11 @@ async fn handle_game(
     // snapshots are disposable, so dropping the oldest is the right failure mode.
     // Deep enough for a whole save in 1KB slices plus the snapshot churn beside it.
     let (tx, mut rx) = mpsc::channel::<Vec<u8>>(512);
-    link.attach(tx).await;
+    // Deliberately NOT attached yet. See the Hello arm below.
+    let mut pending_tx = Some(tx);
 
+    // The pump reads the channel regardless of when the sender is attached, so it is safe to
+    // start it here: it simply has nothing to forward until a Hello has been accepted.
     let pump = tokio::spawn(async move {
         while let Some(frame) = rx.recv().await {
             if writer.write_all(&frame).await.is_err() {
@@ -224,6 +248,22 @@ async fn handle_game(
                         anyhow::bail!("instance mismatch");
                     }
                     tracing::info!("game identified itself");
+
+                    // Attach only now, once this really is our game.
+                    //
+                    // attach() bumps the generation counter, and the shutdown timer armed by
+                    // detach() refuses to exit if the generation has moved -- that is how a
+                    // restarting game keeps its sidecar alive. Attaching before validation
+                    // meant a game that was about to be *rejected* also postponed shutdown.
+                    //
+                    // Since the instance token was regenerated every launch, relaunching within
+                    // the grace period produced exactly that: the new game connected to the old
+                    // sidecar, was refused, retried a second later, and each refusal pushed the
+                    // shutdown out again. The sidecar became immortal, kept alive by the very
+                    // game that could not use it, while holding the port that game needed.
+                    if let Some(tx) = pending_tx.take() {
+                        link.attach(tx).await;
+                    }
                 }
                 Ok(msg) => {
                     if commands.send(msg).await.is_err() {

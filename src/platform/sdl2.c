@@ -120,20 +120,78 @@ u16 Platform_GetSidecarPort(void)
 // keeping anyone out.
 static char sInstanceToken[33];
 
+// Identifies this installation to its sidecar. Stable across restarts, by design.
+//
+// It used to be generated fresh every launch, which quietly broke restarting. A sidecar
+// outlives the game briefly on purpose, so a relaunch can reuse it instead of signing in again
+// -- but with a new token each time, the returning game was refused as a stranger. It then
+// retried once a second, and every refusal pushed the sidecar's shutdown timer out again, so
+// the sidecar never exited and never released the port. The player got a permanently offline
+// game and a process that had to be killed by hand.
+//
+// Persisting it makes a relaunch what it looks like: the same game coming back. The file sits
+// beside the save so a profile gets its own, matching how everything else here is separated.
 const char *Platform_GetInstanceToken(void)
 {
     if (sInstanceToken[0] == '\0')
     {
         static const char digits[] = "0123456789abcdef";
-        Uint64 seed = SDL_GetPerformanceCounter() ^ ((Uint64)SDL_GetTicks() << 32);
+        char path[FILENAME_MAX];
+        FILE *f;
         int i;
 
-        for (i = 0; i < 32; i++)
+        snprintf(path, sizeof(path), "%s.instance", sSavePath);
+
+        f = fopen(path, "rb");
+        if (f != NULL)
         {
-            seed = seed * 6364136223846793005ULL + 1442695040888963407ULL;
-            sInstanceToken[i] = digits[(seed >> 33) & 0xF];
+            size_t got = fread(sInstanceToken, 1, 32, f);
+            fclose(f);
+            if (got == 32)
+            {
+                // Only accept what we would have written. A truncated or edited file must not
+                // become a token that half matches.
+                for (i = 0; i < 32; i++)
+                {
+                    if (strchr(digits, sInstanceToken[i]) == NULL || sInstanceToken[i] == '\0')
+                    {
+                        sInstanceToken[0] = '\0';
+                        break;
+                    }
+                }
+                if (sInstanceToken[0] != '\0')
+                {
+                    sInstanceToken[32] = '\0';
+                    return sInstanceToken;
+                }
+            }
+            sInstanceToken[0] = '\0';
         }
-        sInstanceToken[32] = '\0';
+
+        {
+            Uint64 seed = SDL_GetPerformanceCounter() ^ ((Uint64)SDL_GetTicks() << 32);
+
+            for (i = 0; i < 32; i++)
+            {
+                seed = seed * 6364136223846793005ULL + 1442695040888963407ULL;
+                sInstanceToken[i] = digits[(seed >> 33) & 0xF];
+            }
+            sInstanceToken[32] = '\0';
+        }
+
+        // Best effort. If it cannot be written the game still works -- it just goes back to
+        // being a stranger to its own sidecar after a restart, which is where this started.
+        f = fopen(path, "wb");
+        if (f != NULL)
+        {
+            fwrite(sInstanceToken, 1, 32, f);
+            fclose(f);
+        }
+        else
+        {
+            SDL_Log("could not save the instance token to %s; restarts will not reuse the sidecar",
+                    path);
+        }
     }
 
     return sInstanceToken;
@@ -294,6 +352,9 @@ static void UpdateInternalClock(void);
 static void HandleTouchEvent(const SDL_TouchFingerEvent *event);
 static void DrawTouchControls(void);
 #endif
+
+// Applies a pending display change; defined below, used by the main loop.
+static void ApplyPendingDisplayChange(void);
 
 int main(int argc, char **argv)
 {
@@ -544,6 +605,8 @@ int main(int argc, char **argv)
     while (isRunning)
     {
         ProcessEvents();
+        // Window and renderer changes belong to this thread; see Platform_SetSetting.
+        ApplyPendingDisplayChange();
 
         if (!paused)
         {
@@ -559,6 +622,20 @@ int main(int argc, char **argv)
 
             while (accumulator >= dt)
             {
+                // Drained unconditionally. This used to sit inside the branch below, so a
+                // frame the game thread had not produced yet meant the accumulator never went
+                // down and this loop spun forever -- never returning to ProcessEvents().
+                //
+                // That turned any pause of the game thread into a permanent hang of both, and
+                // the display menu made it reachable: toggling fullscreen calls window
+                // functions from the game thread, those block until the window's owning thread
+                // pumps messages, and the owning thread was stuck right here waiting for a
+                // frame that could not come. Each waiting on the other.
+                //
+                // Falling behind is now what it should be -- dropped frames -- rather than a
+                // freeze.
+                accumulator -= dt;
+
                 if (SDL_AtomicGet(&isFrameAvailable))
                 {
                     VDraw(sdlTexture);
@@ -626,8 +703,12 @@ int main(int argc, char **argv)
                     REG_DISPSTAT &= ~INTR_FLAG_VBLANK;
 
                     SDL_SemPost(vBlankSemaphore);
-
-                    accumulator -= dt;
+                }
+                else
+                {
+                    // Nothing to draw this tick. Give the game thread the CPU rather than
+                    // spinning on it; without this a stalled game thread pins a core.
+                    break;
                 }
             }
         }
@@ -861,6 +942,42 @@ u8 Platform_GetBorderBackground(void)
     return 0;
 }
 
+// Display changes are requested here and applied by the thread that owns the window.
+//
+// SDL window and renderer calls have to come from the thread that created them. Calling them
+// from the game thread blocks until the owning thread pumps its message queue, which is a
+// deadlock waiting to happen and did happen: fullscreen off froze the game outright. The frame
+// loop no longer spins in that situation, but the ordering rule is the actual fix -- the
+// accumulator change stops it hanging, this stops it blocking at all.
+static SDL_atomic_t sDisplayChangePending;
+static SDL_atomic_t sVsyncChangePending;
+
+// Called from ProcessEvents, on the thread that made the window.
+static void ApplyPendingDisplayChange(void)
+{
+    if (SDL_AtomicSet(&sVsyncChangePending, 0))
+        SDL_RenderSetVSync(sdlRenderer, sPlatformSettings[PLATFORM_SETTING_VSYNC]);
+
+    if (!SDL_AtomicSet(&sDisplayChangePending, 0))
+        return;
+
+#if defined(NATIVE_LINUX) || defined(_WIN32)
+    {
+        u8 fullscreen = sPlatformSettings[PLATFORM_SETTING_FULLSCREEN];
+        int scale = sPlatformSettings[PLATFORM_SETTING_WINDOW_SCALE];
+
+        SDL_SetWindowFullscreen(sdlWindow, fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
+        if (!fullscreen)
+        {
+            if (scale < 1)
+                scale = 1;
+            SDL_SetWindowSize(sdlWindow, 320 * scale, 180 * scale);
+            SDL_SetWindowPosition(sdlWindow, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
+        }
+    }
+#endif
+}
+
 void Platform_SetBorderBackground(u8 selection)
 {
     sBorderBackground = selection;
@@ -876,25 +993,14 @@ u8 Platform_GetSetting(enum PlatformSetting setting)
 void Platform_SetSetting(enum PlatformSetting setting, u8 value)
 {
     sPlatformSettings[setting] = value;
+
+    // Record what is wanted; the owning thread does it. See ApplyPendingDisplayChange.
     if (setting == PLATFORM_SETTING_VSYNC)
-        SDL_RenderSetVSync(sdlRenderer, value);
-#if defined(NATIVE_LINUX) || defined(_WIN32)
-    else if (setting == PLATFORM_SETTING_FULLSCREEN)
-    {
-        SDL_SetWindowFullscreen(sdlWindow, value ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0);
-        if (!value)
-        {
-            int scale = sPlatformSettings[PLATFORM_SETTING_WINDOW_SCALE];
-            SDL_SetWindowSize(sdlWindow, 320 * scale, 180 * scale);
-            SDL_SetWindowPosition(sdlWindow, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
-        }
-    }
-    else if (setting == PLATFORM_SETTING_WINDOW_SCALE && !sPlatformSettings[PLATFORM_SETTING_FULLSCREEN])
-    {
-        SDL_SetWindowSize(sdlWindow, 320 * value, 180 * value);
-        SDL_SetWindowPosition(sdlWindow, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED);
-    }
-#endif
+        SDL_AtomicSet(&sVsyncChangePending, 1);
+    else if (setting == PLATFORM_SETTING_FULLSCREEN
+             || setting == PLATFORM_SETTING_WINDOW_SCALE)
+        SDL_AtomicSet(&sDisplayChangePending, 1);
+
     StoreConfigFile();
 }
 
