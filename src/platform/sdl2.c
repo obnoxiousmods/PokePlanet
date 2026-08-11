@@ -17,7 +17,12 @@
 #include <SDL2/SDL.h>
 #endif
 #if defined(NATIVE_LINUX) && !defined(NO_SDL_IMAGE)
+// SDL_image draws the decorative border and background art around the game screen. A server
+// running the game headlessly has no screen to put a border around, and lib32-SDL2_image is not
+// packaged everywhere, so the dependency is optional rather than assumed.
+#ifndef NO_SDL_IMAGE
 #include <SDL2/SDL_image.h>
+#endif
 #endif
 
 #include "global.h"
@@ -440,6 +445,7 @@ int main(int argc, char **argv)
     SDL_RenderSetLogicalSize(sdlRenderer, 0, 0);
 #elif defined(NATIVE_LINUX)
     SDL_RenderSetLogicalSize(sdlRenderer, 0, 0);
+#ifndef NO_SDL_IMAGE
     if ((IMG_Init(IMG_INIT_PNG) & IMG_INIT_PNG) == 0)
     {
         SDL_Log("SDL_image could not initialize: %s", IMG_GetError());
@@ -457,6 +463,7 @@ int main(int argc, char **argv)
             SDL_Log("Background image could not be loaded: %s", IMG_GetError());
         if (sdlBorderTexture == NULL)
             SDL_Log("Border image could not be loaded: %s", IMG_GetError());
+#endif // NO_SDL_IMAGE
     }
 #elif defined(_WIN32)
     SDL_RenderSetLogicalSize(sdlRenderer, 0, 0);
@@ -640,7 +647,9 @@ int main(int argc, char **argv)
     SDL_DestroyTexture(sdlBorderTexture);
 #endif
 #if defined(NATIVE_LINUX) && !defined(NO_SDL_IMAGE)
+#ifndef NO_SDL_IMAGE
     IMG_Quit();
+#endif
 #endif
     SDL_DestroyWindow(sdlWindow);
     SDL_Quit();

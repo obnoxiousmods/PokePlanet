@@ -87,7 +87,12 @@ ifeq ($(NO_SDL_IMAGE),1)
 SDL_PKGS := sdl2
 CPPFLAGS += -D NO_SDL_IMAGE
 else
+ifeq ($(NO_SDL_IMAGE),1)
+SDL_PKGS := sdl2
+CPPFLAGS += -D NO_SDL_IMAGE
+else
 SDL_PKGS := sdl2 SDL2_image
+endif
 endif
 CPPFLAGS += -m32 -D NATIVE_LINUX $(shell pkg-config --cflags $(SDL_PKGS))
 else
