@@ -560,10 +560,20 @@ impl World {
 
     /// Deliver a message that originated outside the game, e.g. from IRC.
     pub async fn inject_chat(&self, from: &str, text: &str) {
+        // Text arriving from IRC is as untrusted as text from a game client, and until now it
+        // skipped the cleaning every game message gets: an IRC user could inject control
+        // characters or an over-long line straight into everyone's chat, and a crafted nick
+        // could carry the same. Run both through the same sanitizer, and drop a message that
+        // is empty once cleaned.
+        let from = crate::quic::sanitize_chat(from);
+        let text = crate::quic::sanitize_chat(text);
+        if from.is_empty() || text.is_empty() {
+            return;
+        }
         let msg = ServerControl::Chat {
-            from: from.to_string(),
+            from,
             target: ChatTarget::Global,
-            text: text.to_string(),
+            text,
         };
         for p in self.players.read().await.values() {
             let _ = p.control.try_send(msg.clone());

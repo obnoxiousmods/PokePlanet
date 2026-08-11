@@ -1145,7 +1145,7 @@ async fn control_loop(
 }
 
 /// Strip anything the game's text renderer cannot show, and bound the length.
-fn sanitize_chat(text: &str) -> String {
+pub(crate) fn sanitize_chat(text: &str) -> String {
     text.chars()
         .filter(|c| !c.is_control())
         .take(pokeplanet_proto::ipc::TEXT_LEN - 1)
