@@ -28,6 +28,6 @@ this document.
   gated on hosting the Rust sidecar inside the application process because Android applications
   cannot launch it as a neighboring executable.
 
-The first coordinated version is `0.1.0-alpha.1`. Unsigned alpha builds include clear platform
+The first coordinated version is `0.1.0`. Unsigned early builds include clear platform
 security instructions; code signing is enabled later through CI secrets without changing the
 archive contract.
