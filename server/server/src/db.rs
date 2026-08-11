@@ -608,3 +608,78 @@ pub async fn prune(db: &Db) -> anyhow::Result<()> {
         .await?;
     Ok(())
 }
+
+#[cfg(test)]
+mod integration {
+    //! End-to-end tests against a real Postgres, for the paths the in-memory unit suite cannot
+    //! reach: the save round-trip (the one bug class that permanently destroys player data) and
+    //! the account/session/ban SQL.
+    //!
+    //! Gated on POKEPLANET_TEST_DB. When it is unset the test prints a skip line rather than
+    //! passing silently -- a silent skip that looks passed is exactly how a decode bug slipped
+    //! through here before. CI sets the variable, so it always runs there.
+    use super::*;
+
+    #[tokio::test]
+    async fn persistence_round_trips_and_bans_take_effect() {
+        let Ok(url) = std::env::var("POKEPLANET_TEST_DB") else {
+            eprintln!("SKIP: set POKEPLANET_TEST_DB to a scratch database to run this test");
+            return;
+        };
+
+        let db = connect(&url).await.expect("connect + schema");
+        let tag = format!("itest-{}", std::process::id());
+        let (account_id, _) = upsert_account(&db, &tag, "IntegrationTester")
+            .await
+            .expect("upsert account");
+        let character = ensure_character(&db, account_id, "ITester", 7)
+            .await
+            .expect("ensure character");
+
+        // 1. Save round-trip -- byte for byte. A distinctive 128KB image in, the same image out.
+        let image: Vec<u8> = (0..128 * 1024).map(|i| (i as u8) ^ 0x5A).collect();
+        store_save(&db, character.id, &image).await.expect("store");
+        let back = load_save(&db, character.id)
+            .await
+            .expect("load")
+            .expect("present");
+        assert_eq!(back, image, "a stored save must come back byte for byte");
+
+        // 2. A session resolves to its character.
+        let token = format!("itest-token-{}", std::process::id());
+        issue_session(&db, character.id, &token)
+            .await
+            .expect("issue");
+        let resolved = character_for_token(&db, &token)
+            .await
+            .expect("query")
+            .expect("resolves");
+        assert_eq!(resolved.id, character.id, "the session names its character");
+
+        // 3. Banning turns the same token away. Negative control: it resolved a moment ago.
+        db.get()
+            .await
+            .expect("client")
+            .execute(
+                "UPDATE accounts SET banned = true WHERE id = ",
+                &[&account_id],
+            )
+            .await
+            .expect("ban");
+        assert!(
+            character_for_token(&db, &token)
+                .await
+                .expect("query")
+                .is_none(),
+            "a banned account's token must resolve to nothing"
+        );
+
+        // Clean up; the account cascades to character, save and session.
+        db.get()
+            .await
+            .expect("client")
+            .execute("DELETE FROM accounts WHERE id = ", &[&account_id])
+            .await
+            .expect("cleanup");
+    }
+}

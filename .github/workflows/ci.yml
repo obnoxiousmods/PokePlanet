@@ -16,6 +16,23 @@ jobs:
   server:
     name: Server and protocol tests
     runs-on: ubuntu-latest
+    # A real Postgres so the persistence round-trip -- the one bug class that permanently
+    # destroys player data -- is actually exercised, not just the in-memory rules.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: pokeplanet_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      POKEPLANET_TEST_DB: postgres://postgres:postgres@localhost:5432/pokeplanet_test
     steps:
       - uses: actions/checkout@v4
 
@@ -28,7 +45,8 @@ jobs:
           workspaces: server
 
       # The world rules live here: movement validation, chat routing, battle seating, save
-      # parsing and the rate config. This is the suite worth protecting.
+      # parsing and the rate config. This is the suite worth protecting. With a database
+      # attached it also runs the persistence round-trip and the account/session/ban SQL.
       - name: Tests
         working-directory: server
         run: cargo test --all
