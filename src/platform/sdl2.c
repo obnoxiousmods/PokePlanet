@@ -25,6 +25,10 @@
 #endif
 #endif
 
+#ifdef NATIVE_LINUX
+#include <unistd.h>
+#include <sys/types.h>
+#endif
 #include "global.h"
 #include "platform.h"
 #include "rtc.h"
@@ -335,6 +339,60 @@ void Platform_LaunchSidecar(void)
     {
         SDL_Log("net: no sidecar started (error %lu); running offline",
                 (unsigned long)GetLastError());
+    }
+#elif defined(NATIVE_LINUX)
+    // The same thing for a POSIX host, which is what a server-run instance is.
+    //
+    // This whole function used to be inside #ifdef _WIN32, so on Linux it was an empty body:
+    // the game logged "starting one" and then did nothing at all. That is invisible on a
+    // desktop, where the sidecar is usually already there, and fatal for an instance meant to
+    // run unattended on the server -- it could never bring up its own connection.
+    {
+        char port[16], ipcPort[16], serverPort[16];
+        pid_t pid;
+
+        snprintf(serverPort, sizeof(serverPort), "%u", sServerPort);
+        snprintf(ipcPort, sizeof(ipcPort), "%u", sSidecarPort);
+        (void)port;
+
+        pid = fork();
+        if (pid == 0)
+        {
+            // Child. Detach from the parent's terminal so it is not killed by a stray signal
+            // sent to the process group, which is how the game's own test runs kept dying.
+            setsid();
+
+            if (sProfile[0] != '\0')
+            {
+                execlp("pokeplanet-net", "pokeplanet-net",
+                       "--server", sServerHost, "--port", serverPort,
+                       "--ipc-port", ipcPort, "--token", sTokenPath,
+                       "--log", sSidecarLogPath,
+                       "--instance", Platform_GetInstanceToken(),
+                       "--fixed-token", (char *)NULL);
+            }
+            else
+            {
+                execlp("pokeplanet-net", "pokeplanet-net",
+                       "--server", sServerHost, "--port", serverPort,
+                       "--ipc-port", ipcPort, "--token", sTokenPath,
+                       "--log", sSidecarLogPath,
+                       "--instance", Platform_GetInstanceToken(), (char *)NULL);
+            }
+
+            // Only reached if exec failed. _exit rather than exit: this is a forked copy of a
+            // process holding SDL and a game thread, and running atexit handlers here would
+            // tear down state the parent still owns.
+            _exit(127);
+        }
+        else if (pid > 0)
+        {
+            SDL_Log("net: started sidecar (pid %d)", (int)pid);
+        }
+        else
+        {
+            SDL_Log("net: could not fork a sidecar; running offline");
+        }
     }
 #endif
 }
