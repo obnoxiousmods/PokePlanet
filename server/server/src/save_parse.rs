@@ -1986,7 +1986,8 @@ mod tests {
             let mut mon = vec![0u8; MON_SIZE];
             mon[0..4].copy_from_slice(&personality.to_le_bytes());
             mon[4..8].copy_from_slice(&ot_id.to_le_bytes());
-            mon[BOX_OFFSET_CHECKSUM..BOX_OFFSET_CHECKSUM + 2].copy_from_slice(&checksum.to_le_bytes());
+            mon[BOX_OFFSET_CHECKSUM..BOX_OFFSET_CHECKSUM + 2]
+                .copy_from_slice(&checksum.to_le_bytes());
             for (i, chunk) in plain.chunks_exact(4).enumerate() {
                 let word = u32::from_le_bytes(chunk.try_into().unwrap()) ^ key;
                 mon[BOX_OFFSET_SECURE + i * 4..BOX_OFFSET_SECURE + i * 4 + 4]
@@ -2004,7 +2005,11 @@ mod tests {
 
         let state = decode_instance_state(&record).expect("a full record decodes");
         assert_eq!(state.money(), 5000, "money comes back decoded");
-        assert_eq!(state.party.len(), 1, "one Pokemon; the empty slots are skipped");
+        assert_eq!(
+            state.party.len(),
+            1,
+            "one Pokemon; the empty slots are skipped"
+        );
         assert_eq!(state.party[0].level, 25);
 
         // It feeds diverged: identical states agree; a client claiming different money does not.
