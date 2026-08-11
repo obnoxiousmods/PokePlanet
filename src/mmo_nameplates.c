@@ -31,10 +31,13 @@
 #define NAMEPLATE_GFX_TAG_BASE 0x504E
 #define NAMEPLATE_PAL_TAG      0x504E
 
-// 64x32 is the smallest OAM box wide enough for a name; the text sits in the top strip and the
-// rest is transparent. Eight tiles across, four down.
-#define NP_W_TILES 8
-#define NP_H_TILES 4
+// 32x16 -- four tiles across, two down, eight in all. Deliberately small: a name tag draws from
+// the same OBJ tile pool the remote-player sprites do, and a 64x32 tag (thirty-two tiles) times
+// eight players exhausted it, so the players themselves stopped rendering. Eight tiles times eight
+// players is sixty-four, a quarter of what broke it. The name goes on the top row, the party count
+// on the bottom.
+#define NP_W_TILES 4
+#define NP_H_TILES 2
 #define NP_TILE_COUNT (NP_W_TILES * NP_H_TILES)
 #define NP_WIDTH_PX  (NP_W_TILES * 8)
 
@@ -58,8 +61,8 @@ static const struct OamData sNameplateOam =
     .y = 0,
     .affineMode = ST_OAM_AFFINE_OFF,
     .objMode = ST_OAM_OBJ_NORMAL,
-    .shape = SPRITE_SHAPE(64x32),
-    .size = SPRITE_SIZE(64x32),
+    .shape = SPRITE_SHAPE(32x16),
+    .size = SPRITE_SIZE(32x16),
     .priority = 1, // above the map, with the object-event sprites
 };
 
@@ -95,6 +98,12 @@ static void SpriteCB_Nameplate(struct Sprite *sprite)
     object = &gObjectEvents[objectEventId];
     {
         const struct Sprite *body = &gSprites[object->spriteId];
+        // Follow the object-event sprite in camera space. An object-event sprite has
+        // coordOffsetEnabled set, so the OAM builder adds the camera scroll (gSpriteCoordOffset)
+        // to its x/y when it draws; without the same flag here, copying body->x put the tag at the
+        // *unscrolled* position, which drifted off to a screen corner the further the camera had
+        // moved from the origin. Match the flag and the copy tracks exactly, walk animation and all.
+        sprite->coordOffsetEnabled = TRUE;
         sprite->x = body->x;
         sprite->y = body->y - NP_Y_OFFSET;
         sprite->x2 = body->x2;
@@ -139,13 +148,11 @@ static void ClearNameplate(u8 slot)
 static void DrawName(u8 slot, const char *name, u8 partyCount)
 {
     struct WindowTemplate template;
-    u8 label[NET_NAME_LEN + 8]; // name, two spaces, up to three digits, terminator
     u8 encoded[NET_NAME_LEN + 1];
-    u8 *end;
+    u8 countStr[4]; // up to three digits and a terminator
     u8 colours[3] = { 0, 1, 2 }; // bg, text, shadow -- indices into sNameplatePalette
     const u8 *tileData;
     u8 windowId;
-    s32 x;
     u16 tileStart;
 
     if (sNameplateSpriteIds[slot] >= MAX_SPRITES)
@@ -165,18 +172,15 @@ static void DrawName(u8 slot, const char *name, u8 partyCount)
     if (windowId == WINDOW_NONE)
         return;
 
-    // "name  N" in the game's own encoding: the name from ASCII, then a gap and the party count.
-    MmoText_FromAscii(encoded, name, sizeof(encoded));
-    end = StringCopy(label, encoded);
-    *end++ = CHAR_SPACE;
-    *end++ = CHAR_SPACE;
-    end = ConvertIntToDecimalStringN(end, partyCount, STR_CONV_MODE_LEFT_ALIGN, 3);
-
     FillWindowPixelBuffer(windowId, PIXEL_FILL(0));
-    x = (NP_WIDTH_PX - GetStringWidth(FONT_SMALL, label, 0)) / 2;
-    if (x < 0)
-        x = 0;
-    AddTextPrinterParameterized3(windowId, FONT_SMALL, x, 0, colours, TEXT_SKIP_DRAW, label);
+
+    // Two rows: the name on top, the party count under it. The tag is only 32px wide, so a long
+    // name is left-aligned and clipped from the right rather than centred and clipped both ends --
+    // its start is what identifies the player. The narrowest font keeps the two rows from touching.
+    MmoText_FromAscii(encoded, name, sizeof(encoded));
+    AddTextPrinterParameterized3(windowId, FONT_SMALL, 0, 0, colours, TEXT_SKIP_DRAW, encoded);
+    ConvertIntToDecimalStringN(countStr, partyCount, STR_CONV_MODE_LEFT_ALIGN, 3);
+    AddTextPrinterParameterized3(windowId, FONT_SMALL, 0, 8, colours, TEXT_SKIP_DRAW, countStr);
 
     tileData = (const u8 *)GetWindowAttribute(windowId, WINDOW_TILE_DATA);
     CpuCopy32(tileData, (void *)OBJ_VRAM0 + tileStart * TILE_SIZE_4BPP, NP_TILE_COUNT * TILE_SIZE_4BPP);
