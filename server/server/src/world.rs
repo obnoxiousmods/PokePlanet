@@ -185,6 +185,31 @@ impl World {
             return None;
         }
 
+        // Whatever else is or is not known, a position has to be on the map it claims.
+        //
+        // The two branches below deliberately take a pose on trust -- there is nothing to
+        // compare against yet, or a door has just decided the tile. Trusting *which tile* is
+        // reasonable. Trusting that it is a tile at all is not, and nothing checked it: a pose
+        // carrying the previous map's coordinates was accepted on a map change, persisted by
+        // the save ticker, and handed back at the next sign-in, putting the player off the edge
+        // of a small interior map. Refusing here keeps the bad value from ever being stored.
+        if !self
+            .collision
+            .in_bounds(pose.map.group, pose.map.num, pose.x, pose.y)
+        {
+            tracing::warn!(
+                player = id,
+                group = pose.map.group,
+                num = pose.map.num,
+                runtime_x = pose.x,
+                runtime_y = pose.y,
+                layout_x = pose.x - 7,
+                layout_y = pose.y - 7,
+                "refusing a position that is not on that map"
+            );
+            return None;
+        }
+
         // Nothing to continue from yet, so there is nothing to check against.
         if p.position_unknown {
             // Read the old map before overwriting it, or the reindex below moves the player

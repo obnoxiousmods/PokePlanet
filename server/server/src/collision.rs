@@ -26,6 +26,17 @@ struct MapCollision {
 }
 
 impl MapCollision {
+    /// Whether a runtime coordinate is actually on this map.
+    ///
+    /// Distinct from `blocked`, and the distinction is the whole point. `blocked` treats
+    /// off-the-edge as walkable so map connections work -- you are briefly off one layout while
+    /// stepping onto the next. That is right for a step, and wrong for deciding whether a
+    /// position is a place at all: an interior map has no connections, so off its edge is
+    /// nowhere, and a position nowhere must never be stored or handed back at sign-in.
+    fn in_bounds(&self, x: i16, y: i16) -> bool {
+        x >= 0 && y >= 0 && x < self.width as i16 && y < self.height as i16
+    }
+
     fn blocked(&self, x: i16, y: i16) -> bool {
         if x < 0 || y < 0 || x >= self.width as i16 || y >= self.height as i16 {
             // Off the edge of the layout. Connections mean this is a normal thing to see for
@@ -79,6 +90,24 @@ impl Collision {
         self.maps.len()
     }
 
+    /// True when this position is a real place on this map.
+    ///
+    /// Unknown maps pass, for the same reason `walkable` lets them: a map the table does not
+    /// cover must not become a cage. What this does catch is a position on a map the table
+    /// *does* know, that is off the edge of it -- which is not a tile, however it was arrived at.
+    ///
+    /// This exists because nothing checked it. A pose is accepted verbatim on a map change, and
+    /// persisted fifteen seconds later, so town coordinates recorded against an interior map
+    /// were stored and handed back at the next sign-in. Professor Birch's lab is 13x13; its door
+    /// in Littleroot is at runtime (14, 23), an ordinary town position four tiles below the
+    /// bottom of the lab. That is the invalid spawn.
+    pub fn in_bounds(&self, group: u8, num: u8, x: i16, y: i16) -> bool {
+        match self.maps.get(&(group, num)) {
+            Some(map) => map.in_bounds(x - MAP_OFFSET, y - MAP_OFFSET),
+            None => true,
+        }
+    }
+
     /// True when a player may stand here. Unknown maps are allowed rather than refused: a
     /// map the table does not cover should not become an invisible cage.
     pub fn walkable(&self, group: u8, num: u8, x: i16, y: i16) -> bool {
@@ -123,5 +152,40 @@ mod tests {
     fn an_unknown_map_is_not_a_cage() {
         let c = one_map(20, 20, &[]);
         assert!(c.walkable(3, 3, 10, 10));
+    }
+}
+
+#[cfg(test)]
+mod bounds_tests {
+    use super::*;
+
+    fn one_map(width: u16, height: u16) -> Collision {
+        let bytes = (width as usize * height as usize).div_ceil(8);
+        let mut maps = HashMap::new();
+        maps.insert((1u8, 4u8), MapCollision { width, height, bits: vec![0u8; bytes] });
+        Collision { maps }
+    }
+
+    /// A position off the edge of a known map is not a place, and one on it still is.
+    ///
+    /// The negative control is the point: refusing everything would "fix" the invalid spawn by
+    /// making every position invalid, which would strand every player instead of one.
+    #[test]
+    fn off_the_edge_is_refused_and_ordinary_positions_are_not() {
+        // Birch's lab: 13x13 layout, so runtime 7..=19.
+        let c = one_map(13, 13);
+
+        assert!(c.in_bounds(1, 4, 7, 7), "the top-left tile is on the map");
+        assert!(c.in_bounds(1, 4, 19, 19), "the bottom-right tile is on the map");
+        assert!(c.in_bounds(1, 4, 13, 14), "somewhere in the middle is on the map");
+
+        // The reported failure: the lab's door in Littleroot is runtime (14, 23). Fine in a
+        // 20x20 town, four tiles past the bottom of a 13x13 lab.
+        assert!(!c.in_bounds(1, 4, 14, 23), "town coordinates are not on the lab");
+        assert!(!c.in_bounds(1, 4, 20, 19), "one tile past the right edge is off the map");
+        assert!(!c.in_bounds(1, 4, 6, 7), "above the border is off the map");
+
+        // A map the table does not know must not become a cage.
+        assert!(c.in_bounds(9, 9, 1000, 1000), "unknown maps are not policed");
     }
 }

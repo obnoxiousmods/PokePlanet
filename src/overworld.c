@@ -617,16 +617,41 @@ static void SetPlayerCoordsFromWarp(void)
         gSaveBlock1Ptr->pos.x = gMapHeader.events->warps[gSaveBlock1Ptr->location.warpId].x;
         gSaveBlock1Ptr->pos.y = gMapHeader.events->warps[gSaveBlock1Ptr->location.warpId].y;
     }
-    else if (gSaveBlock1Ptr->location.x >= 0 && gSaveBlock1Ptr->location.y >= 0)
+    else if (gSaveBlock1Ptr->location.x >= 0 && gSaveBlock1Ptr->location.y >= 0
+             && gSaveBlock1Ptr->location.x < gMapHeader.mapLayout->width
+             && gSaveBlock1Ptr->location.y < gMapHeader.mapLayout->height)
     {
         // Invalid warpId given. The given coords are valid, use those instead.
         // WARP_ID_NONE is used to reach this intentionally.
+        //
+        // The upper bounds are the addition. The original only checked for negatives, so a
+        // coordinate past the right or bottom edge was used without complaint -- and the
+        // continue-game warp built from the server's stored position comes through here. A
+        // position recorded against the wrong map (town coordinates on a small interior map,
+        // say) put the player outside it, which is the invalid area that gets reported.
+        //
+        // Falling through to the centre of the map is not a fix for whatever produced the bad
+        // value, but it is always somewhere playable, and the log below says what was refused.
         gSaveBlock1Ptr->pos.x = gSaveBlock1Ptr->location.x;
         gSaveBlock1Ptr->pos.y = gSaveBlock1Ptr->location.y;
     }
     else
     {
         // Invalid warpId and coords given. Put player in center of map.
+        if (gSaveBlock1Ptr->location.x >= gMapHeader.mapLayout->width
+            || gSaveBlock1Ptr->location.y >= gMapHeader.mapLayout->height)
+        {
+            // Both coordinate spaces, because confusing them is how positions end up wrong and
+            // one number on its own never says which mistake was made.
+            DebugPrintf("spawn: refusing (%d,%d) layout / (%d,%d) runtime on map %d.%d, which is "
+                        "%dx%d; using the centre instead",
+                        gSaveBlock1Ptr->location.x, gSaveBlock1Ptr->location.y,
+                        gSaveBlock1Ptr->location.x + MAP_OFFSET,
+                        gSaveBlock1Ptr->location.y + MAP_OFFSET,
+                        gSaveBlock1Ptr->location.mapGroup, gSaveBlock1Ptr->location.mapNum,
+                        gMapHeader.mapLayout->width, gMapHeader.mapLayout->height);
+        }
+
         gSaveBlock1Ptr->pos.x = gMapHeader.mapLayout->width / 2;
         gSaveBlock1Ptr->pos.y = gMapHeader.mapLayout->height / 2;
     }
