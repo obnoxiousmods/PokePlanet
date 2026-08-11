@@ -1775,7 +1775,7 @@ mod tests {
 
         // Nothing on the list may reach into the position/warp span (0x0..0x34). If a future
         // chunk boundary crept back over it, this fails rather than silently reopening the hole.
-        for &(at, len) in REPORTABLE {
+        for &(at, _len) in REPORTABLE {
             assert!(
                 at >= 0x34,
                 "chunk at {at:#X} overlaps the position/warp span the server owns"

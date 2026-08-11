@@ -14,10 +14,17 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::process::Stdio;
+use std::sync::{Arc, Mutex};
 
 use tokio::io::AsyncWriteExt;
 
 use tokio::process::{Child, Command};
+
+use crate::save_parse::SaveState;
+
+/// The most recent state a running instance has reported, shared between its reader task and the
+/// server. `None` until the instance has produced its first record.
+type LatestState = Arc<Mutex<Option<SaveState>>>;
 
 /// Create a FIFO, returning whether it now exists.
 fn make_fifo(path: &std::path::Path) -> bool {
@@ -39,7 +46,7 @@ fn make_fifo(path: &std::path::Path) -> bool {
 /// everyone the server.
 const DEFAULT_MAX: usize = 20;
 
-/// One running instance and the pipe that drives it.
+/// One running instance and the pipes on either side of it.
 struct Running {
     child: Child,
     /// Write end of the instance's input pipe, opened once and kept.
@@ -49,6 +56,9 @@ struct Running {
     /// every keypress.
     input: Option<tokio::fs::File>,
     pipe: PathBuf,
+    /// The state-readback pipe, and the latest state a background task has decoded from it.
+    state_pipe: PathBuf,
+    latest_state: LatestState,
 }
 
 pub struct Instances {
@@ -126,11 +136,19 @@ impl Instances {
         }
 
         // A pipe per instance, named after the character so a leftover from a crash is
-        // identifiable rather than anonymous.
+        // identifiable rather than anonymous. Two of them: one to drive the instance with the
+        // player's inputs, one to read its state back.
         let pipe = std::env::temp_dir().join(format!("pokeplanet-input-{character_id}"));
         let _ = std::fs::remove_file(&pipe);
         if !make_fifo(&pipe) {
             tracing::warn!(character = character_id, "could not create an input pipe");
+            return false;
+        }
+        let state_pipe = std::env::temp_dir().join(format!("pokeplanet-state-{character_id}"));
+        let _ = std::fs::remove_file(&state_pipe);
+        if !make_fifo(&state_pipe) {
+            tracing::warn!(character = character_id, "could not create a state pipe");
+            let _ = std::fs::remove_file(&pipe);
             return false;
         }
 
@@ -141,6 +159,7 @@ impl Instances {
             .env("SDL_VIDEODRIVER", "dummy")
             .env("SDL_AUDIODRIVER", "dummy")
             .env("POKEPLANET_INPUT_PIPE", &pipe)
+            .env("POKEPLANET_STATE_PIPE", &state_pipe)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -150,6 +169,7 @@ impl Instances {
         match child {
             Ok(child) => {
                 tracing::info!(character = character_id, "started a validation instance");
+                let latest_state = spawn_state_reader(character_id, state_pipe.clone());
                 // The write end is opened lazily by drive(); opening it here would block until
                 // the instance opens its read end, which it does not do until it has booted.
                 self.running.insert(
@@ -158,17 +178,27 @@ impl Instances {
                         child,
                         input: None,
                         pipe,
+                        state_pipe,
+                        latest_state,
                     },
                 );
                 true
             }
             Err(e) => {
                 let _ = std::fs::remove_file(&pipe);
+                let _ = std::fs::remove_file(&state_pipe);
                 tracing::warn!(character = character_id, error = %e,
                                "could not start a validation instance");
                 false
             }
         }
+    }
+
+    /// The latest state a character's instance has reported, if one is running and has produced a
+    /// record. This is what the live report path compares the client's own reports against.
+    pub fn latest_state(&self, character_id: i64) -> Option<SaveState> {
+        let running = self.running.get(&character_id)?;
+        running.latest_state.lock().ok()?.clone()
     }
 
     /// Open the write end for any instance that has started reading.
@@ -198,10 +228,14 @@ impl Instances {
     /// Stop a character's instance. Safe to call when there is none.
     pub async fn stop(&mut self, character_id: i64) {
         if let Some(Running {
-            mut child, pipe, ..
+            mut child,
+            pipe,
+            state_pipe,
+            ..
         }) = self.running.remove(&character_id)
         {
             let _ = std::fs::remove_file(&pipe);
+            let _ = std::fs::remove_file(&state_pipe);
             // Ask, then insist. `kill_on_drop` would handle it eventually, but an instance that
             // outlives its player is exactly the leak the sidecar taught us to close deliberately
             // rather than leave to a destructor.
@@ -221,6 +255,7 @@ impl Instances {
             .retain(|character, running| match running.child.try_wait() {
                 Ok(Some(status)) => {
                     let _ = std::fs::remove_file(&running.pipe);
+                    let _ = std::fs::remove_file(&running.state_pipe);
                     tracing::warn!(
                         character = character,
                         ?status,
@@ -231,12 +266,48 @@ impl Instances {
                 Ok(None) => true,
                 Err(e) => {
                     let _ = std::fs::remove_file(&running.pipe);
+                    let _ = std::fs::remove_file(&running.state_pipe);
                     tracing::warn!(character = character, error = %e,
                                "could not check a validation instance; dropping it");
                     false
                 }
             });
     }
+}
+
+/// The state record Platform_ReportState writes: 4 bytes of decoded money, then the six-slot party.
+const STATE_RECORD_LEN: usize = 4 + 6 * 100;
+
+/// Spawn a background reader for one instance's state pipe. It keeps the latest record it can
+/// decode; the server reads that when it wants to compare the client's reports against the run.
+///
+/// Best effort throughout, like the input side. Opening the FIFO blocks until the instance opens
+/// its write end (it boots first), which is why this lives on a blocking task; a record that will
+/// not decode is skipped, and end-of-file -- the instance gone -- simply ends the reader.
+fn spawn_state_reader(character_id: i64, path: PathBuf) -> LatestState {
+    let latest: LatestState = Arc::new(Mutex::new(None));
+    let sink = latest.clone();
+    // A detached OS thread, not a tokio blocking task: opening a FIFO for reading blocks until a
+    // writer appears, and a tokio runtime waits for its blocking tasks on shutdown -- so a task
+    // still parked on that open would hang every test (and any clean shutdown) that started an
+    // instance which never wrote. A plain thread is not tracked by the runtime; it parks harmlessly
+    // and dies with the process, and in production it unblocks the moment the instance boots.
+    std::thread::spawn(move || {
+        use std::io::Read;
+        let Ok(mut file) = std::fs::File::open(&path) else {
+            return;
+        };
+        let mut record = [0u8; STATE_RECORD_LEN];
+        while file.read_exact(&mut record).is_ok() {
+            if let Some(state) = crate::save_parse::decode_instance_state(&record) {
+                if let Ok(mut slot) = sink.lock() {
+                    *slot = Some(state);
+                }
+            }
+        }
+        tracing::debug!(character = character_id, "state reader ended");
+    });
+    latest
 }
 
 #[cfg(test)]

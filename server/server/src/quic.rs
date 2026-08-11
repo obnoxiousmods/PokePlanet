@@ -879,6 +879,23 @@ async fn control_loop(
                     party = new.party.len(),
                     "party set by report"
                 );
+
+                // If a validation instance is running for this character, compare what the client
+                // just reported against what the instance's own run produced. Advisory only: a
+                // false accusation is worse than a missed cheat, so a divergence is logged, never
+                // enforced, until real play proves the run and the client agree. Dormant until
+                // instances are enabled at all (POKEPLANET_GAME_BINARY unset).
+                if let Some(instances) = &server.instances {
+                    if let Some(computed) = instances.lock().await.latest_state(character_id) {
+                        if let Some(reason) = crate::save_parse::diverged(&new, &computed) {
+                            tracing::warn!(
+                                player = player_id,
+                                %reason,
+                                "replay divergence (advisory, not enforced)"
+                            );
+                        }
+                    }
+                }
             }
             ClientControl::ItemChanged {
                 pocket,
