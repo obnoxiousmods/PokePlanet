@@ -266,6 +266,16 @@ async fn run_session(
     mut recv: RecvStream,
     character: db::Character,
 ) -> anyhow::Result<()> {
+    // Character ids are BIGSERIAL (i64); PlayerId on the wire is u32. At any real player count
+    // the id fits, but rather than let a future id past 4 billion silently truncate -- two
+    // characters colliding on one wire id, which routes one player's traffic to another -- refuse
+    // the connection here. It cannot happen yet; this is so it fails loudly if it ever could.
+    if character.id < 0 || character.id > PlayerId::MAX as i64 {
+        anyhow::bail!(
+            "character id {} does not fit the wire's player id; refusing",
+            character.id
+        );
+    }
     let player_id = character.id as PlayerId;
     let session = crate::world::next_session_id();
     let name = character.name.clone();
