@@ -116,7 +116,7 @@ static void ClearChatTiles(void)
     }
     else
     {
-        ClearStdWindowAndFrame(sChatWindowId, TRUE);
+        ClearDialogWindowAndFrame(sChatWindowId, TRUE);
     }
 }
 
@@ -199,10 +199,12 @@ static void ShowLine(const struct NetChatLine *line)
     MmoText_FromAscii(encoded, line->text, sizeof(encoded));
     StringCopy(end, encoded);
 
-    // No std frame in a battle: its border gfx would land on tiles the battle's own frames use.
-    // The pixel-fill below still gives the text a solid backing, so it stays readable frameless.
+    // No frame in a battle: the dialogue border gfx would land on tiles the battle's own frames
+    // use. The pixel-fill below still gives the text a solid backing, so it stays readable frameless.
+    // Out of battle, the soft dialogue frame -- the game's own message-box look -- rather than the
+    // brighter std menu window, which read as a harsh white box over the field.
     if (!gMain.inBattle)
-        DrawStdWindowFrame(sChatWindowId, FALSE);
+        DrawDialogueFrame(sChatWindowId, FALSE);
     FillWindowPixelBuffer(sChatWindowId, PIXEL_FILL(1));
     AddTextPrinterParameterized(sChatWindowId, FONT_NARROW, text, 0, 1, TEXT_SKIP_DRAW, NULL);
     CopyWindowToVram(sChatWindowId, COPYWIN_FULL);
@@ -257,10 +259,12 @@ static void ShowComposer(const char *typed)
     *end++ = CHAR_UNDERSCORE;
     *end = EOS;
 
-    // No std frame in a battle: its border gfx would land on tiles the battle's own frames use.
-    // The pixel-fill below still gives the text a solid backing, so it stays readable frameless.
+    // No frame in a battle: the dialogue border gfx would land on tiles the battle's own frames
+    // use. The pixel-fill below still gives the text a solid backing, so it stays readable frameless.
+    // Out of battle, the soft dialogue frame -- the game's own message-box look -- rather than the
+    // brighter std menu window, which read as a harsh white box over the field.
     if (!gMain.inBattle)
-        DrawStdWindowFrame(sChatWindowId, FALSE);
+        DrawDialogueFrame(sChatWindowId, FALSE);
     FillWindowPixelBuffer(sChatWindowId, PIXEL_FILL(1));
     AddTextPrinterParameterized(sChatWindowId, FONT_NARROW, text, 0, 1, TEXT_SKIP_DRAW, NULL);
     CopyWindowToVram(sChatWindowId, COPYWIN_FULL);
@@ -278,10 +282,12 @@ static void ShowWelcome(void)
     if (!EnsureChatWindow(CHAT_WINDOW_COMPOSER))
         return;
 
-    // No std frame in a battle: its border gfx would land on tiles the battle's own frames use.
-    // The pixel-fill below still gives the text a solid backing, so it stays readable frameless.
+    // No frame in a battle: the dialogue border gfx would land on tiles the battle's own frames
+    // use. The pixel-fill below still gives the text a solid backing, so it stays readable frameless.
+    // Out of battle, the soft dialogue frame -- the game's own message-box look -- rather than the
+    // brighter std menu window, which read as a harsh white box over the field.
     if (!gMain.inBattle)
-        DrawStdWindowFrame(sChatWindowId, FALSE);
+        DrawDialogueFrame(sChatWindowId, FALSE);
     FillWindowPixelBuffer(sChatWindowId, PIXEL_FILL(1));
     AddTextPrinterParameterized(sChatWindowId, FONT_NARROW, sWelcomeText, 0, 1, TEXT_SKIP_DRAW,
                                 NULL);
