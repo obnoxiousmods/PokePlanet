@@ -37,6 +37,7 @@
 #include "data.h"
 #include "battle.h" // to get rid of later
 #include "constants/rgb.h"
+#include "mmo_autosave.h"
 
 #define GFXTAG_EGG       12345
 #define GFXTAG_EGG_SHARD 23456
@@ -722,6 +723,11 @@ static void CB2_EggHatch(void)
     AnimateSprites();
     BuildOamBuffer();
     UpdatePaletteFade();
+
+    // Report progression that happens in this screen (species, moves, party, boxes,
+    // money) as it changes, rather than only on the next return to the overworld -- a crash
+    // or quit from here would otherwise lose it. Safe: it reads memory and enqueues, no save.
+    MmoAutosave_Report();
 }
 
 #define sTimer      data[0]

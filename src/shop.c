@@ -38,6 +38,7 @@
 #include "constants/metatile_behaviors.h"
 #include "constants/rgb.h"
 #include "constants/songs.h"
+#include "mmo_autosave.h"
 
 #define TAG_SCROLL_ARROW   2100
 #define TAG_ITEM_ICON_BASE 2110
@@ -489,6 +490,11 @@ static void CB2_BuyMenu(void)
     BuildOamBuffer();
     DoScheduledBgTilemapCopiesToVram();
     UpdatePaletteFade();
+
+    // Report progression that happens in this screen (species, moves, party, boxes,
+    // money) as it changes, rather than only on the next return to the overworld -- a crash
+    // or quit from here would otherwise lose it. Safe: it reads memory and enqueues, no save.
+    MmoAutosave_Report();
 }
 
 static void VBlankCB_BuyMenu(void)

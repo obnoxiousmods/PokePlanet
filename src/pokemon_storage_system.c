@@ -41,6 +41,7 @@
 #include "constants/rgb.h"
 #include "constants/songs.h"
 #include "constants/pokemon_icon.h"
+#include "mmo_autosave.h"
 
 /*
     NOTE: This file is large. Some general groups of functions have
@@ -1993,6 +1994,11 @@ static void CB2_PokeStorage(void)
     UpdateCloseBoxButtonFlash();
     AnimateSprites();
     BuildOamBuffer();
+
+    // Report progression that happens in this screen (species, moves, party, boxes,
+    // money) as it changes, rather than only on the next return to the overworld -- a crash
+    // or quit from here would otherwise lose it. Safe: it reads memory and enqueues, no save.
+    MmoAutosave_Report();
 }
 
 static void EnterPokeStorage(u8 boxOption)

@@ -33,6 +33,7 @@
 #include "constants/songs.h"
 #include "constants/rgb.h"
 #include "constants/items.h"
+#include "mmo_autosave.h"
 
 extern struct Evolution gEvolutionTable[][EVOS_PER_MON];
 
@@ -534,6 +535,11 @@ static void CB2_EvolutionSceneUpdate(void)
     RunTextPrinters();
     UpdatePaletteFade();
     RunTasks();
+
+    // Report progression that happens in this screen (species, moves, party, boxes,
+    // money) as it changes, rather than only on the next return to the overworld -- a crash
+    // or quit from here would otherwise lose it. Safe: it reads memory and enqueues, no save.
+    MmoAutosave_Report();
 }
 
 static void CB2_TradeEvolutionSceneUpdate(void)
