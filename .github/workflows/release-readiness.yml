@@ -28,16 +28,19 @@ jobs:
             p7zip
             mingw-w64-i686-gcc
             mingw-w64-i686-SDL2
-            mingw-w64-i686-SDL2_image
-            mingw-w64-i686-imagemagick
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-imagemagick
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-gnu
       - name: Build game and sidecar
         run: |
+          export PATH="$PATH:/mingw64/bin"
           make -f Makefile_pc SDL_DIR=/mingw32 -j"$(nproc)"
           cd server
-          cargo build --release -p pokeplanet-net --bin pokeplanet-net --target x86_64-pc-windows-gnu
+          CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=/mingw64/bin/gcc.exe \
+            cargo build --release -p pokeplanet-net --bin pokeplanet-net \
+              --target x86_64-pc-windows-gnu
       - name: Package
         run: SDL_DLL=/mingw32/bin/SDL2.dll tools/release/package-windows.sh
       - uses: actions/upload-artifact@v4
