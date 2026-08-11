@@ -192,6 +192,34 @@ Refused server-side, each verified against real data with a negative control:
   it reports in, while the client still computes the contents. Real narrowing of the attack
   surface, not the end of it. Parsing continues, because each parsed field is one the server can
   check rather than merely carry -- and checking is what the headless engine below finishes.
+### Replay validation — built, and one design question left
+
+The apparatus exists and is tested: `instances.rs` starts, drives and stops headless instances
+(`Instances::start` / `send_input` / `stop`), the game reads a key stream from
+`POKEPLANET_INPUT_PIPE`, and `save_parse::diverged` compares a client's account against the
+server's own run. Instances are wired to sign-in and disconnect, behind
+`POKEPLANET_GAME_BINARY`; unset means the check does not run and every existing rule still does.
+
+**Not yet connected, and one part of it is not merely unwritten:**
+
+1. *Inputs are not routed.* The client does not report the keys it pressed, so there is nothing
+   to feed `send_input`. This needs a message carrying key bits per frame — mechanical, but a
+   protocol change.
+
+2. *State cannot be read back the obvious way.* An instance is a game client, so the natural
+   design is to let it report through the same path any client uses. It cannot: signing in as a
+   character that is already online sends `Superseded` (`world.rs:119`) and disconnects the
+   player. **A validation instance signing in as the character it is validating would kick that
+   character off.**
+
+   So the instance has to be readable *without* signing in. The two candidates are a local
+   channel that bypasses sign-in — the instance already talks to a sidecar over loopback, and
+   that is the natural place — or a flag that makes an instance report state while claiming no
+   session. The first keeps one identity per character, which is why it is preferred.
+
+Until 2 is decided, instances start and stop and do nothing else, which is why this is not
+described as working.
+
 - **Headless engine.** Running the game's logic server-side. This is the only thing that makes
   a *careful* forgery impossible rather than merely hard, and it is a large piece of work.
 
