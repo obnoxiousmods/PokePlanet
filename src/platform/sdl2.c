@@ -1393,6 +1393,53 @@ static u16 ControllerButtonMask(Uint8 button)
 // Non-blocking: a frame with nothing waiting is a frame with no keys held, exactly as if the
 // player were resting their hands. Blocking would tie the game's frame rate to the writer, which
 // on a slow or wedged supervisor would hang the instance rather than idle it.
+// Report this instance's state to whoever is supervising it.
+//
+// The counterpart to PumpPipedInput, and the answer to a problem the obvious design ran into:
+// a validation instance is a game client, so the natural way to read it would be to let it
+// report over the network like any client. It cannot. Signing in as a character who is already
+// online sends Superseded and disconnects them, so an instance would kick the very player it
+// was checking.
+//
+// A local pipe sidesteps that entirely. The instance never signs in, never holds a session, and
+// never appears in the world; it is a calculation the server is running, and this is how the
+// answer comes back. One identity per character, which is the property worth protecting.
+//
+// Non-blocking and best effort, for the same reason the input side is: a supervisor that stops
+// reading must leave the instance idling, not wedge it.
+void Platform_ReportState(const void *bytes, u32 size)
+{
+    static int sPipe = -2;
+
+    if (sPipe == -2)
+    {
+        const char *path = SDL_getenv("POKEPLANET_STATE_PIPE");
+
+        sPipe = -1;
+#if defined(NATIVE_LINUX)
+        if (path != NULL && path[0] != '\0')
+        {
+            sPipe = open(path, O_WRONLY | O_NONBLOCK);
+            if (sPipe >= 0)
+                SDL_Log("state: reporting to %s", path);
+        }
+#else
+        (void)path;
+#endif
+    }
+
+#if defined(NATIVE_LINUX)
+    if (sPipe >= 0)
+    {
+        ssize_t wrote = write(sPipe, bytes, size);
+        (void)wrote;  // A supervisor that has stopped reading is not this instance's problem.
+    }
+#else
+    (void)bytes;
+    (void)size;
+#endif
+}
+
 static u16 PumpPipedInput(void)
 {
     static int sPipe = -2;  // -2 unchecked, -1 unavailable

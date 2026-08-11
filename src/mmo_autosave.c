@@ -25,6 +25,7 @@
 #include "field_player_avatar.h"
 #include "mmo_autosave.h"
 #include "net_client.h"
+#include "platform.h"
 #include "save.h"
 #include "script.h"
 #include "pokemon.h"
@@ -92,6 +93,20 @@ static void ReportPartyIfChanged(void)
 
     if (sHaveSent && sum == sLast)
         return;
+
+    // A supervising server gets the same news, over its own channel. Sent before the network
+    // report and regardless of whether that succeeds: the two are answering different questions,
+    // and a full network queue is no reason to stop telling the supervisor what happened.
+    {
+        u8 report[4 + 600];
+
+        report[0] = (u8)(gSaveBlock1Ptr->money & 0xFF);
+        report[1] = (u8)((gSaveBlock1Ptr->money >> 8) & 0xFF);
+        report[2] = (u8)((gSaveBlock1Ptr->money >> 16) & 0xFF);
+        report[3] = (u8)((gSaveBlock1Ptr->money >> 24) & 0xFF);
+        memcpy(report + 4, gPlayerParty, size);
+        Platform_ReportState(report, 4 + size);
+    }
 
     // Only remember this party as reported once it is actually on the queue.
     //

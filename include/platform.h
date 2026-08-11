@@ -48,3 +48,6 @@ void Platform_SetTime(struct SiiRtcInfo *rtc);
 void Platform_SetAlarm(u8 *alarmData);
 
 #endif
+
+// Report state to a supervising process, when one is driving this instance. A no-op otherwise.
+void Platform_ReportState(const void *bytes, u32 size);
