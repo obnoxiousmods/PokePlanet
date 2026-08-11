@@ -18,6 +18,10 @@
 #include "mmo_text.h"
 #include "link.h"
 #include "net_client.h"
+#include "constants/maps.h"
+#include "fieldmap.h"
+#include "field_screen_effect.h"
+#include "overworld.h"
 #include "script.h"
 #include "string_util.h"
 #include "constants/event_object_movement.h"
@@ -165,18 +169,32 @@ static void CheckForBattleStart(void)
 // Without this the client simply keeps reporting the position the server has already
 // rejected, and the two argue forever at ten messages a second. Applying the correction is
 // what makes the server's word final rather than merely loud.
+// How long a disagreement must persist before we re-sync. Long enough that an ordinary
+// transient -- a single refused step the next report settles -- is ignored, short enough that a
+// genuinely stuck player is put right within a second.
+#define CORRECTION_HEAL_FRAMES 45
+
 static void ApplyCorrection(void)
 {
+    // Frames of unbroken disagreement. Reset the moment a frame arrives without a correction.
+    static u8 sCorrectionStreak;
+
     struct NetCorrection correction;
     struct ObjectEvent *player;
 
     if (!Net_PopCorrection(&correction))
+    {
+        sCorrectionStreak = 0;
         return;
+    }
 
     // A correction for a map we have since left is stale; the next report from here will
     // tell the server where we actually are.
     if (correction.mapGroup != sCurrentMapGroup || correction.mapNum != sCurrentMapNum)
+    {
+        sCorrectionStreak = 0;
         return;
+    }
 
     if (gPlayerAvatar.objectEventId >= OBJECT_EVENTS_COUNT)
         return;
@@ -184,19 +202,32 @@ static void ApplyCorrection(void)
     if (!player->active)
         return;
 
-    // Deliberately not moved.
+    // Act only on a *persistent* disagreement.
     //
-    // MoveObjectEventToMapCoords works for remote players because they are ordinary object
-    // events. The player is not: the camera is a separate object tied to them, and moving
-    // the avatar out from under it leaves the two disagreeing -- the map scrolls on its own
-    // and the scenery slides past a player who is standing still. Warping properly is a
-    // whole field-control sequence, not a coordinate assignment.
-    //
-    // Refusing the step server-side is what actually matters: the server keeps its own
-    // position, so everyone else sees the cheat fail even if the cheater's own screen lies
-    // to them. Yanking their avatar is cosmetic by comparison and not worth breaking
-    // rendering for honest players who hit a correction for any other reason.
-    (void)correction;
+    // A lone correction is usually a transient the next position report resolves, so re-syncing
+    // on every one would flash the screen constantly. A run of them means the client and server
+    // are durably out of step -- the case that used to strand a player, because this function did
+    // nothing and the server kept refusing every step. Then a hard re-sync is worth a brief fade.
+    if (++sCorrectionStreak < CORRECTION_HEAL_FRAMES)
+        return;
+    sCorrectionStreak = 0;
+
+    // Re-sync only when the field is idle. Warping under a running script or an in-progress warp
+    // would tear up whatever they were doing; if we are still out of sync next frame, the next
+    // correction brings us back here.
+    if (ScriptContext_IsEnabled() || ArePlayerFieldControlsLocked()
+        || gMain.callback2 != CB2_Overworld)
+        return;
+
+    // A warp, not a direct coordinate write -- which is the whole reason this used to be a no-op.
+    // A warp repositions the player and the camera together, because it is the game's own
+    // reposition; moving the object event alone left the camera behind and slid the scenery past
+    // a standing avatar. The correction carries runtime coordinates; SetWarpDestination wants
+    // layout ones, so the border offset comes back off, exactly as the sign-in continue-warp does.
+    SetWarpDestination(correction.mapGroup, correction.mapNum, WARP_ID_NONE,
+                       correction.x - MAP_OFFSET, correction.y - MAP_OFFSET);
+    DoWarp();
+    ResetInitialPlayerAvatarState();
 }
 
 // Bring one slot in line with what the server says about that player.
