@@ -225,23 +225,29 @@ impl Instances {
         }
     }
 
+    /// Remove a character's instance from the map, freeing its slot at once, and return a handle
+    /// that finishes tearing the process down. `None` when there is none.
+    ///
+    /// Split from the async teardown so the supervisor lock is not held across `child.wait()`:
+    /// removing the entry is all that needs the lock, and one slow reap must not serialise every
+    /// other connection's `start`/`stop`/`send_input` on the shared `Mutex<Instances>`.
+    pub fn take(&mut self, character_id: i64) -> Option<Stopping> {
+        self.running.remove(&character_id).map(|r| Stopping {
+            character_id,
+            child: r.child,
+            pipe: r.pipe,
+            state_pipe: r.state_pipe,
+        })
+    }
+
     /// Stop a character's instance. Safe to call when there is none.
+    ///
+    /// A convenience over `take` + `finish` for callers that already hold `&mut self` without a
+    /// shared lock (the tests, chiefly); the shared-lock path in the server uses `take` so it can
+    /// drop the lock before awaiting the reap.
     pub async fn stop(&mut self, character_id: i64) {
-        if let Some(Running {
-            mut child,
-            pipe,
-            state_pipe,
-            ..
-        }) = self.running.remove(&character_id)
-        {
-            let _ = std::fs::remove_file(&pipe);
-            let _ = std::fs::remove_file(&state_pipe);
-            // Ask, then insist. `kill_on_drop` would handle it eventually, but an instance that
-            // outlives its player is exactly the leak the sidecar taught us to close deliberately
-            // rather than leave to a destructor.
-            let _ = child.start_kill();
-            let _ = child.wait().await;
-            tracing::info!(character = character_id, "stopped a validation instance");
+        if let Some(stopping) = self.take(character_id) {
+            stopping.finish().await;
         }
     }
 
@@ -272,6 +278,36 @@ impl Instances {
                     false
                 }
             });
+    }
+}
+
+/// A removed instance whose process is still being torn down.
+///
+/// Its supervisor slot is already free -- `take` removed it from the map -- so a new instance can
+/// start in its place immediately while `finish` kills and reaps the old child off the lock.
+pub struct Stopping {
+    character_id: i64,
+    child: Child,
+    pipe: PathBuf,
+    state_pipe: PathBuf,
+}
+
+#[allow(dead_code)] // replay-validation API; call sites land as the loop is closed
+impl Stopping {
+    /// Kill the process and wait for it, cleaning up its pipes. Meant to run without the supervisor
+    /// lock held, so a slow reap blocks only this caller.
+    pub async fn finish(mut self) {
+        let _ = std::fs::remove_file(&self.pipe);
+        let _ = std::fs::remove_file(&self.state_pipe);
+        // Ask, then insist. `kill_on_drop` would handle it eventually, but an instance that
+        // outlives its player is exactly the leak the sidecar taught us to close deliberately
+        // rather than leave to a destructor.
+        let _ = self.child.start_kill();
+        let _ = self.child.wait().await;
+        tracing::info!(
+            character = self.character_id,
+            "stopped a validation instance"
+        );
     }
 }
 

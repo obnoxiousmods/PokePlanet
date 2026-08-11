@@ -405,10 +405,19 @@ async fn run_session(
     )
     .await;
 
-    // The instance goes when the player does. Left running it would be a process per departed
-    // player, which is precisely the leak the sidecar took all day to stop being.
+    // The instance goes when the player does -- but only if this session still owns it. On a
+    // reconnect the new session's `start` finds the instance already running and reuses it; if the
+    // superseded session then stopped it here, keyed only by character, it would tear the instance
+    // out from under the live session. Guarding on the current session keeps each teardown to the
+    // instance it actually brought up. Take under the lock, reap after releasing it, so one slow
+    // stop does not stall every other connection on the shared supervisor lock.
     if let Some(instances) = &server.instances {
-        instances.lock().await.stop(character.id).await;
+        if server.world.session_is_current(player_id, session).await {
+            let stopping = instances.lock().await.take(character.id);
+            if let Some(stopping) = stopping {
+                stopping.finish().await;
+            }
+        }
     }
 
     server.world.leave(player_id, session).await;
@@ -465,6 +474,22 @@ async fn hand_over_save(
     Ok(())
 }
 
+/// Whether a control message makes the server do heavy save work -- a full 128KB load, parse,
+/// rebuild and store, or a fresh copy handed back. These are the operations RequestBudget paces; a
+/// client's cheap traffic (keys, chat, battle relay, map/battle requests) is never throttled.
+fn is_heavy_control(control: &ClientControl) -> bool {
+    matches!(
+        control,
+        ClientControl::SaveUpload { .. }
+            | ClientControl::Resync
+            | ClientControl::MoneyChanged { .. }
+            | ClientControl::ItemChanged { .. }
+            | ClientControl::PartyChanged { .. }
+            | ClientControl::RegionChanged { .. }
+            | ClientControl::BlockChunk { .. }
+    )
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn control_loop(
     server: &Arc<Server>,
@@ -484,6 +509,10 @@ async fn control_loop(
     // allowance per report, so a client that reported ten times a second collected ten times the
     // headroom -- the ceiling measured how often the client spoke rather than how fast it gained.
     let mut allowance = crate::rates::Allowance::new(&server.rates);
+    // Paces the operations that each cost a full 128KB save load/rebuild/store or a fresh copy
+    // handed back, so a client cannot amplify a tiny frame into thousands of save round-trips a
+    // second. Cheap messages (keys, chat, battle) are not gated by it. See RequestBudget.
+    let mut heavy_budget = crate::rates::RequestBudget::new();
     let mut save_image: Vec<u8> = Vec::new();
     // Reassembly for whole-block reports; see ClientControl::BlockChunk below.
     let mut block_buf: Vec<u8> = Vec::new();
@@ -508,7 +537,19 @@ async fn control_loop(
             );
             return Ok(());
         }
-        match quic::decode::<ClientControl>(&frame)? {
+        let control = quic::decode::<ClientControl>(&frame)?;
+        // Throttle only the operations that make the server do heavy save work. Over budget, the
+        // message is dropped rather than the connection cut: an honest client never spends its way
+        // empty (see RequestBudget), and a dropped report is reconciled by the next one or a resync,
+        // so this cannot corrupt a save or disconnect a laggy but honest player.
+        if is_heavy_control(&control) && !heavy_budget.take() {
+            tracing::warn!(
+                player = player_id,
+                "throttling a burst of heavy save operations from one connection"
+            );
+            continue;
+        }
+        match control {
             ClientControl::Chat { target, text } => {
                 let text = sanitize_chat(&text);
                 if text.is_empty() {

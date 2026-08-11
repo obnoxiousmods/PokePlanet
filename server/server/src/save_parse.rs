@@ -366,6 +366,9 @@ pub fn boxes_impossible(storage_block: &[u8]) -> Option<String> {
             ));
         }
         let total: u16 = mon.evs.iter().map(|&e| e as u16).sum();
+        // The per-stat term is a no-op while MAX_EV_PER_STAT is 255 (a u8 cannot exceed it), and is
+        // kept deliberately: it is widened to u16 so it still enforces a *lower* cap if a stricter
+        // ruleset ever sets one, rather than being a bug that silently passes 253..255.
         if total > MAX_EV_TOTAL || mon.evs.iter().any(|&e| e as u16 > MAX_EV_PER_STAT) {
             return Some(format!(
                 "a boxed Pokemon has effort points above the cap (total {total})"

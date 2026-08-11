@@ -300,6 +300,71 @@ impl Allowance {
     }
 }
 
+/// How many whole-save operations a connection may trigger per second once its burst is spent.
+const DEFAULT_HEAVY_PER_SECOND: f32 = 10.0;
+/// The burst a connection may spend at once. Sized above a full save upload (a 128KB block arrives
+/// as ~32 chunks) so an honest first-save or resync never waits, while a flood still settles to the
+/// sustained rate afterwards.
+const DEFAULT_HEAVY_BURST: f32 = 64.0;
+
+/// A token bucket pacing how often one connection may make the server do heavy save work.
+///
+/// Every typed report and every resync costs a full 128KB load, parse, rebuild and store (or a
+/// fresh copy handed back). The authenticated control stream had no limit on how often a client
+/// could ask for that, so a 4-byte `Resync` or a tiny `MoneyChanged` spammed as fast as the stream
+/// drained turned into thousands of full save round-trips a second from a single connection --
+/// enough to exhaust the database pool and saturate upload. This bounds that.
+///
+/// Refilled by time, spent one token per heavy message. Generous enough that an honest client --
+/// which resyncs rarely and reports only on real progress -- never spends its way empty; tight
+/// enough that a flood is throttled to the refill rate. Cheap messages (keys, chat, movement) are
+/// not gated by it.
+pub struct RequestBudget {
+    tokens: f32,
+    per_second: f32,
+    burst: f32,
+    last: std::time::Instant,
+}
+
+impl RequestBudget {
+    /// A budget with the default heavy-operation rate and burst.
+    pub fn new() -> Self {
+        Self::with_rate(DEFAULT_HEAVY_PER_SECOND, DEFAULT_HEAVY_BURST)
+    }
+
+    /// A budget with an explicit rate and burst, for tests.
+    pub fn with_rate(per_second: f32, burst: f32) -> Self {
+        Self {
+            // Start full: the burst exists precisely so the operations a client legitimately does
+            // right after signing in (its first resync, a first-save upload) are never throttled.
+            tokens: burst,
+            per_second,
+            burst,
+            last: std::time::Instant::now(),
+        }
+    }
+
+    /// Take one token for a heavy operation, returning whether one was available. Refills by the
+    /// time elapsed since the last call first, so a quiet connection is always allowed a full burst.
+    pub fn take(&mut self) -> bool {
+        let seconds = self.last.elapsed().as_secs_f32();
+        self.last = std::time::Instant::now();
+        self.tokens = (self.tokens + self.per_second * seconds).min(self.burst);
+        if self.tokens >= 1.0 {
+            self.tokens -= 1.0;
+            true
+        } else {
+            false
+        }
+    }
+}
+
+impl Default for RequestBudget {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[allow(dead_code)] // superseded by Allowance; retained for its ceiling-math tests
 pub fn gained_too_fast(
     before: &crate::save_parse::SaveState,
@@ -606,5 +671,60 @@ mod tests {
     fn zero_is_allowed_because_it_is_a_choice() {
         let rates = Rates::parse("encounter = 0\n").unwrap();
         assert_eq!(rates.encounter, 0.0);
+    }
+
+    /// A flood is throttled: a connection may spend its burst, then is refused until time refills.
+    #[test]
+    fn a_burst_of_heavy_operations_is_throttled() {
+        // No refill happens across these calls (real time barely moves), so this isolates the burst.
+        let mut budget = RequestBudget::with_rate(10.0, 5.0);
+        for i in 0..5 {
+            assert!(
+                budget.take(),
+                "token {i} within the burst should be granted"
+            );
+        }
+        assert!(
+            !budget.take(),
+            "the sixth exceeds the burst and must be refused"
+        );
+        assert!(
+            !budget.take(),
+            "and it stays refused while no time has passed"
+        );
+    }
+
+    /// The negative control: an honest connection's pace is never throttled. A client that makes a
+    /// heavy request about once a second, far above any real report rate, is always granted -- so
+    /// the limiter cannot disconnect or drop reports from a laggy but honest player.
+    #[test]
+    fn an_honest_pace_is_never_throttled() {
+        let mut budget = RequestBudget::with_rate(10.0, 5.0);
+        // Spend the whole burst first, so this proves the *refill* keeps an honest pace flowing
+        // rather than merely riding the initial burst.
+        for _ in 0..5 {
+            assert!(budget.take());
+        }
+        // Ten heavy requests, each after a tenth of a second -- 10/s, the sustained rate, which is
+        // already generous next to a real client that reports only on progress.
+        for i in 0..10 {
+            std::thread::sleep(std::time::Duration::from_millis(110));
+            assert!(
+                budget.take(),
+                "request {i} at the sustained rate must be granted"
+            );
+        }
+    }
+
+    /// Waiting quietly restores a full burst, so a connection that goes idle is not left short.
+    #[test]
+    fn waiting_refills_the_budget() {
+        let mut budget = RequestBudget::with_rate(100.0, 4.0);
+        for _ in 0..4 {
+            assert!(budget.take());
+        }
+        assert!(!budget.take(), "burst is spent");
+        std::thread::sleep(std::time::Duration::from_millis(60)); // 100/s * 0.06s = 6 tokens, capped at 4
+        assert!(budget.take(), "time refilled the bucket");
     }
 }
