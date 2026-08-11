@@ -269,6 +269,14 @@ async fn run_session(
     let player_id = character.id as PlayerId;
     let session = crate::world::next_session_id();
     let name = character.name.clone();
+    // The handle this player's chat carries into the IRC channel. The bridge posts under one bot
+    // nick, so tagging each line with the player's Discord name is what lets people in the channel
+    // tell who is speaking. In-game chat still shows the character name -- that is the identity
+    // other players see in the overworld -- so this is fetched separately and used only for IRC.
+    // Falls back to the character name if the account has no name on record.
+    let irc_handle = db::discord_username_for_account(&server.db, character.account_id)
+        .await
+        .unwrap_or_else(|| name.clone());
     let session_token = auth::random_token();
     db::issue_session(&server.db, character.id, &session_token).await?;
 
@@ -370,6 +378,7 @@ async fn run_session(
         player_id,
         session,
         &name,
+        &irc_handle,
         character.id,
         &session_token,
     )
@@ -443,6 +452,7 @@ async fn control_loop(
     player_id: PlayerId,
     session: crate::world::SessionId,
     name: &str,
+    irc_handle: &str,
     character_id: i64,
     session_token: &str,
 ) -> anyhow::Result<()> {
@@ -487,7 +497,7 @@ async fn control_loop(
                     .world
                     .route_chat(player_id, name, &target, &text)
                     .await;
-                crate::irc::relay_to_irc(name, &target, &text);
+                crate::irc::relay_to_irc(irc_handle, &target, &text);
             }
             ClientControl::EnterMap { map } => {
                 if let Some(mut pose) = server.world.pose_of(player_id).await {
@@ -643,6 +653,18 @@ async fn control_loop(
                 };
                 assembled[..reported.len()].copy_from_slice(&reported);
 
+                // Block 0 is SaveBlock2, which holds the encryption key the game re-rolls on
+                // every save. Keep the server's own key: money(), coins() and item quantities
+                // are all decoded against it, so pinning it here lets the rest of SaveBlock2 --
+                // options, play time, the Pokedex -- update while none of the money-bearing
+                // values move. This is what an earlier blanket "refuse if the key changed" guard
+                // got wrong: a fresh key is normal, and refusing it dropped every SaveBlock2
+                // report a client sent, so options never persisted at all.
+                const SAVEBLOCK2_BLOCK: u8 = 0;
+                if block == SAVEBLOCK2_BLOCK {
+                    crate::save_parse::pin_encryption_key(&mut assembled, old.encryption_key);
+                }
+
                 let Some(candidate) =
                     crate::save_parse::reauthor_block(&stored, sectors, &assembled)
                 else {
@@ -658,19 +680,17 @@ async fn control_loop(
                     continue;
                 };
 
-                // Block 0 is SaveBlock2, which carries the encryption key. money() is
-                // money_raw ^ key, so a client that rewrites the key sets money to anything it
-                // likes -- and this path never money-checked it. Options and playtime live in
-                // SaveBlock2 too and must still persist, so the block is accepted but the key
-                // and the money it decodes to are pinned: neither may move through here. Money
-                // has its own validated path; SaveBlock2 reports are for the rest.
-                const SAVEBLOCK2_BLOCK: u8 = 0;
+                // With the key pinned above, a SaveBlock2 report cannot move money or coins:
+                // both decode against the key, which did not change, and money_raw/coins_raw
+                // live in SaveBlock1, which this path never writes. This check is a belt-and-
+                // braces assertion of that -- if it ever fires, the pin failed and the report
+                // must be refused rather than allowed to persist a money change.
                 if block == SAVEBLOCK2_BLOCK
                     && (new.encryption_key != old.encryption_key || new.money() != old.money())
                 {
-                    tracing::warn!(
+                    tracing::error!(
                         player = player_id,
-                        "refusing a SaveBlock2 report that would change the key or money"
+                        "SaveBlock2 report still moved the key or money after pinning; refusing"
                     );
                     continue;
                 }

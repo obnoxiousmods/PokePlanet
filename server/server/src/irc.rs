@@ -25,8 +25,20 @@ pub fn relay_to_irc(from: &str, target: &ChatTarget, text: &str) {
         return;
     }
     if let Some(tx) = OUTBOUND.get() {
-        let _ = tx.try_send(format!("<{from}> {text}"));
+        let _ = tx.try_send(format!("<{}> {}", strip_control(from), strip_control(text)));
     }
+}
+
+/// Remove control characters from a string bound for an IRC line.
+///
+/// The handle is now a Discord username, which came from OAuth rather than from the validated
+/// character-name path, so it is not trusted to be a single clean line. A CR or LF in it would end
+/// the PRIVMSG and let the rest be read as its own IRC command; stripping every control character
+/// means a crafted username cannot inject one. The text is already sanitized by the caller, but a
+/// stray control byte there would do the same, so both pass through here -- the one point
+/// everything bound for IRC goes through.
+fn strip_control(s: &str) -> String {
+    s.chars().filter(|c| !c.is_control()).collect()
 }
 
 /// Accept any certificate. Only used for loopback connections, where the peer is another
@@ -235,5 +247,16 @@ mod tests {
     fn non_privmsg_lines_are_ignored() {
         assert!(parse_privmsg(":server 001 nick :Welcome").is_none());
         assert!(parse_privmsg("PING :abc").is_none());
+    }
+
+    #[test]
+    fn control_characters_cannot_inject_an_irc_command() {
+        // A Discord username carrying CRLF and another IRC verb must not survive as a second line.
+        let hostile = "evil\r\nPRIVMSG #ops :owned";
+        let cleaned = strip_control(hostile);
+        assert!(!cleaned.contains('\r') && !cleaned.contains('\n'));
+        assert_eq!(cleaned, "evilPRIVMSG #ops :owned");
+        // An ordinary name is left intact.
+        assert_eq!(strip_control("ash.ketchum"), "ash.ketchum");
     }
 }

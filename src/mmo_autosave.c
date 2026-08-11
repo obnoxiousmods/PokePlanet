@@ -313,6 +313,16 @@ static void ReportBlocksIfChanged(void)
 
         for (j = 0; j < size[i]; j++)
         {
+            // Play time lives at the front of SaveBlock2 and its vblank counter ticks every
+            // frame, so hashing it made SaveBlock2 look changed on every single frame -- the
+            // block was re-sent about twelve times a second for nothing but a clock. Skip it in
+            // the change check, so SaveBlock2 is reported when something worth saving moves
+            // (options, the Pokedex) and play time simply rides along whenever that happens.
+            if (i == REPORT_BLOCK_SAVEBLOCK2
+                && j >= offsetof(struct SaveBlock2, playTimeHours)
+                && j < offsetof(struct SaveBlock2, optionsButtonMode))
+                continue;
+
             sum ^= bytes[j];
             sum *= 16777619u;
         }
