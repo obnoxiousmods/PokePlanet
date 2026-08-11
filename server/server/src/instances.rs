@@ -248,14 +248,16 @@ mod tests {
     async fn the_cap_is_enforced_and_is_not_a_blanket_refusal() {
         // `true` exists everywhere and exits immediately, which is all this needs: the point is
         // the bookkeeping, not the game.
+        // Disjoint character ids per test: each instance names its FIFO after the character,
+        // and tests run in parallel, so shared ids race on the same /tmp path.
         let mut instances = Instances::new("/bin/true").with_max(2);
 
-        assert!(instances.start(1), "the first should start");
-        assert!(instances.start(2), "the second should start");
+        assert!(instances.start(8001), "the first should start");
+        assert!(instances.start(8002), "the second should start");
         assert_eq!(instances.count(), 2);
 
         assert!(
-            !instances.start(3),
+            !instances.start(8003),
             "the third is over the cap and must be refused"
         );
         assert_eq!(
@@ -265,12 +267,18 @@ mod tests {
         );
 
         // Asking again for one already running is not a second instance.
-        assert!(instances.start(1), "an existing instance counts as running");
+        assert!(
+            instances.start(8001),
+            "an existing instance counts as running"
+        );
         assert_eq!(instances.count(), 2, "and does not start another");
 
-        instances.stop(1).await;
+        instances.stop(8001).await;
         assert_eq!(instances.count(), 1, "stopping frees a slot");
-        assert!(instances.start(3), "which the next character can then use");
+        assert!(
+            instances.start(8003),
+            "which the next character can then use"
+        );
     }
 
     /// Key bits reach the instance's pipe unaltered.
@@ -339,7 +347,7 @@ mod tests {
     #[tokio::test]
     async fn stopping_an_absent_instance_is_harmless() {
         let mut instances = Instances::new("/bin/true");
-        instances.stop(99).await;
+        instances.stop(8099).await;
         assert_eq!(instances.count(), 0);
     }
 
@@ -347,7 +355,7 @@ mod tests {
     #[tokio::test]
     async fn reaping_frees_capacity() {
         let mut instances = Instances::new("/bin/true").with_max(1);
-        assert!(instances.start(1));
+        assert!(instances.start(8011));
 
         // /bin/true exits immediately; give it a moment, then reap.
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
@@ -358,6 +366,6 @@ mod tests {
             0,
             "an exited instance must not hold a slot"
         );
-        assert!(instances.start(2), "and its capacity must be reusable");
+        assert!(instances.start(8012), "and its capacity must be reusable");
     }
 }
