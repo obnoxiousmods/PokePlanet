@@ -20,7 +20,7 @@ pokeplanet-proto = { path = "proto" }
 anyhow = "1"
 bincode = "1.3"
 serde = { version = "1", features = ["derive"] }
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time", "signal"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time", "signal", "process"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 quinn = "0.11"

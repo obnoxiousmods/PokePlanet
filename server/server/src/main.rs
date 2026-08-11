@@ -12,6 +12,7 @@ mod collision;
 mod config;
 mod db;
 mod http;
+mod instances;
 mod irc;
 mod rates;
 mod quic;
