@@ -346,9 +346,14 @@ async fn hand_over_save(
     character_id: i64,
     player_id: PlayerId,
 ) -> anyhow::Result<()> {
-    let Some(image) = db::load_save(&server.db, character_id).await? else {
-        return Ok(());
-    };
+    // A character with no stored save still gets an answer -- an empty one.
+    //
+    // Returning silently meant the client could not tell "your save is still coming" from "you
+    // have no save", so it had to guess with a timer, and a slow connection was indistinguishable
+    // from a new character. Guessing wrong drops the player into the world on stale local data.
+    // Sending zero bytes makes the two cases distinct, and the wait can then be a wait for an
+    // answer rather than a wait for a deadline.
+    let image = db::load_save(&server.db, character_id).await?.unwrap_or_default();
     // Spawned so a slow client reading its save cannot hold up whatever asked for it.
     let conn = conn.clone();
     tokio::spawn(async move {

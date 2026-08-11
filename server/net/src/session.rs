@@ -177,14 +177,21 @@ impl Session {
                             return;
                         }
                         tracing::info!(bytes = total, "received the stored save");
-                        let frames = image
-                            .chunks(SAVE_TO_GAME_CHUNK)
-                            .enumerate()
-                            .map(|(i, piece)| {
-                                let offset = (i * SAVE_TO_GAME_CHUNK) as u32;
-                                wire::encode_save_image(offset, total, piece)
-                            })
-                            .collect();
+                        // chunks() over an empty image yields nothing, so an empty save would
+                        // forward zero frames and the game would still be waiting. The empty
+                        // answer is the whole point here, so send it explicitly.
+                        let frames: Vec<_> = if total == 0 {
+                            vec![wire::encode_save_image(0, 0, &[])]
+                        } else {
+                            image
+                                .chunks(SAVE_TO_GAME_CHUNK)
+                                .enumerate()
+                                .map(|(i, piece)| {
+                                    let offset = (i * SAVE_TO_GAME_CHUNK) as u32;
+                                    wire::encode_save_image(offset, total, piece)
+                                })
+                                .collect()
+                        };
                         link.send_save_image(frames).await;
                     });
                 }

@@ -168,6 +168,9 @@ bool8 Net_PopCorrection(struct NetCorrection *out);
 // TRUE once if the server handed over a save this session. The bytes are already in the
 // flash mirror; the caller reloads the game from them.
 // Has the server's save arrived yet? Does not consume it.
+// TRUE once the server has answered whether this character has a stored save -- either by
+// sending one or by saying there is none. Lets the menu wait for an answer instead of a timer.
+bool8 Net_ServerSaveDecided(void);
 bool8 Net_HasServerSave(void);
 bool8 Net_TakeServerSave(void);
 

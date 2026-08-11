@@ -149,6 +149,8 @@ struct NetState
     // The server handed over a save and it is now sitting in the flash mirror.
     bool8 hasServerSave;
     bool8 serverOwnsSave;
+    // Whether the server has said either "here is your save" or "you have none".
+    bool8 saveDecided;
 
     // The server refused where we said we were. Only the newest matters: it is the truth.
     struct NetCorrection correction;
@@ -503,6 +505,18 @@ static void HandleSaveImage(const u8 *payload, u32 len)
 
     if (len < 10u + length)
         return;
+    // Zero bytes is the server saying "this character has no stored save". That is an answer,
+    // not a failure: it is what a brand new character gets, and knowing it means the wait in the
+    // main menu can end on a fact rather than on a timer.
+    if (total == 0)
+    {
+        SDL_LockMutex(sNet.lock);
+        sNet.saveDecided = TRUE;
+        SDL_UnlockMutex(sNet.lock);
+        SDL_Log("net: the server has no stored save for this character");
+        return;
+    }
+
     if (total != sizeof(FLASH_BASE))
     {
         SDL_Log("net: ignoring a save of %u bytes; this build expects %u",
@@ -527,6 +541,7 @@ static void HandleSaveImage(const u8 *payload, u32 len)
         // -- disabling exactly the case where the client is holding local-only progress and the
         // upload is the last thing that would have saved it.
         sNet.serverOwnsSave = TRUE;
+        sNet.saveDecided = TRUE;
         SDL_UnlockMutex(sNet.lock);
         SDL_Log("net: loaded the server's save (%u bytes)", (unsigned)total);
     }
@@ -1357,6 +1372,16 @@ bool8 Net_PopCorrection(struct NetCorrection *out)
     sNet.hasCorrection = FALSE;
     SDL_UnlockMutex(sNet.lock);
     return TRUE;
+}
+
+bool8 Net_ServerSaveDecided(void)
+{
+    bool8 decided;
+
+    SDL_LockMutex(sNet.lock);
+    decided = sNet.saveDecided;
+    SDL_UnlockMutex(sNet.lock);
+    return decided;
 }
 
 bool8 Net_HasServerSave(void)

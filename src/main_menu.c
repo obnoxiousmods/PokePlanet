@@ -776,7 +776,16 @@ static void Task_PokePlanetConnect(u8 taskId)
         {
             struct NetProfile pending;
 
-            if ((!Net_HasServerSave() || !Net_GetProfile(&pending))
+            // Wait for the server to have *answered* about the save, and for the profile.
+            //
+            // The answer is now a fact rather than a guess: the server sends the save, or sends
+            // an empty one to say there is none. So a new character no longer has to be inferred
+            // from a deadline expiring, which is what made a slow connection look identical to a
+            // character that had never played -- and dropped an existing player into the world on
+            // whatever was last written to this machine's disk.
+            //
+            // The deadline stays only as a backstop against a server that never answers at all.
+            if ((!Net_ServerSaveDecided() || !Net_GetProfile(&pending))
                 && ++tHoldTimer < SERVER_SAVE_WAIT_FRAMES)
                 return;
 
