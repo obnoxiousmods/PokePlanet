@@ -23,6 +23,7 @@
 #include "pokeball.h"
 #include "pokedex.h"
 #include "pokemon.h"
+#include "script_pokemon_util.h"
 #include "random.h"
 #include "rtc.h"
 #include "fieldmap.h"
@@ -838,6 +839,31 @@ static void Task_PokePlanetConnect(u8 taskId)
             // heals an already-affected save the next time it signs in.
             FlagSet(FLAG_HIDE_LITTLEROOT_TOWN_BRENDANS_HOUSE_TRUCK);
             FlagSet(FLAG_HIDE_LITTLEROOT_TOWN_MAYS_HOUSE_TRUCK);
+
+            // Never enter the world with a party that would white out on the first encounter.
+            // You cannot legitimately stand in the overworld with every Pokemon fainted -- the
+            // whiteout that follows a loss heals you first -- but a stored save can hold exactly
+            // that if a session ended between the loss and the heal being saved, and loading it
+            // drops the player straight into an insta-whiteout loop. If nothing in the party can
+            // battle, heal it here, the way a Pokemon Center would have. The heal changes the
+            // party, so it reports and the stored save is put right too.
+            {
+                u8 slot;
+                bool8 anyConscious = FALSE;
+
+                for (slot = 0; slot < PARTY_SIZE; slot++)
+                {
+                    if (GetMonData(&gPlayerParty[slot], MON_DATA_SPECIES) != SPECIES_NONE
+                     && !GetMonData(&gPlayerParty[slot], MON_DATA_IS_EGG)
+                     && GetMonData(&gPlayerParty[slot], MON_DATA_HP) != 0)
+                    {
+                        anyConscious = TRUE;
+                        break;
+                    }
+                }
+                if (!anyConscious)
+                    HealPlayerParty();
+            }
 
             // Take the position from the server rather than from inside the save image.
             // Both describe where this character stands and nothing keeps them in step, so
