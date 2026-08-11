@@ -385,6 +385,12 @@ async fn control_loop(
     session_token: &str,
 ) -> anyhow::Result<()> {
     // Save slices are reassembled here, per connection.
+    // One running allowance for this connection, refilled by time and spent by gains.
+    //
+    // Replaces a bare "time since the last report" timestamp. That granted a fresh minimum
+    // allowance per report, so a client that reported ten times a second collected ten times the
+    // headroom -- the ceiling measured how often the client spoke rather than how fast it gained.
+    let mut allowance = crate::rates::Allowance::new(&server.rates);
     let mut save_image: Vec<u8> = Vec::new();
     // Reassembly for whole-block reports; see ClientControl::BlockChunk below.
     let mut block_buf: Vec<u8> = Vec::new();
@@ -392,7 +398,6 @@ async fn control_loop(
     // When this character last uploaded, so the server knows how long it had to earn what it
     // now claims. Per connection: a first upload has nothing to compare against and is not
     // judged on rate at all.
-    let mut last_upload: Option<std::time::Instant> = None;
 
     while let Some(frame) = read_frame(recv).await? {
         match quic::decode::<ClientControl>(&frame)? {
@@ -632,16 +637,12 @@ async fn control_loop(
                     .impossible()
                     .or_else(|| crate::save_parse::regressed(&old, &new))
                     .or_else(|| {
-                        last_upload.and_then(|t| {
-                            crate::rates::gained_too_fast(&old, &new, &server.rates, t.elapsed())
-                        })
+                        allowance.check(&old, &new, &server.rates)
                     })
                 {
                     tracing::warn!(player = player_id, %reason, "refusing a reported party");
                     continue;
                 }
-
-                last_upload = Some(std::time::Instant::now());
                 db::store_save(&server.db, character_id, &candidate).await?;
                 if let Err(e) = db::store_inventory_and_party(
                     &server.db, character_id, &new.bag, &new.party,
@@ -734,16 +735,12 @@ async fn control_loop(
                     .impossible()
                     .or_else(|| crate::save_parse::regressed(&old, &new))
                     .or_else(|| {
-                        last_upload.and_then(|t| {
-                            crate::rates::gained_too_fast(&old, &new, &server.rates, t.elapsed())
-                        })
+                        allowance.check(&old, &new, &server.rates)
                     })
                 {
                     tracing::warn!(player = player_id, %reason, "refusing reported money");
                     continue;
                 }
-
-                last_upload = Some(std::time::Instant::now());
                 db::store_save(&server.db, character_id, &candidate).await?;
                 tracing::info!(player = player_id, money = new.money(), "money set by report");
             }
@@ -797,11 +794,7 @@ async fn control_loop(
                             if let Some(old) = crate::save_parse::parse(&old_image) {
                                 if let Some(reason) = crate::save_parse::regressed(&old, new)
                                     .or_else(|| {
-                                        last_upload.and_then(|t| {
-                                            crate::rates::gained_too_fast(
-                                                &old, new, &server.rates, t.elapsed(),
-                                            )
-                                        })
+                                        allowance.check(&old, new, &server.rates)
                                     })
                                 {
                                     tracing::warn!(
@@ -813,8 +806,6 @@ async fn control_loop(
                                 }
                             }
                         }
-
-                        last_upload = Some(std::time::Instant::now());
                         db::store_save(&server.db, character_id, &save_image).await?;
                         tracing::info!(
                             player = player_id, bytes = save_image.len(), "save stored"

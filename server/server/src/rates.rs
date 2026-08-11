@@ -181,6 +181,105 @@ fn ceiling_scale(rate: f32) -> f32 {
     rate
 }
 
+/// How much unspent allowance can build up, in seconds' worth.
+///
+/// Without a cap, a character idle for an hour could spend an hour of headroom in one report,
+/// which is the same as having no ceiling for anyone patient. A minute is generous enough that
+/// ordinary bursts -- a long battle, a shop trip -- never touch it.
+const BURST_SECONDS: f32 = 60.0;
+
+/// A running allowance for one character, spent by gains and refilled by time.
+///
+/// Replaces passing a bare `elapsed` to `gained_too_fast`. That took the time since the *last
+/// report* and floored it at one second, which was fine when a report meant a whole save upload
+/// arriving at most every ninety frames. Now that money, items and the party each report as they
+/// change, a client sending ten reports a second collected ten separate one-second allowances --
+/// so reporting more often bought more headroom, and the ceiling measured message frequency
+/// rather than rate of gain.
+///
+/// A bucket cannot be gamed that way: time refills it and gains empty it, so the sustained limit
+/// is the same whether progress arrives in one report or a hundred.
+pub struct Allowance {
+    last: std::time::Instant,
+    money: f32,
+    experience: f32,
+}
+
+impl Allowance {
+    /// Starts with a second's worth rather than a full bucket.
+    ///
+    /// A full bucket on connect would hand out a minute of headroom to anyone who reconnects,
+    /// which turns reconnecting into the cheat. A second is enough that the first honest report
+    /// after signing in is never refused.
+    pub fn new(rates: &Rates) -> Self {
+        Self {
+            last: std::time::Instant::now(),
+            money: MONEY_PER_SECOND * ceiling_scale(rates.money),
+            experience: EXPERIENCE_PER_SECOND * ceiling_scale(rates.experience),
+        }
+    }
+
+    fn refill(&mut self, rates: &Rates) {
+        let seconds = self.last.elapsed().as_secs_f32();
+        self.last = std::time::Instant::now();
+
+        let money_rate = MONEY_PER_SECOND * ceiling_scale(rates.money);
+        let exp_rate = EXPERIENCE_PER_SECOND * ceiling_scale(rates.experience);
+
+        self.money = (self.money + money_rate * seconds).min(money_rate * BURST_SECONDS);
+        self.experience =
+            (self.experience + exp_rate * seconds).min(exp_rate * BURST_SECONDS);
+    }
+
+    /// Judge a change, spending the allowance it costs.
+    ///
+    /// Nothing is spent when the change is refused, so a rejected report does not make the next
+    /// honest one more likely to be refused too.
+    pub fn check(
+        &mut self,
+        before: &crate::save_parse::SaveState,
+        after: &crate::save_parse::SaveState,
+        rates: &Rates,
+    ) -> Option<String> {
+        self.refill(rates);
+
+        let money_gained = after.money().saturating_sub(before.money()) as f32;
+        if money_gained > self.money {
+            return Some(format!(
+                "gained {money_gained:.0} money, above the {:.0} this character has built up",
+                self.money
+            ));
+        }
+
+        let mut exp_gained = 0.0f32;
+        for old in &before.party {
+            let Some(new) = after
+                .party
+                .iter()
+                .find(|m| m.personality == old.personality && m.ot_id == old.ot_id)
+            else {
+                continue;
+            };
+            if !old.checksum_ok || !new.checksum_ok {
+                continue;
+            }
+            if new.experience > old.experience {
+                exp_gained += (new.experience - old.experience) as f32;
+            }
+        }
+        if exp_gained > self.experience {
+            return Some(format!(
+                "gained {exp_gained:.0} experience, above the {:.0} this character has built up",
+                self.experience
+            ));
+        }
+
+        self.money -= money_gained;
+        self.experience -= exp_gained;
+        None
+    }
+}
+
 pub fn gained_too_fast(
     before: &crate::save_parse::SaveState,
     after: &crate::save_parse::SaveState,
@@ -288,6 +387,60 @@ mod tests {
         assert!(
             gained_too_fast(&state(0, 0), &state(0, 10_000), &Rates::default(), secs(1)).is_none(),
             "the refused gain must be acceptable at 1.0x"
+        );
+    }
+
+    /// Reporting more often does not buy more headroom.
+    ///
+    /// This is the property the old per-call floor did not have, and the reason for the change:
+    /// with a floor, ten reports in a second collected ten separate one-second allowances.
+    #[test]
+    fn many_small_reports_cannot_outrun_one_large_one() {
+        let r = Rates::default();
+        let mut bucket = Allowance::new(&r);
+
+        // Drain the initial second's worth, then keep asking. Time barely advances across this
+        // loop, so almost nothing refills -- the total permitted stays near one second's worth
+        // however many reports it is split across.
+        let mut allowed_total = 0u32;
+        let step = 5_000u32;
+        for _ in 0..50 {
+            if bucket.check(&state(0, 0), &state(0, step), &r).is_none() {
+                allowed_total += step;
+            }
+        }
+
+        assert!(
+            allowed_total <= (EXPERIENCE_PER_SECOND as u32) * 2,
+            "fifty rapid reports let through {allowed_total} experience, which is more than \
+             a couple of seconds' worth -- splitting a gain up is buying headroom"
+        );
+
+        // Negative control: the bucket is not simply refusing everything. A fresh one accepts
+        // an ordinary gain.
+        let mut fresh = Allowance::new(&r);
+        assert!(
+            fresh.check(&state(0, 0), &state(0, 1_000), &r).is_none(),
+            "an ordinary gain must be accepted, or this is a ceiling of zero"
+        );
+    }
+
+    /// Time refills the allowance.
+    #[test]
+    fn waiting_restores_headroom() {
+        let r = Rates::default();
+        let mut bucket = Allowance::new(&r);
+
+        // Spend it all.
+        while bucket.check(&state(0, 0), &state(0, 5_000), &r).is_none() {}
+
+        // Rewind the clock to simulate a wait, which is the only way to test this without
+        // sleeping in a unit test.
+        bucket.last = std::time::Instant::now() - std::time::Duration::from_secs(10);
+
+        assert!(
+            bucket.check(&state(0, 0), &state(0, 5_000), &r).is_none(),
+            "ten seconds of waiting must restore enough headroom for an ordinary gain"
         );
     }
 
