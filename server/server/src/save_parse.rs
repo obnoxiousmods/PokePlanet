@@ -215,6 +215,106 @@ fn read_mon(bytes: &[u8]) -> Option<PartyMon> {
     })
 }
 
+/// The PC boxes, inside the PokemonStorage block: a currentBox byte, then 14x30 BoxPokemon of
+/// 80 bytes each starting at offset 1.
+const BOXES_OFFSET: usize = 1;
+const BOX_MON_SIZE: usize = 80;
+const BOX_MON_COUNT: usize = 14 * 30;
+
+/// A single boxed Pokemon, decoded far enough to judge whether it is possible.
+///
+/// The first 80 bytes of a party Pokemon *are* a BoxPokemon, so this is read_mon's substruct
+/// decode without the party-only level byte. Kept as a small struct rather than reusing PartyMon
+/// so the absence of a real level cannot be mistaken for level 0.
+struct BoxMon {
+    species: u16,
+    experience: u32,
+    evs: [u8; 6],
+    checksum_ok: bool,
+}
+
+fn read_box_mon(bytes: &[u8]) -> Option<BoxMon> {
+    let personality = u32::from_le_bytes(bytes.get(0..4)?.try_into().ok()?);
+    let ot_id = u32::from_le_bytes(bytes.get(4..8)?.try_into().ok()?);
+    let key = personality ^ ot_id;
+
+    let secure = bytes.get(BOX_OFFSET_SECURE..BOX_OFFSET_SECURE + 48)?;
+    let mut plain = [0u8; 48];
+    for (i, chunk) in secure.chunks_exact(4).enumerate() {
+        let word = u32::from_le_bytes(chunk.try_into().ok()?) ^ key;
+        plain[i * 4..i * 4 + 4].copy_from_slice(&word.to_le_bytes());
+    }
+
+    let computed: u16 = plain.chunks_exact(2).fold(0u16, |acc, c| {
+        acc.wrapping_add(u16::from_le_bytes([c[0], c[1]]))
+    });
+    let stored = u16::from_le_bytes(
+        bytes
+            .get(BOX_OFFSET_CHECKSUM..BOX_OFFSET_CHECKSUM + 2)?
+            .try_into()
+            .ok()?,
+    );
+
+    let order = SUBSTRUCT_ORDER[(personality % 24) as usize];
+    let growth = order[0] * 12;
+    let evs_at = order[2] * 12;
+
+    let species = u16::from_le_bytes([plain[growth], plain[growth + 1]]);
+    if species == 0 {
+        return None; // empty slot
+    }
+    let experience = u32::from_le_bytes([
+        plain[growth + 4],
+        plain[growth + 5],
+        plain[growth + 6],
+        plain[growth + 7],
+    ]);
+    let mut evs = [0u8; 6];
+    evs.copy_from_slice(&plain[evs_at..evs_at + 6]);
+
+    Some(BoxMon {
+        species,
+        experience,
+        evs,
+        checksum_ok: computed == stored,
+    })
+}
+
+/// Reject a PokemonStorage block that carries a boxed Pokemon which could not have come from
+/// playing -- experience or effort points above what the game clamps to.
+///
+/// Only decodable slots are judged, matching every other check here: an undecodable slot is not
+/// evidence of a cheat, and refusing on a bad decode would be worse than missing one. Empty
+/// slots (species 0) are skipped. This closes the hole where the 35KB storage block was spliced
+/// in verbatim with nothing looking at it.
+pub fn boxes_impossible(storage_block: &[u8]) -> Option<String> {
+    for i in 0..BOX_MON_COUNT {
+        let at = BOXES_OFFSET + i * BOX_MON_SIZE;
+        let Some(slot) = storage_block.get(at..at + BOX_MON_SIZE) else {
+            break;
+        };
+        let Some(mon) = read_box_mon(slot) else {
+            continue;
+        };
+        if !mon.checksum_ok {
+            continue;
+        }
+        if mon.experience > MAX_EXPERIENCE {
+            return Some(format!(
+                "a boxed Pokemon has {} experience, above the {MAX_EXPERIENCE} maximum",
+                mon.experience
+            ));
+        }
+        let total: u16 = mon.evs.iter().map(|&e| e as u16).sum();
+        if total > MAX_EV_TOTAL || mon.evs.iter().any(|&e| e as u16 > MAX_EV_PER_STAT) {
+            return Some(format!(
+                "a boxed Pokemon has effort points above the cap (total {total})"
+            ));
+        }
+    }
+    None
+}
+
 /// What the server takes from a save image.
 ///
 /// Flags and vars are kept as the game's own bitfield and array rather than interpreted.
@@ -1696,6 +1796,77 @@ mod tests {
             attacked.money(),
             old.money(),
             "and money moved with it -- the guard's money() check fires too"
+        );
+    }
+
+    /// A boxed Pokemon with impossible effort points is refused; a legal one is not.
+    ///
+    /// Builds one real BoxPokemon by encoding a growth+EV substruct, encrypting it with the
+    /// personality^ot_id key and writing the matching checksum -- so the decode path is
+    /// exercised for real, not asserted against a fixture that would pass while decoding nothing.
+    /// The negative control is the whole point: a legal mon must pass, or the check is just
+    /// refusing everything.
+    #[test]
+    fn an_impossible_boxed_pokemon_is_refused_a_legal_one_is_not() {
+        fn one_box(species: u16, experience: u32, evs: [u8; 6]) -> Vec<u8> {
+            // A storage block big enough for the first slot.
+            let mut block = vec![0u8; BOXES_OFFSET + BOX_MON_SIZE];
+            let personality: u32 = 0x1234_5678;
+            let ot_id: u32 = 0x9abc_def0;
+            let key = personality ^ ot_id;
+
+            let mon = &mut block[BOXES_OFFSET..BOXES_OFFSET + BOX_MON_SIZE];
+            mon[0..4].copy_from_slice(&personality.to_le_bytes());
+            mon[4..8].copy_from_slice(&ot_id.to_le_bytes());
+
+            // Growth substruct at index 0, EVs at index 2, for personality % 24 == 0's order.
+            let order = SUBSTRUCT_ORDER[(personality % 24) as usize];
+            let mut plain = [0u8; 48];
+            let growth = order[0] * 12;
+            let evs_at = order[2] * 12;
+            plain[growth..growth + 2].copy_from_slice(&species.to_le_bytes());
+            plain[growth + 4..growth + 8].copy_from_slice(&experience.to_le_bytes());
+            plain[evs_at..evs_at + 6].copy_from_slice(&evs);
+
+            // Checksum over the plaintext, then encrypt into the secure region.
+            let checksum: u16 = plain.chunks_exact(2).fold(0u16, |a, c| {
+                a.wrapping_add(u16::from_le_bytes([c[0], c[1]]))
+            });
+            mon[BOX_OFFSET_CHECKSUM..BOX_OFFSET_CHECKSUM + 2]
+                .copy_from_slice(&checksum.to_le_bytes());
+            for (i, chunk) in plain.chunks_exact(4).enumerate() {
+                let word = u32::from_le_bytes(chunk.try_into().unwrap()) ^ key;
+                mon[BOX_OFFSET_SECURE + i * 4..BOX_OFFSET_SECURE + i * 4 + 4]
+                    .copy_from_slice(&word.to_le_bytes());
+            }
+            block
+        }
+
+        // Negative control: a legal boxed mon (Bulbasaur, some exp, legal EVs) passes.
+        let legal = one_box(1, 50_000, [100, 100, 100, 100, 50, 50]);
+        assert!(
+            boxes_impossible(&legal).is_none(),
+            "a legal boxed Pokemon must not be refused"
+        );
+        // Sanity: it actually decoded (checksum matched), or the control proves nothing.
+        assert!(
+            read_box_mon(&legal[BOXES_OFFSET..BOXES_OFFSET + BOX_MON_SIZE])
+                .is_some_and(|m| m.checksum_ok && m.species == 1),
+            "the fixture must decode as a real mon"
+        );
+
+        // Over the EV cap: refused.
+        let cheat_evs = one_box(1, 50_000, [255, 255, 255, 0, 0, 0]);
+        assert!(
+            boxes_impossible(&cheat_evs).is_some(),
+            "effort points over 510 in a box must be refused"
+        );
+
+        // Over the experience cap: refused.
+        let cheat_exp = one_box(1, MAX_EXPERIENCE + 1, [0; 6]);
+        assert!(
+            boxes_impossible(&cheat_exp).is_some(),
+            "experience over the maximum in a box must be refused"
         );
     }
 

@@ -675,6 +675,17 @@ async fn control_loop(
                     continue;
                 }
 
+                // Block 1 is the PC boxes -- 35KB the server does not otherwise decode. Judge
+                // each boxed Pokemon the way the party is judged, so a box cannot smuggle in a
+                // mon that could not have come from playing.
+                const STORAGE_BLOCK: u8 = 1;
+                if block == STORAGE_BLOCK {
+                    if let Some(reason) = crate::save_parse::boxes_impossible(&assembled) {
+                        tracing::warn!(player = player_id, %reason, "refusing a reported box");
+                        continue;
+                    }
+                }
+
                 if let Some(reason) = new
                     .impossible()
                     .or_else(|| crate::save_parse::regressed(&old, &new))
