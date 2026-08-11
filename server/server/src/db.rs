@@ -165,15 +165,21 @@ ALTER TABLE characters ALTER COLUMN map_group SET DEFAULT 0;
 ALTER TABLE characters ALTER COLUMN map_num   SET DEFAULT 9;
 ALTER TABLE characters ALTER COLUMN pos_x     SET DEFAULT 17;
 ALTER TABLE characters ALTER COLUMN pos_y     SET DEFAULT 18;
+"#;
 
--- A shared test account so pokeplanet_tester.exe signs in with no Discord login, using the
--- fixed token that build carries. The goal "the tester needs no account" only holds for
--- everyone if the account exists on a fresh database, not just on the one machine where it was
--- created by hand.
---
--- Guarded on the token already existing, so a deployment that made the tester by hand (with a
--- different character id) is left exactly as it is -- no orphan account, no relink. The account
--- holds nothing of value and can be banned like any other if the shared token is abused.
+/// A shared test account so pokeplanet_tester.exe signs in with no Discord login, using the fixed
+/// token that build carries.
+///
+/// Kept OUT of SCHEMA and run only when POKEPLANET_ALLOW_TESTER is set, because the token is a
+/// public constant in this repository: applying it to every database that ever runs this code would
+/// seed a never-expiring, remotely usable, known-credential login on every deployment -- including
+/// anyone else's production server that merely deployed the source. Opt-in keeps the convenience
+/// for a server that wants it (set the env var) without making a backdoor the default for all.
+///
+/// Guarded on the token already existing, so a deployment that made the tester by hand (with a
+/// different character id) is left exactly as it is -- no orphan account, no relink. The account
+/// holds nothing of value and can be banned like any other if the shared token is abused.
+const TESTER_SEED: &str = r#"
 DO $$
 DECLARE acct BIGINT; ch BIGINT;
 BEGIN
@@ -213,6 +219,18 @@ pub async fn connect(url: &str) -> anyhow::Result<Db> {
         .await
         .context("applying schema")?;
     tracing::info!("database schema is up to date");
+
+    // The shared tester login is a public constant, so it is seeded only where a server has
+    // explicitly opted in -- never as a side effect of deploying this code. See TESTER_SEED.
+    if std::env::var("POKEPLANET_ALLOW_TESTER").is_ok() {
+        client
+            .batch_execute(TESTER_SEED)
+            .await
+            .context("seeding the tester account")?;
+        tracing::warn!(
+            "POKEPLANET_ALLOW_TESTER is set: the shared tester login is enabled on this server"
+        );
+    }
     Ok(pool)
 }
 

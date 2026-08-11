@@ -42,8 +42,16 @@ pub fn random_token() -> String {
 }
 
 pub fn authorize_url(cfg: &Config, state: &str) -> String {
+    // `prompt=consent`, not `prompt=none`. The state parameter here is the login ticket, and the
+    // callback binds whatever Discord identity completes the flow to that ticket. With `prompt=none`
+    // an already-authorized user was redirected through *silently*, so a victim who clicked an
+    // attacker's login link (which points at the real domain) completed the attacker's ticket with
+    // the victim's identity in one click -- a zero-interaction account takeover. Forcing the consent
+    // screen every login removes the silent path: nothing completes without an explicit click on
+    // Discord's own authorize page. (The remaining phishing residue -- a victim who clicks through
+    // that page too -- is closed fully by the in-game verification-code binding tracked separately.)
     format!(
-        "https://discord.com/api/oauth2/authorize?client_id={}&redirect_uri={}&response_type=code&scope=identify&state={}&prompt=none",
+        "https://discord.com/api/oauth2/authorize?client_id={}&redirect_uri={}&response_type=code&scope=identify&state={}&prompt=consent",
         urlencoding::encode(&cfg.discord_client_id),
         urlencoding::encode(&cfg.redirect_uri()),
         urlencoding::encode(state),
