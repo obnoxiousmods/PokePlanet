@@ -41,6 +41,7 @@
 #include "window.h"
 #include "mystery_gift_menu.h"
 #include "net_client.h"
+#include "platform.h"
 #include "mmo_text.h"
 #include "new_game.h"
 #include "constants/map_groups.h"
@@ -631,9 +632,9 @@ static u32 InitMainMenu(bool8 returningFromOptionsMenu)
 // never stop someone playing.
 // ---------------------------------------------------------------------------
 
-static const u8 sText_PokePlanetConnecting[] = _("Connecting to PokePlanet...\nPress B to play offline.");
-static const u8 sText_PokePlanetSignIn[] = _("Sign in with Discord in your browser.\nA: open again   B: play offline");
-static const u8 sText_PokePlanetOffline[] = _("Can't reach PokePlanet.\nA: try again   B: play offline");
+static const u8 sText_PokePlanetConnecting[] = _("Connecting to PokePlanet...");
+static const u8 sText_PokePlanetSignIn[] = _("Sign in with Discord in your browser.\nA: open the page again   B: quit");
+static const u8 sText_PokePlanetOffline[] = _("Can't reach PokePlanet.\nA: try again   B: quit");
 // The save summary, straight from the server. Deliberately mirrors the shape of the
 // vanilla CONTINUE panel so it reads as the same idea: this is your saved game.
 static const u8 sText_PokePlanetSaveSummary[] = _(
@@ -799,6 +800,16 @@ static void Task_PokePlanetConnect(u8 taskId)
                             SERVER_SAVE_WAIT_FRAMES,
                             Net_HasServerSave(),
                             Net_GetProfile(&pending));
+
+            // Online-only: never enter the world until the server has *decided* about the save --
+            // sent it, or sent an empty one to say there is none. The deadline above only stops
+            // the wait message from claiming to still be working; it does not license entering on
+            // local data. If the server said we are online but its save never came, keep waiting
+            // here. The save may still land, and if it never does the player retries or quits at
+            // the prompt above rather than being dropped onto a stale character the server does
+            // not recognise -- which was the whole failure this online-only boot exists to end.
+            if (!Net_ServerSaveDecided())
+                return;
         }
 
         // The server sends its copy of the save right after sign-in, and the network thread
@@ -866,15 +877,17 @@ static void Task_PokePlanetConnect(u8 taskId)
         return;
     }
 
-    if (JOY_NEW(B_BUTTON))
-    {
-        // Offline play. The sidecar keeps trying in the background, so a late
-        // connection still lights up multiplayer once the player is in the overworld.
-        EnterMainMenu(taskId);
-    }
-    else if (JOY_NEW(A_BUTTON))
+    // PokePlanet is online-only: the character lives on the server, so there is nothing to play
+    // without it. Rather than fall through to whatever save is on this machine -- stale data the
+    // server has already decided is not authoritative -- the player waits here. A retries the
+    // sign-in, B quits; there is no third door onto local data.
+    if (JOY_NEW(A_BUTTON))
     {
         Net_BeginLogin();
+    }
+    else if (JOY_NEW(B_BUTTON))
+    {
+        Platform_RequestQuit();
     }
 }
 
