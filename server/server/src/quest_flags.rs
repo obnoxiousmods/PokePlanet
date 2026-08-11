@@ -31,23 +31,19 @@ fn flag_set(flags: &[u8], id: u16) -> bool {
 
 /// A badge held before but cleared now. Enforced: no honest game takes a badge back.
 pub fn badge_regressed(before: &SaveState, after: &SaveState) -> Option<String> {
-    for &id in BADGE_FLAGS.iter() {
-        if flag_set(&before.flags, id) && !flag_set(&after.flags, id) {
-            return Some(format!("a badge already earned was cleared (flag {id})"));
-        }
-    }
-    None
+    BADGE_FLAGS
+        .iter()
+        .find(|&&id| flag_set(&before.flags, id) && !flag_set(&after.flags, id))
+        .map(|id| format!("a badge already earned was cleared (flag {id})"))
 }
 
 /// A monotonic story flag cleared. Advisory: returned for logging, not yet for refusal, until
 /// the derived set is proven quiet against real play.
 pub fn monotonic_cleared(before: &SaveState, after: &SaveState) -> Option<u16> {
-    for &id in MONOTONIC_FLAGS.iter() {
-        if flag_set(&before.flags, id) && !flag_set(&after.flags, id) {
-            return Some(id);
-        }
-    }
-    None
+    MONOTONIC_FLAGS
+        .iter()
+        .copied()
+        .find(|&id| flag_set(&before.flags, id) && !flag_set(&after.flags, id))
 }
 
 #[cfg(test)]
