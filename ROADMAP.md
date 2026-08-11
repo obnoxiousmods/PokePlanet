@@ -41,7 +41,8 @@ those two seams.
 ### World and presence
 - **Server-authoritative movement.** Teleports, impossible speeds, diagonal steps and walking
   through walls are all refused server-side, checked against collision exported from the game's
-  own map data. 33+ server tests.
+  own map data. 79 server tests, and CI is green -- it builds the whole game, runs the suite,
+  lints, formats, and enforces that this file and the README stay identical.
 - **Presence indexed by map**, so a snapshot concerns only the players sharing a map rather
   than scanning every player each tick.
 - **Remote players visible and animated**, moving in step rather than teleporting.
@@ -82,6 +83,18 @@ Refused server-side, each verified against real data with a negative control:
 - **Gaining faster than the published rates allow** — money or experience appearing in less
   time than any amount of play could produce, measured against the rates the server itself
   publishes, so the ceiling widens on a generous server rather than accusing it.
+- **Reports validated, not just uploads.** Every typed report (money, items, party, flags,
+  blocks) is rebuilt into a candidate save and put through the same checks an upload gets. The
+  SaveBlock2 encryption key is pinned so it cannot be rewritten to mint money; badges cannot be
+  lost; a monotonic set of ~960 story flags the game never clears is watched (logged now,
+  enforced once real play proves it quiet); the rate ceiling applies on every path.
+- **The raw save upload is retired.** It exists only to seed a character's first save, which
+  must parse and meet the caps; after that a full-image overwrite is refused, so it can no
+  longer bypass the per-field checks. A save the server cannot read is refused rather than
+  stored, so garbage can never brick an account.
+- **Sign-in is single-session, enforced.** A newer sign-in stops the older connection
+  server-side, so one character cannot run parallel rate allowances. A banned account is turned
+  away at the next sign-in rather than whenever its token expires.
 
 ### Multiplayer features
 - **Chat** with global, map and private scopes, bridged to IRC, with `/s`, `/w NAME` and `/r`.
@@ -192,33 +205,28 @@ Refused server-side, each verified against real data with a negative control:
   it reports in, while the client still computes the contents. Real narrowing of the attack
   surface, not the end of it. Parsing continues, because each parsed field is one the server can
   check rather than merely carry -- and checking is what the headless engine below finishes.
-### Replay validation — built, and one design question left
+### Replay validation — most of it built; the loop is not yet closed
 
-The apparatus exists and is tested: `instances.rs` starts, drives and stops headless instances
-(`Instances::start` / `send_input` / `stop`), the game reads a key stream from
-`POKEPLANET_INPUT_PIPE`, and `save_parse::diverged` compares a client's account against the
-server's own run. Instances are wired to sign-in and disconnect, behind
-`POKEPLANET_GAME_BINARY`; unset means the check does not run and every existing rule still does.
+The idea: the server runs the same game, headless, from the same inputs, and compares. That is
+what makes a *careful* forgery impossible rather than merely hard — the server stops checking
+whether a number looks reasonable and computes its own.
 
-**Not yet connected, and one part of it is not merely unwritten:**
+Built and tested:
+- The game **builds and runs headless** on Linux (`make -f Makefile_pc NATIVE_LINUX=1
+  NO_SDL_IMAGE=1 rom`, checked by `tools/debug/headless-smoke.sh`).
+- `instances.rs` **starts, drives and stops** headless instances, capped and reaped, wired to
+  sign-in and disconnect behind `POKEPLANET_GAME_BINARY` (unset = the check does not run).
+- **Inputs are routed:** the client sends key frames (`MSG_KEYS`), forwarded to `send_input`.
+- **State reads back without signing in:** an instance writes money and party to
+  `POKEPLANET_STATE_PIPE` — a local channel, so it never holds a session and never kicks the
+  player it is validating. `save_parse::diverged` compares that against what the client claims.
 
-1. *Inputs are not routed.* The client does not report the keys it pressed, so there is nothing
-   to feed `send_input`. This needs a message carrying key bits per frame — mechanical, but a
-   protocol change.
-
-2. *State cannot be read back the obvious way.* An instance is a game client, so the natural
-   design is to let it report through the same path any client uses. It cannot: signing in as a
-   character that is already online sends `Superseded` (`world.rs:119`) and disconnects the
-   player. **A validation instance signing in as the character it is validating would kick that
-   character off.**
-
-   So the instance has to be readable *without* signing in. The two candidates are a local
-   channel that bypasses sign-in — the instance already talks to a sidecar over loopback, and
-   that is the natural place — or a flag that makes an instance report state while claiming no
-   session. The first keeps one identity per character, which is why it is preferred.
-
-Until 2 is decided, instances start and stop and do nothing else, which is why this is not
-described as working.
+Not yet closed:
+- Nothing yet **reads** the state pipe and calls `diverged` in the live path, and a divergence
+  has no policy yet (it should log before it refuses).
+- The headless binary is 32-bit and **lucy has no 32-bit SDL2**, so `POKEPLANET_GAME_BINARY` is
+  unset in production. Enabling multilib + `lib32-sdl2` (or a 64-bit headless target) is the
+  deploy blocker.
 
 - **Headless engine.** Running the game's logic server-side. This is the only thing that makes
   a *careful* forgery impossible rather than merely hard, and it is a large piece of work.
@@ -230,10 +238,12 @@ described as working.
 Stated plainly, because it would be easy to read the anti-cheat list above and conclude
 otherwise: **movement is genuinely server-validated; progression is not, fully.**
 
-Every hard, unambiguous invariant the game itself enforces is now enforced server-side, and
-crude edits are caught. But a patched client can still award itself *legal-looking* things it
-never earned — a rare species at level 100 with legal effort points, or money below the cap it
-never made. Closing that needs rate-based enforcement, and ultimately the headless engine.
+Every hard invariant the game enforces is now enforced server-side, crude edits are caught, the
+report paths are validated rather than trusted, and the raw upload can no longer bypass them.
+What remains: a patched client can still award itself *legal-looking* things it never earned —
+a rare species at level 100 with legal stats, or money below the cap it never made — and item
+acquisition and PC-box contents are not yet fully validated. Closing that is what the replay
+validation above is for; until its loop is closed, the rate ceilings are the backstop.
 
 ---
 
