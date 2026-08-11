@@ -227,7 +227,6 @@ const BOX_MON_COUNT: usize = 14 * 30;
 /// decode without the party-only level byte. Kept as a small struct rather than reusing PartyMon
 /// so the absence of a real level cannot be mistaken for level 0.
 struct BoxMon {
-    species: u16,
     experience: u32,
     evs: [u8; 6],
     checksum_ok: bool,
@@ -273,7 +272,6 @@ fn read_box_mon(bytes: &[u8]) -> Option<BoxMon> {
     evs.copy_from_slice(&plain[evs_at..evs_at + 6]);
 
     Some(BoxMon {
-        species,
         experience,
         evs,
         checksum_ok: computed == stored,
@@ -1851,7 +1849,7 @@ mod tests {
         // Sanity: it actually decoded (checksum matched), or the control proves nothing.
         assert!(
             read_box_mon(&legal[BOXES_OFFSET..BOXES_OFFSET + BOX_MON_SIZE])
-                .is_some_and(|m| m.checksum_ok && m.species == 1),
+                .is_some_and(|m| m.checksum_ok),
             "the fixture must decode as a real mon"
         );
 
