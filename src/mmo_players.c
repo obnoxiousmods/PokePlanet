@@ -450,6 +450,9 @@ const u8 *MmoPlayers_GetInteractionScript(u8 objectEventId)
 
 void MmoPlayers_Update(void)
 {
+    // Remembers whether we were online last frame, so a drop can be noticed and cleaned up.
+    static bool8 sWasOnline = FALSE;
+
     struct NetRemotePlayer remotes[NET_MAX_REMOTE_PLAYERS];
     bool8 slotSeen[NET_MAX_REMOTE_PLAYERS];
     u8 count;
@@ -457,7 +460,23 @@ void MmoPlayers_Update(void)
     u8 slot;
 
     if (!Net_IsLinked() || Net_GetAuthState() != NET_AUTH_ONLINE)
+    {
+        // A mid-session disconnect (the sidecar died, the network dropped) used to leave every
+        // remote player's sprite standing frozen on the map, because this function simply
+        // returned and never tore them down. Despawn them once, on the frame the link is first
+        // seen down, so the world empties out instead of filling with statues. DespawnSlot is
+        // safe here: these are the sprites we spawned on the current map and they are still
+        // valid object events -- unlike a map change, which invalidates them and is handled by
+        // MmoPlayers_Reset below.
+        if (sWasOnline)
+        {
+            for (i = 0; i < NET_MAX_REMOTE_PLAYERS; i++)
+                DespawnSlot(i);
+            sWasOnline = FALSE;
+        }
         return;
+    }
+    sWasOnline = TRUE;
 
     // A map change invalidates every object event, so start over.
     if (gSaveBlock1Ptr->location.mapGroup != sCurrentMapGroup
