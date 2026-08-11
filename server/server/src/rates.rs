@@ -376,6 +376,8 @@ mod tests {
                 species: 1,
                 level: 5,
                 experience: exp,
+                held_item: 0,
+                moves: [0; 4],
                 evs: [0; 6],
                 checksum_ok: true,
             }],
@@ -420,8 +422,10 @@ mod tests {
     /// A stingy server actually tightens the ceiling.
     #[test]
     fn a_rate_below_one_lowers_the_ceiling() {
-        let mut r = Rates::default();
-        r.experience = 0.1;
+        let r = Rates {
+            experience: 0.1,
+            ..Default::default()
+        };
 
         // A tenth of the rate means a tenth of the headroom: 30_000 * 0.1 * 1s = 3_000.
         assert!(

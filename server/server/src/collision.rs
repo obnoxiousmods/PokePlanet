@@ -149,7 +149,7 @@ mod tests {
     use super::*;
 
     fn one_map(width: u16, height: u16, solid: &[(i16, i16)]) -> Collision {
-        let mut bits = vec![0u8; (width as usize * height as usize + 7) / 8];
+        let mut bits = vec![0u8; (width as usize * height as usize).div_ceil(8)];
         for &(x, y) in solid {
             let i = y as usize * width as usize + x as usize;
             bits[i / 8] |= 1 << (i % 8);

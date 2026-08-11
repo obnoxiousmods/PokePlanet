@@ -57,6 +57,21 @@ pub const MAX_EV_TOTAL: u16 = 510;
 pub const MAX_EXPERIENCE: u32 = 1_640_000;
 pub const MIN_EXPERIENCE_AT_MAX_LEVEL: u32 = 600_000;
 
+/// The ends of the game's own id tables, from include/constants/{species,moves,items}.h. A
+/// stored id at or past one of these indexes nothing -- no such species, move or item exists --
+/// so a mon carrying one could not have come from playing, and a client that later loads it
+/// reads past the end of a data table. These are the tables the running game compiles, not a
+/// judgement about which move a species may legally know: an out-of-range id is impossible for
+/// everyone, so refusing it strands no honest player, whereas a learnset check would.
+///
+/// NUM_SPECIES is SPECIES_EGG. The stored species field always holds the real species (<= 411);
+/// SPECIES_EGG is what GetMonData(MON_DATA_SPECIES_OR_EGG) returns for an egg, never what is
+/// stored, and Unown stores SPECIES_UNOWN (201) with the letter taken from personality -- so the
+/// SPECIES_UNOWN_B.. aliases above NUM_SPECIES are runtime sprite indices, never a stored value.
+pub const NUM_SPECIES: u16 = 412;
+pub const MOVES_COUNT: u16 = 355;
+pub const ITEMS_COUNT: u16 = 377;
+
 /// Offsets within SaveBlock1. From the annotated struct in include/global.h.
 const OFFSET_PARTY: usize = 0x238;
 const PARTY_SIZE: usize = 6;
@@ -147,6 +162,10 @@ pub struct PartyMon {
     pub species: u16,
     pub level: u8,
     pub experience: u32,
+    /// The held-item id, or 0 for none. From the Growth substruct.
+    pub held_item: u16,
+    /// The four move ids, each 0 for an empty slot. From the Attacks substruct.
+    pub moves: [u16; 4],
     /// HP, Attack, Defence, Speed, Sp. Attack, Sp. Defence.
     pub evs: [u8; 6],
     /// Whether the decrypted substructs add up to the checksum stored alongside them.
@@ -188,12 +207,22 @@ fn read_mon(bytes: &[u8]) -> Option<PartyMon> {
 
     let order = SUBSTRUCT_ORDER[(personality % 24) as usize];
     let growth = order[0] * 12;
+    let attacks = order[1] * 12;
     let evs_at = order[2] * 12;
 
     let species = u16::from_le_bytes([plain[growth], plain[growth + 1]]);
     if species == 0 {
         return None; // an empty slot
     }
+    // Held item sits two bytes into Growth, right after species; the four move ids are the
+    // first eight bytes of the Attacks substruct.
+    let held_item = u16::from_le_bytes([plain[growth + 2], plain[growth + 3]]);
+    let moves = [
+        u16::from_le_bytes([plain[attacks], plain[attacks + 1]]),
+        u16::from_le_bytes([plain[attacks + 2], plain[attacks + 3]]),
+        u16::from_le_bytes([plain[attacks + 4], plain[attacks + 5]]),
+        u16::from_le_bytes([plain[attacks + 6], plain[attacks + 7]]),
+    ];
     let experience = u32::from_le_bytes([
         plain[growth + 4],
         plain[growth + 5],
@@ -210,6 +239,8 @@ fn read_mon(bytes: &[u8]) -> Option<PartyMon> {
         species,
         level: *bytes.get(MON_OFFSET_LEVEL)?,
         experience,
+        held_item,
+        moves,
         evs,
         checksum_ok: computed == stored,
     })
@@ -227,6 +258,9 @@ const BOX_MON_COUNT: usize = 14 * 30;
 /// decode without the party-only level byte. Kept as a small struct rather than reusing PartyMon
 /// so the absence of a real level cannot be mistaken for level 0.
 struct BoxMon {
+    species: u16,
+    held_item: u16,
+    moves: [u16; 4],
     experience: u32,
     evs: [u8; 6],
     checksum_ok: bool,
@@ -256,12 +290,20 @@ fn read_box_mon(bytes: &[u8]) -> Option<BoxMon> {
 
     let order = SUBSTRUCT_ORDER[(personality % 24) as usize];
     let growth = order[0] * 12;
+    let attacks = order[1] * 12;
     let evs_at = order[2] * 12;
 
     let species = u16::from_le_bytes([plain[growth], plain[growth + 1]]);
     if species == 0 {
         return None; // empty slot
     }
+    let held_item = u16::from_le_bytes([plain[growth + 2], plain[growth + 3]]);
+    let moves = [
+        u16::from_le_bytes([plain[attacks], plain[attacks + 1]]),
+        u16::from_le_bytes([plain[attacks + 2], plain[attacks + 3]]),
+        u16::from_le_bytes([plain[attacks + 4], plain[attacks + 5]]),
+        u16::from_le_bytes([plain[attacks + 6], plain[attacks + 7]]),
+    ];
     let experience = u32::from_le_bytes([
         plain[growth + 4],
         plain[growth + 5],
@@ -272,6 +314,9 @@ fn read_box_mon(bytes: &[u8]) -> Option<BoxMon> {
     evs.copy_from_slice(&plain[evs_at..evs_at + 6]);
 
     Some(BoxMon {
+        species,
+        held_item,
+        moves,
         experience,
         evs,
         checksum_ok: computed == stored,
@@ -296,6 +341,23 @@ pub fn boxes_impossible(storage_block: &[u8]) -> Option<String> {
         };
         if !mon.checksum_ok {
             continue;
+        }
+        if mon.species >= NUM_SPECIES {
+            return Some(format!(
+                "a boxed Pokemon is species {}, past the last of {NUM_SPECIES} the game defines",
+                mon.species
+            ));
+        }
+        if mon.held_item >= ITEMS_COUNT {
+            return Some(format!(
+                "a boxed Pokemon holds item {}, past the last of {ITEMS_COUNT} the game defines",
+                mon.held_item
+            ));
+        }
+        if let Some(mv) = mon.moves.iter().find(|m| **m >= MOVES_COUNT) {
+            return Some(format!(
+                "a boxed Pokemon knows move {mv}, past the last of {MOVES_COUNT} the game defines"
+            ));
         }
         if mon.experience > MAX_EXPERIENCE {
             return Some(format!(
@@ -463,6 +525,18 @@ impl SaveState {
                     item
                 ));
             }
+            // An item id past the end of the table is no item at all; the game would read
+            // past gItems loading it. The narrower check -- that this id belongs in *this*
+            // pocket -- needs the item->pocket table, which is macro-generated and not
+            // extracted here, so it stays an id-range check rather than a wrong pocket check.
+            if *item >= ITEMS_COUNT {
+                return Some(format!(
+                    "bag pocket {} holds item {}, past the last of {} the game defines",
+                    pocket + 1,
+                    item,
+                    ITEMS_COUNT
+                ));
+            }
         }
 
         for (i, mon) in self.party.iter().enumerate() {
@@ -488,6 +562,35 @@ impl SaveState {
             // hold one through corruption rather than cheating.
             if !mon.checksum_ok {
                 continue;
+            }
+
+            // Ids past the end of the game's own tables. A cheat that injects a garbage
+            // species, move or held item has to recompute the checksum to get this far, so it
+            // arrives here checksum-verified -- which is exactly why these sit after the guard
+            // and still catch it, while a corrupt record (bad checksum) is left alone above.
+            if mon.species >= NUM_SPECIES {
+                return Some(format!(
+                    "party slot {} is species {}, past the last of {} the game defines",
+                    i + 1,
+                    mon.species,
+                    NUM_SPECIES
+                ));
+            }
+            if mon.held_item >= ITEMS_COUNT {
+                return Some(format!(
+                    "party slot {} holds item {}, past the last of {} the game defines",
+                    i + 1,
+                    mon.held_item,
+                    ITEMS_COUNT
+                ));
+            }
+            if let Some(mv) = mon.moves.iter().find(|m| **m >= MOVES_COUNT) {
+                return Some(format!(
+                    "party slot {} knows move {}, past the last of {} the game defines",
+                    i + 1,
+                    mv,
+                    MOVES_COUNT
+                ));
             }
 
             // Experience past what the slowest curve asks for level 100 belongs to no
@@ -1651,6 +1754,8 @@ mod tests {
                 species: 1,
                 level,
                 experience,
+                held_item: 0,
+                moves: [0; 4],
                 evs: [0; 6],
                 checksum_ok,
             }],
@@ -1865,6 +1970,107 @@ mod tests {
         assert!(
             boxes_impossible(&cheat_exp).is_some(),
             "experience over the maximum in a box must be refused"
+        );
+    }
+
+    /// An id past the end of the game's species/move/item tables is refused, in a party mon and
+    /// in a boxed one, and a mon carrying the largest legal id of each is not.
+    ///
+    /// Builds a fully encrypted, correctly checksummed BoxPokemon so the id lands past the
+    /// checksum gate -- the same 80 bytes serve as the box record and as the front of a party
+    /// record, since a party Pokemon is a BoxPokemon plus a level. A cheat has to produce a
+    /// valid checksum to get this far, so the fixture reproduces that rather than dodging it.
+    #[test]
+    fn ids_past_the_game_tables_are_refused_everywhere() {
+        // Returns the 80-byte BoxPokemon with these ids and a matching checksum.
+        fn box_record(species: u16, held_item: u16, move1: u16) -> Vec<u8> {
+            let personality: u32 = 0x1234_5678;
+            let ot_id: u32 = 0x9abc_def0;
+            let key = personality ^ ot_id;
+            let order = SUBSTRUCT_ORDER[(personality % 24) as usize];
+            let growth = order[0] * 12;
+            let attacks = order[1] * 12;
+
+            let mut plain = [0u8; 48];
+            plain[growth..growth + 2].copy_from_slice(&species.to_le_bytes());
+            plain[growth + 2..growth + 4].copy_from_slice(&held_item.to_le_bytes());
+            plain[growth + 4..growth + 8].copy_from_slice(&50_000u32.to_le_bytes());
+            plain[attacks..attacks + 2].copy_from_slice(&move1.to_le_bytes());
+
+            let mut mon = vec![0u8; BOX_MON_SIZE];
+            mon[0..4].copy_from_slice(&personality.to_le_bytes());
+            mon[4..8].copy_from_slice(&ot_id.to_le_bytes());
+            let checksum: u16 = plain.chunks_exact(2).fold(0u16, |a, c| {
+                a.wrapping_add(u16::from_le_bytes([c[0], c[1]]))
+            });
+            mon[BOX_OFFSET_CHECKSUM..BOX_OFFSET_CHECKSUM + 2]
+                .copy_from_slice(&checksum.to_le_bytes());
+            for (i, chunk) in plain.chunks_exact(4).enumerate() {
+                let word = u32::from_le_bytes(chunk.try_into().unwrap()) ^ key;
+                mon[BOX_OFFSET_SECURE + i * 4..BOX_OFFSET_SECURE + i * 4 + 4]
+                    .copy_from_slice(&word.to_le_bytes());
+            }
+            mon
+        }
+        // The box path judges an 80-byte record inside a storage block.
+        fn in_box(species: u16, held_item: u16, move1: u16) -> Option<String> {
+            let mut block = vec![0u8; BOXES_OFFSET + BOX_MON_SIZE];
+            block[BOXES_OFFSET..BOXES_OFFSET + BOX_MON_SIZE]
+                .copy_from_slice(&box_record(species, held_item, move1));
+            boxes_impossible(&block)
+        }
+        // The party path judges the same record placed in a real save and read back.
+        fn in_party(species: u16, held_item: u16, move1: u16) -> Option<String> {
+            let mut image = image_with(0, 1, &[0xFF], &[3], 100);
+            sign(&mut image, 0, 2000);
+            let old = parse(&image).expect("readable");
+            let mut mons = vec![0u8; PARTY_SIZE * MON_SIZE];
+            mons[0..BOX_MON_SIZE].copy_from_slice(&box_record(species, held_item, move1));
+            mons[0x54] = 50; // a legal level, so only the id under test can refuse it
+            let block1 = with_party(&old, 1, &mons).expect("a party of one fits");
+            let new = parse(&reauthor(&image, &block1).expect("author")).expect("parses");
+            assert!(
+                new.party[0].checksum_ok,
+                "the fixture must decode as a real mon"
+            );
+            new.impossible()
+        }
+
+        // Negative control: the largest legal id of each passes, in both paths. Without this the
+        // rejections below could just be refusing every mon and proving nothing.
+        let top = (NUM_SPECIES - 1, ITEMS_COUNT - 1, MOVES_COUNT - 1);
+        assert!(
+            in_box(top.0, top.1, top.2).is_none(),
+            "a legal boxed mon passes"
+        );
+        assert!(
+            in_party(top.0, top.1, top.2).is_none(),
+            "a legal party mon passes"
+        );
+
+        // Species one past the last defined: refused in both.
+        assert!(
+            in_box(NUM_SPECIES, 0, 0).is_some(),
+            "box species out of range"
+        );
+        assert!(
+            in_party(NUM_SPECIES, 0, 0).is_some(),
+            "party species out of range"
+        );
+        // Held item one past the last defined: refused in both.
+        assert!(
+            in_box(1, ITEMS_COUNT, 0).is_some(),
+            "box held item out of range"
+        );
+        assert!(
+            in_party(1, ITEMS_COUNT, 0).is_some(),
+            "party held item out of range"
+        );
+        // A move one past the last defined: refused in both.
+        assert!(in_box(1, 0, MOVES_COUNT).is_some(), "box move out of range");
+        assert!(
+            in_party(1, 0, MOVES_COUNT).is_some(),
+            "party move out of range"
         );
     }
 
