@@ -141,8 +141,12 @@ static void ReportPartyIfChanged(void)
 //
 // Money, the bag and the party are absent deliberately: they have their own messages, which
 // carry checks a raw region write would walk straight past.
+// Must match REPORTABLE on the server exactly, offset for offset: the server accepts a region
+// only at a length and offset on its own copy of this list. The front chunk starts at 0x34, not
+// 0, so it excludes the player's position and every WarpData at the top of SaveBlock1 -- those
+// are the server's to set from the pose path, and reporting them here would be a way to teleport.
 static const struct { u32 offset; u32 size; } sReportable[] = {
-    { 0x0, 0x234 },
+    { 0x34, 0x200 },
     { 0x848, 0x400 },
     { 0xC48, 0x400 },
     { 0x1048, 0x400 },

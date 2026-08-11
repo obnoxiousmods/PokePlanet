@@ -910,10 +910,16 @@ fn write_slot(mut block1: Vec<u8>, off: usize, item: u16, quantity: u16, key: u3
     } else {
         (item, quantity)
     };
-    block1[off..off + 2].copy_from_slice(&item.to_le_bytes());
-    // Quantities carry the low half of the same key as money, per GetBagItemQuantity.
+    // Bounds-checked rather than indexed. The offset comes from BAG_POCKETS, which sits well
+    // inside a full SaveBlock1, so this holds for any save the game wrote -- but a truncated or
+    // malformed block reaching here must decline the write, not panic the whole connection on an
+    // out-of-range slice. Quantities carry the low half of the same key as money, per
+    // GetBagItemQuantity.
     let hidden = quantity ^ (key as u16);
-    block1[off + 2..off + 4].copy_from_slice(&hidden.to_le_bytes());
+    if let Some(slot) = block1.get_mut(off..off + 4) {
+        slot[0..2].copy_from_slice(&item.to_le_bytes());
+        slot[2..4].copy_from_slice(&hidden.to_le_bytes());
+    }
     block1
 }
 
@@ -949,15 +955,22 @@ pub fn with_party(state: &SaveState, count: u8, mons: &[u8]) -> Option<Vec<u8>> 
 
 /// The parts of SaveBlock1 a client may report directly, as (offset, length).
 ///
-/// This is all of SaveBlock1 in kilobyte chunks, except one protected span (0x234..0x848)
-/// holding the party count, the party, money, coins and the bag. Those have their own messages
-/// carrying caps, rate ceilings and level consistency checks, and a raw region write would skip
-/// every one of them -- so covering them here would quietly become the way to cheat.
+/// This is all of SaveBlock1 in kilobyte chunks, except two protected spans. The first is
+/// 0x234..0x848 -- the party count, the party, money, coins and the bag -- which have their own
+/// messages carrying caps, rate ceilings and level consistency checks a raw region write would
+/// skip. The second is the very start, 0x0..0x34: the player's position and every WarpData
+/// (location, continue, dynamic, last-heal, escape), plus the map's music, weather and layout id.
+/// Position is the server's to decide -- it comes from the ten-times-a-second pose path, is what
+/// every other player is drawn at, and is restored on sign-in as a continue-warp -- so a client
+/// that could write it here would teleport itself, and set its white-out heal point, anywhere on
+/// the map. It never needs to: those bytes are derived from the map the server already knows the
+/// player is on. So the front chunk starts after them, at mapView (0x34), the seen-tiles cache,
+/// which is the only thing in 0x0..0x234 a client has any business reporting.
 ///
 /// Chunked rather than one entry per field because the fields are not the point: secret bases
 /// alone are 4360 bytes, over the wire limit, and enumerating thirty structures by hand is
 /// thirty chances to get an offset wrong. Chunks are generated, so the only thing that has to
-/// be right is the boundary of the protected span.
+/// be right is the boundary of the protected spans.
 ///
 /// An allowlist rather than an offset the client picks, because "write these bytes at this
 /// offset" with no constraint is not a save protocol, it is an arbitrary write into the
@@ -965,7 +978,7 @@ pub fn with_party(state: &SaveState, count: u8, mons: &[u8]) -> Option<Vec<u8>> 
 /// here: they carry checks -- caps, rate ceilings, level consistency -- that a raw region
 /// write would walk straight past.
 pub const REPORTABLE: &[(usize, usize)] = &[
-    (0x0, 0x234),
+    (0x34, 0x200),
     (0x848, 0x400),
     (0xC48, 0x400),
     (0x1048, 0x400),
@@ -1633,7 +1646,7 @@ mod tests {
         assert_eq!(
             REPORTABLE,
             &[
-                (0x0, 0x234),
+                (0x34, 0x200),
                 (0x848, 0x400),
                 (0xC48, 0x400),
                 (0x1048, 0x400),
@@ -1702,6 +1715,44 @@ mod tests {
         assert!(
             with_region(&old, OFFSET_MONEY, &[0u8; 4]).is_none(),
             "money must not be writable as a raw region"
+        );
+    }
+
+    /// The player's position and warp data at the top of SaveBlock1 are not writable as a region:
+    /// the server decides where a character is, and a raw write there would be a teleport.
+    #[test]
+    fn position_and_warps_cannot_be_written_as_a_region() {
+        let mut image = image_with(0, 1, &[0xFF], &[3], 100);
+        sign(&mut image, 0, 2000);
+        let old = parse(&image).expect("readable");
+
+        // The old front chunk covered 0x0..0x234, which starts at the player's position and runs
+        // through every WarpData. Reporting it now is refused outright -- it is not on the list.
+        assert!(
+            with_region(&old, 0x0, &vec![0xFFu8; 0x234]).is_none(),
+            "a region starting at the player's position must be refused"
+        );
+
+        // Nothing on the list may reach into the position/warp span (0x0..0x34). If a future
+        // chunk boundary crept back over it, this fails rather than silently reopening the hole.
+        for &(at, len) in REPORTABLE {
+            assert!(
+                at >= 0x34,
+                "chunk at {at:#X} overlaps the position/warp span the server owns"
+            );
+        }
+
+        // The mapView cache that begins right after is still reportable -- the negative control,
+        // so this is a boundary and not a blanket refusal of the whole front of the block.
+        let (at, len) = (0x34usize, 0x200usize);
+        assert!(
+            REPORTABLE.contains(&(at, len)),
+            "the seen-tiles cache must remain reportable"
+        );
+        let chunk = old.block1[at..at + len].to_vec();
+        assert!(
+            with_region(&old, at, &chunk).is_some(),
+            "a report of the mapView cache must still be accepted"
         );
     }
 
