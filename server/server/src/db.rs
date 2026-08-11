@@ -661,7 +661,7 @@ mod integration {
             .await
             .expect("client")
             .execute(
-                "UPDATE accounts SET banned = true WHERE id = ",
+                "UPDATE accounts SET banned = true WHERE id = $1",
                 &[&account_id],
             )
             .await
@@ -678,7 +678,7 @@ mod integration {
         db.get()
             .await
             .expect("client")
-            .execute("DELETE FROM accounts WHERE id = ", &[&account_id])
+            .execute("DELETE FROM accounts WHERE id = $1", &[&account_id])
             .await
             .expect("cleanup");
     }
