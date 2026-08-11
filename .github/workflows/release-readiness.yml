@@ -38,13 +38,14 @@ jobs:
       - name: Build game
         run: |
           export PATH="$PATH:/mingw64/bin"
+          echo "MSYS2_MINGW64_BIN=$(cygpath -w /mingw64/bin)" >> "$GITHUB_ENV"
           make -f Makefile_pc PREFIX= SDL_DIR=/mingw32 -j"$(nproc)"
       - name: Build sidecar
         shell: pwsh
         working-directory: server
         run: |
-          $env:PATH = "C:\msys64\mingw64\bin;$env:PATH"
-          $env:CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER = "C:\msys64\mingw64\bin\gcc.exe"
+          $env:PATH = "$env:MSYS2_MINGW64_BIN;$env:PATH"
+          $env:CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER = Join-Path $env:MSYS2_MINGW64_BIN "gcc.exe"
           cargo build --release -p pokeplanet-net --bin pokeplanet-net --target x86_64-pc-windows-gnu
       - name: Package
         run: SDL_DLL=/mingw32/bin/SDL2.dll tools/release/package-windows.sh
