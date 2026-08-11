@@ -46,6 +46,15 @@ pub struct Rates {
     /// Keyed by the game's internal species number. A species not named here uses 1.0, so a
     /// file only has to mention what it wants to change.
     pub species_encounter: HashMap<u16, f32>,
+
+    /// The anti-cheat ceilings, so the enforcement headroom is tunable rather than baked in.
+    ///
+    /// A server that runs unusually generous events, or an unusually strict one, can move these
+    /// without a rebuild. They are the *ceiling* on how fast money and experience may arrive,
+    /// scaled further by the money/experience multipliers above, over a burst window.
+    pub ceiling_money_per_second: f32,
+    pub ceiling_experience_per_second: f32,
+    pub ceiling_burst_seconds: f32,
 }
 
 impl Default for Rates {
@@ -59,6 +68,9 @@ impl Default for Rates {
             catch: 1.0,
             shop_price: 1.0,
             species_encounter: HashMap::new(),
+            ceiling_money_per_second: DEFAULT_MONEY_PER_SECOND,
+            ceiling_experience_per_second: DEFAULT_EXPERIENCE_PER_SECOND,
+            ceiling_burst_seconds: DEFAULT_BURST_SECONDS,
         }
     }
 }
@@ -99,6 +111,9 @@ impl Rates {
                 "items" => rates.items = rate,
                 "catch" => rates.catch = rate,
                 "shop_price" => rates.shop_price = rate,
+                "ceiling_money_per_second" => rates.ceiling_money_per_second = rate,
+                "ceiling_experience_per_second" => rates.ceiling_experience_per_second = rate,
+                "ceiling_burst_seconds" => rates.ceiling_burst_seconds = rate,
                 other => {
                     let species = other
                         .strip_prefix("species.")
@@ -149,13 +164,13 @@ impl Rates {
 /// awards itself a fortune between two saves, not policing an efficient player, and a rule
 /// that refuses an honest save is worse than the cheating it prevents. A whole bag of Nuggets
 /// sold at once is a few tens of thousands; this allows that every second, forever.
-const MONEY_PER_SECOND: f32 = 50_000.0;
+const DEFAULT_MONEY_PER_SECOND: f32 = 50_000.0;
 
 /// The most experience one Pokemon can earn in a second, before the server's rate.
 ///
 /// A level 100 needs at most 1,640,000 in total, so this allows a Pokemon to go from nothing
 /// to fully levelled in under a minute of continuous battling. Nothing legitimate comes close.
-const EXPERIENCE_PER_SECOND: f32 = 30_000.0;
+const DEFAULT_EXPERIENCE_PER_SECOND: f32 = 30_000.0;
 
 /// Whatever the rates are, a save cannot have gained more than this in the time available.
 ///
@@ -191,7 +206,7 @@ fn ceiling_scale(rate: f32) -> f32 {
 /// Without a cap, a character idle for an hour could spend an hour of headroom in one report,
 /// which is the same as having no ceiling for anyone patient. A minute is generous enough that
 /// ordinary bursts -- a long battle, a shop trip -- never touch it.
-const BURST_SECONDS: f32 = 60.0;
+const DEFAULT_BURST_SECONDS: f32 = 60.0;
 
 /// A running allowance for one character, spent by gains and refilled by time.
 ///
@@ -219,8 +234,8 @@ impl Allowance {
     pub fn new(rates: &Rates) -> Self {
         Self {
             last: std::time::Instant::now(),
-            money: MONEY_PER_SECOND * ceiling_scale(rates.money),
-            experience: EXPERIENCE_PER_SECOND * ceiling_scale(rates.experience),
+            money: rates.ceiling_money_per_second * ceiling_scale(rates.money),
+            experience: rates.ceiling_experience_per_second * ceiling_scale(rates.experience),
         }
     }
 
@@ -228,11 +243,12 @@ impl Allowance {
         let seconds = self.last.elapsed().as_secs_f32();
         self.last = std::time::Instant::now();
 
-        let money_rate = MONEY_PER_SECOND * ceiling_scale(rates.money);
-        let exp_rate = EXPERIENCE_PER_SECOND * ceiling_scale(rates.experience);
+        let money_rate = rates.ceiling_money_per_second * ceiling_scale(rates.money);
+        let exp_rate = rates.ceiling_experience_per_second * ceiling_scale(rates.experience);
+        let burst = rates.ceiling_burst_seconds;
 
-        self.money = (self.money + money_rate * seconds).min(money_rate * BURST_SECONDS);
-        self.experience = (self.experience + exp_rate * seconds).min(exp_rate * BURST_SECONDS);
+        self.money = (self.money + money_rate * seconds).min(money_rate * burst);
+        self.experience = (self.experience + exp_rate * seconds).min(exp_rate * burst);
     }
 
     /// Judge a change, spending the allowance it costs.
@@ -299,7 +315,7 @@ pub fn gained_too_fast(
     let money_after = after.money();
     if money_after > money_before {
         let gained = (money_after - money_before) as f32;
-        let allowed = MONEY_PER_SECOND * ceiling_scale(rates.money) * seconds;
+        let allowed = DEFAULT_MONEY_PER_SECOND * ceiling_scale(rates.money) * seconds;
         if gained > allowed {
             return Some(format!(
                 "gained {gained:.0} money in {seconds:.0}s, above the {allowed:.0} these rates allow"
@@ -322,7 +338,7 @@ pub fn gained_too_fast(
         }
         if new.experience > old.experience {
             let gained = (new.experience - old.experience) as f32;
-            let allowed = EXPERIENCE_PER_SECOND * ceiling_scale(rates.experience) * seconds;
+            let allowed = DEFAULT_EXPERIENCE_PER_SECOND * ceiling_scale(rates.experience) * seconds;
             if gained > allowed {
                 return Some(format!(
                     "a Pokemon gained {gained:.0} experience in {seconds:.0}s, above the \
@@ -368,6 +384,37 @@ mod tests {
 
     fn secs(n: u64) -> std::time::Duration {
         std::time::Duration::from_secs(n)
+    }
+
+    /// A configured ceiling is honoured, and the default is the historical value.
+    ///
+    /// Negative control: a gain that the default ceiling allows is refused once the ceiling is
+    /// configured low -- otherwise the config key would parse but do nothing.
+    #[test]
+    fn the_money_ceiling_is_configurable() {
+        // Default: 50,000/s of headroom scales money reports fine.
+        let def = Rates::default();
+        assert_eq!(def.ceiling_money_per_second, 50_000.0);
+        let mut b = Allowance::new(&def);
+        assert!(
+            b.check(&state(0, 0), &state(40_000, 0), &def).is_none(),
+            "40k is within the default ceiling"
+        );
+
+        // Configure a strict ceiling and the same gain is now refused.
+        let strict = Rates::parse("ceiling_money_per_second = 1000").expect("parses");
+        assert_eq!(strict.ceiling_money_per_second, 1000.0);
+        let mut sb = Allowance::new(&strict);
+        assert!(
+            sb.check(&state(0, 0), &state(40_000, 0), &strict).is_some(),
+            "40k must exceed a 1000/s ceiling"
+        );
+        // ...but a small gain within the strict ceiling still passes.
+        let mut sb2 = Allowance::new(&strict);
+        assert!(
+            sb2.check(&state(0, 0), &state(500, 0), &strict).is_none(),
+            "a gain under the strict ceiling is fine"
+        );
     }
 
     /// A stingy server actually tightens the ceiling.
@@ -416,7 +463,7 @@ mod tests {
         }
 
         assert!(
-            allowed_total <= (EXPERIENCE_PER_SECOND as u32) * 2,
+            allowed_total <= (DEFAULT_EXPERIENCE_PER_SECOND as u32) * 2,
             "fifty rapid reports let through {allowed_total} experience, which is more than \
              a couple of seconds' worth -- splitting a gain up is buying headroom"
         );
