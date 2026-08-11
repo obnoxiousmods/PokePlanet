@@ -917,96 +917,85 @@ async fn control_loop(
                 if save_image.len() == offset as usize {
                     save_image.extend_from_slice(&bytes);
                     if save_image.len() == total as usize {
-                        // Read the save before filing it, so one that could not have come
-                        // from playing is never stored in the first place.
+                        // The full-image upload exists only to seed a character's *first* save.
                         //
-                        // Reading it here rather than asking the client for a summary is the
-                        // point: a summary would be one more thing the client is trusted to
-                        // be honest about, whereas this is the same bytes the game itself
-                        // reads back.
-                        let parsed = crate::save_parse::parse(&save_image);
+                        // Once the server holds a save, every change reaches it through a typed
+                        // report that is validated field by field -- money against the rate
+                        // ceiling, items against their caps, flags against the story rules,
+                        // and the SaveBlock2 key pinned so it cannot be used to mint money. A
+                        // full-image overwrite is a strict superset of all of those: it rewrites
+                        // all 32 sectors at once, bypassing reauthor's faithfulness proof and the
+                        // protected span, and would hand a cheater back everything the typed
+                        // paths were built to prevent. So an upload is accepted only when there
+                        // is nothing stored yet; after that it is refused, and the honest client
+                        // never sends one (it is gated on the server not owning a save).
+                        match db::load_save(&server.db, character_id).await {
+                            Ok(Some(_)) => {
+                                tracing::warn!(
+                                    player = player_id,
+                                    "refusing a full-save upload: the server already holds this                                      character's save; changes must come through typed reports"
+                                );
+                                save_image.clear();
+                                continue;
+                            }
+                            Err(e) => {
+                                tracing::warn!(error = %e, "could not check for a stored save");
+                                save_image.clear();
+                                continue;
+                            }
+                            Ok(None) => {}
+                        }
 
-                        if let Some(reason) = parsed.as_ref().and_then(|s| s.impossible()) {
-                            // Safe to refuse only because these rules are caps the game
-                            // itself clamps to, so no honest save can trip them. The server
-                            // keeps the copy it already believed, which sets the player back
-                            // rather than locking them out.
+                        // The first save must parse. Storing an unparseable blob used to be
+                        // allowed on the theory the client could still play it -- but with the
+                        // server authoritative that blob becomes the record, bricks every future
+                        // typed report (they all read the stored save first), and is handed back
+                        // verbatim at sign-in. An image the server cannot read is not a save it
+                        // can own, so refuse it.
+                        let Some(state) = crate::save_parse::parse(&save_image) else {
+                            tracing::warn!(
+                                player = player_id,
+                                "refusing a first save the server cannot read"
+                            );
+                            save_image.clear();
+                            continue;
+                        };
+
+                        if let Some(reason) = state.impossible() {
                             tracing::warn!(
                                 player = player_id, %reason,
-                                "refusing a save that could not have come from playing"
+                                "refusing a first save that could not have come from playing"
                             );
                             save_image.clear();
                             continue;
                         }
 
-                        // Compare against the copy already held, which is the only way to
-                        // see a change rather than a state. Loading it costs one read per
-                        // save and is what makes going backwards visible at all.
-                        if let (Some(new), Ok(Some(old_image))) = (
-                            parsed.as_ref(),
-                            db::load_save(&server.db, character_id).await,
-                        ) {
-                            if let Some(old) = crate::save_parse::parse(&old_image) {
-                                if let Some(reason) = crate::save_parse::regressed(&old, new)
-                                    .or_else(|| allowance.check(&old, new, &server.rates))
-                                {
-                                    tracing::warn!(
-                                        player = player_id, %reason,
-                                        "refusing a save that undoes progress"
-                                    );
-                                    save_image.clear();
-                                    continue;
-                                }
-                            }
-                        }
                         db::store_save(&server.db, character_id, &save_image).await?;
-                        tracing::info!(player = player_id, bytes = save_image.len(), "save stored");
+                        tracing::info!(
+                            player = player_id,
+                            bytes = save_image.len(),
+                            "first save stored"
+                        );
 
-                        // A save that will not parse at all is still kept. The client can
-                        // already play it -- it is the image the game wrote -- and refusing
-                        // it would lose real progress over a format this may simply not
-                        // understand yet.
-                        match parsed {
-                            Some(state) => {
-                                let vars: Vec<u8> =
-                                    state.vars.iter().flat_map(|v| v.to_le_bytes()).collect();
-                                if let Err(e) = db::store_story_state(
-                                    &server.db,
-                                    character_id,
-                                    &state.flags,
-                                    &vars,
-                                )
+                        let vars: Vec<u8> =
+                            state.vars.iter().flat_map(|v| v.to_le_bytes()).collect();
+                        if let Err(e) =
+                            db::store_story_state(&server.db, character_id, &state.flags, &vars)
                                 .await
-                                {
-                                    tracing::warn!(error = %e, "could not store story state");
-                                }
-
-                                // Beside the story state: the same save, projected into tables
-                                // the server can query instead of bytes it can only keep.
-                                if let Err(e) = db::store_inventory_and_party(
-                                    &server.db,
-                                    character_id,
-                                    &state.bag,
-                                    &state.party,
-                                )
-                                .await
-                                {
-                                    tracing::warn!(error = %e, "could not store bag and party");
-                                }
-
-                                tracing::info!(
-                                    player = player_id,
-                                    money = state.money(),
-                                    items = state.bag.len(),
-                                    party = state.party.len(),
-                                    "progress read from the save"
-                                );
-                            }
-                            None => tracing::warn!(
-                                player = player_id,
-                                "could not read the uploaded save"
-                            ),
+                        {
+                            tracing::warn!(error = %e, "could not store story state");
                         }
+                        if let Err(e) = db::store_inventory_and_party(
+                            &server.db,
+                            character_id,
+                            &state.bag,
+                            &state.party,
+                        )
+                        .await
+                        {
+                            tracing::warn!(error = %e, "could not store bag and party");
+                        }
+
                         save_image.clear();
                     }
                 }
