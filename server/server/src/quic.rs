@@ -326,6 +326,16 @@ async fn run_session(
         moving: false,
     };
 
+    // Seed the name-tag party count from the stored save. One read at sign-in; party reports keep
+    // it current after that. A save that will not load leaves it at zero rather than failing join.
+    let party_count = db::load_save(&server.db, character.id)
+        .await
+        .ok()
+        .flatten()
+        .and_then(|image| crate::save_parse::parse(&image))
+        .map(|state| state.party.len() as u8)
+        .unwrap_or(0);
+
     server
         .world
         .join(
@@ -339,6 +349,7 @@ async fn run_session(
                 name: name.clone(),
                 graphics_id: character.graphics_id,
                 pose: start_pose,
+                party_count,
                 control: control_tx,
             },
         )
@@ -849,6 +860,10 @@ async fn control_loop(
                 {
                     tracing::warn!(error = %e, "could not store the party");
                 }
+                server
+                    .world
+                    .set_party_count(player_id, new.party.len() as u8)
+                    .await;
                 tracing::info!(
                     player = player_id,
                     party = new.party.len(),

@@ -10,9 +10,10 @@ void MmoNameplates_Init(void);
 // Forget every tag without touching sprites, for a map change where the sprites are already gone.
 void MmoNameplates_Reset(void);
 
-// Ensure the tag for a slot exists, follows `objectEventId`, and shows `name`. Cheap to call every
-// frame -- it only re-renders when the name changes.
-void MmoNameplates_Set(u8 slot, u8 objectEventId, const char *name);
+// Ensure the tag for a slot exists, follows `objectEventId`, and shows `name` and how many Pokémon
+// the player carries. Cheap to call every frame -- it only re-renders when the name or count
+// changes.
+void MmoNameplates_Set(u8 slot, u8 objectEventId, const char *name, u8 partyCount);
 
 // Drop the tag for a slot whose player has left the map or disconnected.
 void MmoNameplates_Clear(u8 slot);

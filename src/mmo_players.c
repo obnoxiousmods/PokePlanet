@@ -596,7 +596,8 @@ void MmoPlayers_Update(void)
             struct ObjectEvent *object = sSlots[slot].spawned ? FindSlotObject(slot) : NULL;
 
             if (object != NULL)
-                MmoNameplates_Set(slot, (u8)(object - gObjectEvents), sSlotNames[slot]);
+                MmoNameplates_Set(slot, (u8)(object - gObjectEvents), sSlotNames[slot],
+                                  remote->partyCount);
             else
                 MmoNameplates_Clear(slot);
         }

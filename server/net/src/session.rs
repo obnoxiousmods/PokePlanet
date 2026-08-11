@@ -356,6 +356,7 @@ impl Session {
                                     name: p.name,
                                     graphics_id: p.graphics_id,
                                     pose: p.pose,
+                                    party_count: p.party_count,
                                 })
                                 .collect();
                             self.link.send(wire::encode_snapshot(&entries)).await;

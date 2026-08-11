@@ -292,6 +292,10 @@ pub struct RemotePlayer {
     pub name: String,
     pub graphics_id: u8,
     pub pose: Pose,
+    /// How many Pokémon this player carries, for their name tag. Appended last so an older field
+    /// order still decodes the rest.
+    #[serde(default)]
+    pub party_count: u8,
 }
 
 /// bincode configuration used for every QUIC payload.

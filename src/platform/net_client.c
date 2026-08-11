@@ -328,6 +328,8 @@ static void HandleSnapshot(const u8 *payload, u32 len)
         p->elevation = e[12];
         p->moving = e[13] ? TRUE : FALSE;
         CopyField(p->name, e + 14, NET_NAME_LEN);
+        // Party count rides at offset 30, in what the stride leaves as padding after the name.
+        p->partyCount = e[14 + NET_NAME_LEN];
         stored++;
     }
     sNet.remoteCount = stored;

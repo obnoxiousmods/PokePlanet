@@ -226,6 +226,8 @@ pub struct SnapshotEntry {
     pub name: String,
     pub graphics_id: u8,
     pub pose: Pose,
+    /// How many Pokémon this player is carrying, for the name tag.
+    pub party_count: u8,
 }
 
 pub fn encode_snapshot(players: &[SnapshotEntry]) -> Vec<u8> {
@@ -244,7 +246,11 @@ pub fn encode_snapshot(players: &[SnapshotEntry]) -> Vec<u8> {
         b.push(p.pose.elevation);
         b.push(u8::from(p.pose.moving));
         put_str(&mut b, &p.name, NAME_LEN);
-        // Pad to the fixed stride so the C side can index without parsing.
+        // Party count lands in what was padding (offset 30 of 32), so the stride does not move and
+        // no existing field shifts -- the same append-after-the-fixed-fields trick encode_profile
+        // uses for the player id.
+        b.push(p.party_count);
+        // Pad the rest of the fixed stride so the C side can index without parsing.
         b.resize(start + REMOTE_PLAYER_SIZE, 0);
     }
     frame(b)
@@ -625,10 +631,16 @@ mod tests {
             name: "Nurse Joy".into(),
             graphics_id: 5,
             pose: Pose::default(),
+            party_count: 4,
         };
         let f = encode_snapshot(std::slice::from_ref(&entry));
         // 4 length + 1 type + 2 count + one padded entry
         assert_eq!(f.len(), 4 + 1 + 2 + REMOTE_PLAYER_SIZE);
+        // Party count rides in what used to be padding, at offset 30 of the 32-byte entry, so it
+        // costs no stride and shifts nothing before it. The entry starts after the 4-byte frame
+        // length, the 1-byte type and the 2-byte count.
+        let entry_start = 4 + 1 + 2;
+        assert_eq!(f[entry_start + 30], 4, "party count sits at offset 30");
     }
 
     #[test]
@@ -638,6 +650,7 @@ mod tests {
             name: "A".repeat(200),
             graphics_id: 0,
             pose: Pose::default(),
+            party_count: 0,
         };
         let f = encode_snapshot(std::slice::from_ref(&entry));
         assert_eq!(f.len(), 4 + 1 + 2 + REMOTE_PLAYER_SIZE);

@@ -54,6 +54,7 @@ struct NetRemotePlayer
     u8 elevation;
     bool8 moving;
     char name[NET_NAME_LEN];
+    u8 partyCount;
 };
 
 struct NetChatLine

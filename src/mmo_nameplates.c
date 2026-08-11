@@ -23,6 +23,7 @@
 #include "mmo_text.h"
 #include "net_client.h"
 #include "event_object_movement.h"
+#include "constants/characters.h"
 #include "constants/rgb.h"
 
 // 'PN' — a tag range the overworld does not use. One gfx tag per slot so each name owns its own
@@ -43,6 +44,7 @@
 // One sprite per remote-player slot, matched to mmo_players' own slot indexing.
 static u8 sNameplateSpriteIds[NET_MAX_REMOTE_PLAYERS];
 static u8 sRenderedFor[NET_MAX_REMOTE_PLAYERS][NET_NAME_LEN];
+static u8 sRenderedCount[NET_MAX_REMOTE_PLAYERS];
 // The arrays zero-initialise, but sprite id 0 is a real sprite, so "no tag here" has to be set
 // explicitly to MAX_SPRITES before the first Set -- this guards that.
 static bool8 sInitialized;
@@ -110,6 +112,7 @@ void MmoNameplates_Init(void)
     {
         sNameplateSpriteIds[slot] = MAX_SPRITES;
         sRenderedFor[slot][0] = '\0';
+        sRenderedCount[slot] = 0xFF; // never a real party size, so the first Set always renders
     }
     sInitialized = TRUE;
 }
@@ -131,12 +134,14 @@ static void ClearNameplate(u8 slot)
     sRenderedFor[slot][0] = '\0';
 }
 
-// Render `name` into the sprite's tiles. Uses one throwaway window; on any failure the tag is
-// simply left as it was.
-static void DrawName(u8 slot, const char *name)
+// Render "name  N" into the sprite's tiles, N being the party count. Uses one throwaway window;
+// on any failure the tag is simply left as it was.
+static void DrawName(u8 slot, const char *name, u8 partyCount)
 {
     struct WindowTemplate template;
+    u8 label[NET_NAME_LEN + 8]; // name, two spaces, up to three digits, terminator
     u8 encoded[NET_NAME_LEN + 1];
+    u8 *end;
     u8 colours[3] = { 0, 1, 2 }; // bg, text, shadow -- indices into sNameplatePalette
     const u8 *tileData;
     u8 windowId;
@@ -160,12 +165,18 @@ static void DrawName(u8 slot, const char *name)
     if (windowId == WINDOW_NONE)
         return;
 
+    // "name  N" in the game's own encoding: the name from ASCII, then a gap and the party count.
     MmoText_FromAscii(encoded, name, sizeof(encoded));
+    end = StringCopy(label, encoded);
+    *end++ = CHAR_SPACE;
+    *end++ = CHAR_SPACE;
+    end = ConvertIntToDecimalStringN(end, partyCount, STR_CONV_MODE_LEFT_ALIGN, 3);
+
     FillWindowPixelBuffer(windowId, PIXEL_FILL(0));
-    x = (NP_WIDTH_PX - GetStringWidth(FONT_SMALL, encoded, 0)) / 2;
+    x = (NP_WIDTH_PX - GetStringWidth(FONT_SMALL, label, 0)) / 2;
     if (x < 0)
         x = 0;
-    AddTextPrinterParameterized3(windowId, FONT_SMALL, x, 0, colours, TEXT_SKIP_DRAW, encoded);
+    AddTextPrinterParameterized3(windowId, FONT_SMALL, x, 0, colours, TEXT_SKIP_DRAW, label);
 
     tileData = (const u8 *)GetWindowAttribute(windowId, WINDOW_TILE_DATA);
     CpuCopy32(tileData, (void *)OBJ_VRAM0 + tileStart * TILE_SIZE_4BPP, NP_TILE_COUNT * TILE_SIZE_4BPP);
@@ -175,7 +186,7 @@ static void DrawName(u8 slot, const char *name)
 
 // Ensure a tag exists for `slot`, following `objectEventId`, showing `name`. Called once a frame
 // per live remote player from mmo_players.
-void MmoNameplates_Set(u8 slot, u8 objectEventId, const char *name)
+void MmoNameplates_Set(u8 slot, u8 objectEventId, const char *name, u8 partyCount)
 {
     struct Sprite *sprite;
 
@@ -225,11 +236,12 @@ void MmoNameplates_Set(u8 slot, u8 objectEventId, const char *name)
     sprite = &gSprites[sNameplateSpriteIds[slot]];
     sprite->spObjectEventId = objectEventId;
 
-    // Re-render only when the name actually changed -- most frames it has not.
-    if (StringCompare(sRenderedFor[slot], name) != 0)
+    // Re-render only when the name or the count actually changed -- most frames neither has.
+    if (sRenderedCount[slot] != partyCount || StringCompare(sRenderedFor[slot], name) != 0)
     {
-        DrawName(slot, name);
+        DrawName(slot, name, partyCount);
         StringCopyN(sRenderedFor[slot], name, NET_NAME_LEN);
+        sRenderedCount[slot] = partyCount;
     }
 }
 

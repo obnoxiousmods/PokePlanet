@@ -28,6 +28,9 @@ pub struct Presence {
     pub name: String,
     pub graphics_id: u8,
     pub pose: Pose,
+    /// How many Pokémon this player carries, shown on their name tag. Seeded from the save at
+    /// join and kept current by party reports.
+    pub party_count: u8,
     /// Control-stream sink for this connection.
     pub control: mpsc::Sender<ServerControl>,
     /// Who has challenged this player and is awaiting an answer.
@@ -318,8 +321,17 @@ impl World {
                 name: p.name.clone(),
                 graphics_id: p.graphics_id,
                 pose: p.pose,
+                party_count: p.party_count,
             })
             .collect()
+    }
+
+    /// Update a player's carried-Pokémon count so their name tag reflects a party change. A no-op
+    /// if they are not online, which is the same as any other update to a departed player.
+    pub async fn set_party_count(&self, id: PlayerId, count: u8) {
+        if let Some(p) = self.players.write().await.get_mut(&id) {
+            p.party_count = count;
+        }
     }
 
     /// Deliver a chat message according to its target. Returns false if a private
@@ -604,6 +616,7 @@ mod tests {
                     y,
                     ..Default::default()
                 },
+                party_count: 0,
                 control: tx,
                 pending_invite: None,
                 battle: None,
