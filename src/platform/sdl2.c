@@ -528,6 +528,11 @@ int main(int argc, char **argv)
     // accelerated driver is available, so this cannot make a working setup fail.
     sdlRenderer = SDL_CreateRenderer(sdlWindow, -1,
                                      SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+    if (sdlRenderer == NULL)
+    {
+        SDL_Log("Accelerated renderer unavailable, falling back to software: %s", SDL_GetError());
+        sdlRenderer = SDL_CreateRenderer(sdlWindow, -1, SDL_RENDERER_SOFTWARE);
+    }
 #endif
     if (sdlRenderer == NULL)
     {
