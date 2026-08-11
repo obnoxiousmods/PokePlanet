@@ -23,6 +23,7 @@
 
 #include "global.h"
 #include "field_player_avatar.h"
+#include "money.h"
 #include "mmo_autosave.h"
 #include "net_client.h"
 #include "platform.h"
@@ -99,11 +100,16 @@ static void ReportPartyIfChanged(void)
     // and a full network queue is no reason to stop telling the supervisor what happened.
     {
         u8 report[4 + 600];
+        // The *decoded* money, not the raw stored word. In memory money is XOR'd with the
+        // SaveBlock2 key, and the supervisor reading this record has no way to recover the key
+        // from it -- so emitting the raw word would leave money uncomparable. GetMoney does the
+        // XOR here, so the record carries a value the server's diverged() can read directly.
+        u32 money = GetMoney(&gSaveBlock1Ptr->money);
 
-        report[0] = (u8)(gSaveBlock1Ptr->money & 0xFF);
-        report[1] = (u8)((gSaveBlock1Ptr->money >> 8) & 0xFF);
-        report[2] = (u8)((gSaveBlock1Ptr->money >> 16) & 0xFF);
-        report[3] = (u8)((gSaveBlock1Ptr->money >> 24) & 0xFF);
+        report[0] = (u8)(money & 0xFF);
+        report[1] = (u8)((money >> 8) & 0xFF);
+        report[2] = (u8)((money >> 16) & 0xFF);
+        report[3] = (u8)((money >> 24) & 0xFF);
         memcpy(report + 4, gPlayerParty, size);
         Platform_ReportState(report, 4 + size);
     }

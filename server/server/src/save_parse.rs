@@ -826,6 +826,46 @@ pub fn diverged(claimed: &SaveState, computed: &SaveState) -> Option<String> {
     None
 }
 
+/// Decode the state record a validation instance reports (Platform_ReportState / mmo_autosave.c)
+/// into a SaveState `diverged` can compare against the client's own.
+///
+/// The record is `decoded money (4 LE) + the party (6 x 100-byte `struct Pokemon`)`. Money arrives
+/// already decoded -- the instance runs GetMoney before writing it -- so it is stored here as
+/// money_raw against a zero key, making money() return it unchanged. Only the party and money are
+/// carried, which is all this record holds and all a battle can move; the bag, flags and the rest
+/// are empty, so diverged simply finds nothing to disagree about there. Empty party slots (a
+/// species of zero, which read_mon rejects) are skipped, exactly as a real save's party is read.
+pub fn decode_instance_state(record: &[u8]) -> Option<SaveState> {
+    const MONEY_BYTES: usize = 4;
+    if record.len() != MONEY_BYTES + PARTY_SIZE * MON_SIZE {
+        return None;
+    }
+    let money = u32::from_le_bytes(record[0..MONEY_BYTES].try_into().ok()?);
+
+    let mut party = Vec::new();
+    for i in 0..PARTY_SIZE {
+        let at = MONEY_BYTES + i * MON_SIZE;
+        if let Some(mon) = read_mon(&record[at..at + MON_SIZE]) {
+            party.push(mon);
+        }
+    }
+
+    Some(SaveState {
+        money_raw: money,
+        encryption_key: 0,
+        party,
+        flags: Vec::new(),
+        vars: Vec::new(),
+        coins_raw: 0,
+        bag: Vec::new(),
+        seen: Vec::new(),
+        block1: Vec::new(),
+        berry_trees: Vec::new(),
+        rematches: Vec::new(),
+        game_stats: Vec::new(),
+    })
+}
+
 /// Overwrite the encryption key inside a reassembled SaveBlock2 with `key`.
 ///
 /// The game generates a fresh key every time it saves and re-encrypts money, coins and item
@@ -1921,6 +1961,68 @@ mod tests {
         assert!(
             diverged(&swapped, &two).is_none(),
             "reordering a party is not a disagreement"
+        );
+    }
+
+    /// The state record a validation instance emits decodes into something diverged can read: the
+    /// money it carries and its party, with empty slots skipped and a short record refused.
+    #[test]
+    fn an_instance_state_record_decodes_for_comparison() {
+        // A 100-byte party Pokemon: an encrypted, checksummed growth substruct plus a level.
+        fn party_mon(species: u16, exp: u32, level: u8) -> Vec<u8> {
+            let personality: u32 = 0x1234_5678;
+            let ot_id: u32 = 0x9abc_def0;
+            let key = personality ^ ot_id;
+            let order = SUBSTRUCT_ORDER[(personality % 24) as usize];
+            let growth = order[0] * 12;
+
+            let mut plain = [0u8; 48];
+            plain[growth..growth + 2].copy_from_slice(&species.to_le_bytes());
+            plain[growth + 4..growth + 8].copy_from_slice(&exp.to_le_bytes());
+            let checksum: u16 = plain.chunks_exact(2).fold(0u16, |a, c| {
+                a.wrapping_add(u16::from_le_bytes([c[0], c[1]]))
+            });
+
+            let mut mon = vec![0u8; MON_SIZE];
+            mon[0..4].copy_from_slice(&personality.to_le_bytes());
+            mon[4..8].copy_from_slice(&ot_id.to_le_bytes());
+            mon[BOX_OFFSET_CHECKSUM..BOX_OFFSET_CHECKSUM + 2].copy_from_slice(&checksum.to_le_bytes());
+            for (i, chunk) in plain.chunks_exact(4).enumerate() {
+                let word = u32::from_le_bytes(chunk.try_into().unwrap()) ^ key;
+                mon[BOX_OFFSET_SECURE + i * 4..BOX_OFFSET_SECURE + i * 4 + 4]
+                    .copy_from_slice(&word.to_le_bytes());
+            }
+            mon[MON_OFFSET_LEVEL] = level;
+            mon
+        }
+
+        // 4 bytes decoded money, one real Pokemon, the other five slots empty (all zero -> species
+        // zero -> read_mon rejects them, exactly like a real save's empty slots).
+        let mut record = vec![0u8; 4 + PARTY_SIZE * MON_SIZE];
+        record[0..4].copy_from_slice(&5000u32.to_le_bytes());
+        record[4..4 + MON_SIZE].copy_from_slice(&party_mon(1, 50_000, 25));
+
+        let state = decode_instance_state(&record).expect("a full record decodes");
+        assert_eq!(state.money(), 5000, "money comes back decoded");
+        assert_eq!(state.party.len(), 1, "one Pokemon; the empty slots are skipped");
+        assert_eq!(state.party[0].level, 25);
+
+        // It feeds diverged: identical states agree; a client claiming different money does not.
+        assert!(
+            diverged(&state, &state).is_none(),
+            "an instance agreeing with itself is not an accusation"
+        );
+        let mut client_claims_more = state.clone();
+        client_claims_more.money_raw = 9_999; // money() = 9999 ^ 0
+        assert!(
+            diverged(&client_claims_more, &state).is_some(),
+            "a client's money the instance's run did not produce is a divergence"
+        );
+
+        // A record of the wrong length is refused rather than read past.
+        assert!(
+            decode_instance_state(&record[..100]).is_none(),
+            "a short record is refused"
         );
     }
 
