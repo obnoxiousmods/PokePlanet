@@ -1016,6 +1016,11 @@ u8 Platform_GetBorderBackground(void)
 static SDL_atomic_t sDisplayChangePending;
 static SDL_atomic_t sVsyncChangePending;
 
+// Set on the SDL thread when the player presses Shift+Enter, read and cleared on the game thread
+// by Platform_ConsumeChatOpen. Shift+Enter rather than plain Enter because Enter is the START
+// button; the shift is what tells the two apart. Same set-returns-old-value idiom as above.
+static SDL_atomic_t sChatOpenRequested;
+
 // Called from ProcessEvents, on the thread that made the window.
 static void ApplyPendingDisplayChange(void)
 {
@@ -1633,6 +1638,13 @@ bool8 Platform_IsTextInputActive(void)
     return sTextInputActive;
 }
 
+// TRUE once for each Shift+Enter the player has pressed since the last call, and clears the
+// request so a single press opens the composer exactly once.
+bool8 Platform_ConsumeChatOpen(void)
+{
+    return SDL_AtomicSet(&sChatOpenRequested, 0) != 0;
+}
+
 // Returns TRUE if the event was consumed by the text field.
 static bool8 HandleTextInputEvent(const SDL_Event *event)
 {
@@ -1760,6 +1772,16 @@ void ProcessEvents(void)
             }
             break;
         case SDL_KEYDOWN:
+            // Shift+Enter opens chat. Caught before the button switch so it does not also
+            // register as START (which is plain Enter). While the player is already typing,
+            // HandleTextInputEvent has consumed the event above, so this only ever fires to
+            // *open* the composer, never mid-message.
+            if ((event.key.keysym.sym == SDLK_RETURN || event.key.keysym.sym == SDLK_KP_ENTER)
+             && (event.key.keysym.mod & (KMOD_LSHIFT | KMOD_RSHIFT)))
+            {
+                SDL_AtomicSet(&sChatOpenRequested, 1);
+                break;
+            }
             switch (event.key.keysym.sym)
             {
             HANDLE_KEYDOWN(A_BUTTON)

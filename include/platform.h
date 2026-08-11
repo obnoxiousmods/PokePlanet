@@ -17,6 +17,9 @@ void Platform_EndTextInput(void);
 // Copies what has been typed. 0 while still typing, 1 on Enter, 2 on Escape.
 u8 Platform_PollTextInput(char *out, u8 outSize);
 bool8 Platform_IsTextInputActive(void);
+// TRUE once per Shift+Enter press: the dedicated "open chat" key, kept off plain Enter so it
+// does not collide with the START button.
+bool8 Platform_ConsumeChatOpen(void);
 void Platform_StoreSaveFile(void);
 void Platform_ReadFlash(u16 sectorNum, u32 offset, u8 *dest, u32 size);
 void Platform_QueueAudio(float *audioBuffer, s32 samplesPerFrame);

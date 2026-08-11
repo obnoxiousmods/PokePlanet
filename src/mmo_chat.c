@@ -31,25 +31,45 @@
 
 #define CHAT_WINDOW_BASE_BLOCK 0x139
 #define CHAT_WINDOW_WIDTH      26
-#define CHAT_WINDOW_HEIGHT     3
 
 // Long enough to read a line, short enough that the screen is mostly clear.
 #define CHAT_VISIBLE_FRAMES 240
 
-static const struct WindowTemplate sChatWindowTemplate =
+// Incoming lines and the composer are two different things and no longer share a spot, which was
+// the whole of the complaint: what you typed appeared exactly where the messages you were reading
+// did. Now arriving messages sit at the top and the composer sits at the bottom, out of the way of
+// them. Only one is ever on screen at once -- lines are queued while you type -- so both windows
+// use the same VRAM tiles and are torn down and rebuilt when the mode changes; the incoming height
+// of three is the larger, so the shared base block is sized for it and the free BG0 range holds it.
+enum { CHAT_WINDOW_NONE, CHAT_WINDOW_INCOMING, CHAT_WINDOW_COMPOSER };
+
+static const struct WindowTemplate sIncomingWindowTemplate =
 {
     .bg = 0,
     .tilemapLeft = 2,
     .tilemapTop = 1,
     .width = CHAT_WINDOW_WIDTH,
-    .height = CHAT_WINDOW_HEIGHT,
+    .height = 3,
+    .paletteNum = 15,
+    .baseBlock = CHAT_WINDOW_BASE_BLOCK,
+};
+
+static const struct WindowTemplate sComposerWindowTemplate =
+{
+    .bg = 0,
+    .tilemapLeft = 2,
+    .tilemapTop = 15,
+    .width = CHAT_WINDOW_WIDTH,
+    .height = 2,
     .paletteNum = 15,
     .baseBlock = CHAT_WINDOW_BASE_BLOCK,
 };
 
 static u8 sChatWindowId = WINDOW_NONE;
+static u8 sChatWindowKind = CHAT_WINDOW_NONE;
 static u16 sFramesLeft;
 static bool8 sComposing;
+static bool8 sWelcomed;
 
 // Comfortably longer than anything that fits the window, but bounded: the wire caps a
 // message at NET_TEXT_LEN and the server will not carry more.
@@ -65,6 +85,10 @@ static const u8 sToPromptEnd[] = _(": ");
 // whole server saw. Global is untagged, being both the default and the common case.
 static const u8 sNearbyTag[] = _(" nearby");
 static const u8 sWhispersTag[] = _(" whispers");
+
+// Shown once on entering the world. The channel is #pokeplanet, but the game font has no '#', so
+// the name is spelled plainly; the point of the line is the key, which nothing else advertises.
+static const u8 sWelcomeText[] = _("Welcome! Shift+Enter to chat");
 
 // The parser lives in mmo_chat_parse.c so it can be tested on the host; see that header.
 // Its scope values are written to match the wire's, and this is where that is checked
@@ -84,7 +108,36 @@ static void HideChatWindow(void)
     ClearStdWindowAndFrame(sChatWindowId, TRUE);
     RemoveWindow(sChatWindowId);
     sChatWindowId = WINDOW_NONE;
+    sChatWindowKind = CHAT_WINDOW_NONE;
     sFramesLeft = 0;
+}
+
+// Make sure the window on screen is the one this `kind` needs -- top-of-screen for incoming lines,
+// bottom for the composer -- creating it, or tearing down and rebuilding it if the other kind is
+// currently up. Returns FALSE only when no window slot is free, in which case the caller simply
+// does not draw. Loads the shared message-box border the first time a window is made.
+static bool8 EnsureChatWindow(u8 kind)
+{
+    if (sChatWindowKind == kind && sChatWindowId != WINDOW_NONE)
+        return TRUE;
+
+    if (sChatWindowId != WINDOW_NONE)
+    {
+        ClearStdWindowAndFrame(sChatWindowId, TRUE);
+        RemoveWindow(sChatWindowId);
+        sChatWindowId = WINDOW_NONE;
+        sChatWindowKind = CHAT_WINDOW_NONE;
+    }
+
+    sChatWindowId = AddWindow(kind == CHAT_WINDOW_COMPOSER
+                                  ? &sComposerWindowTemplate
+                                  : &sIncomingWindowTemplate);
+    if (sChatWindowId == WINDOW_NONE)
+        return FALSE; // Every window slot is taken; the line is simply not shown.
+
+    sChatWindowKind = kind;
+    LoadMessageBoxAndBorderGfx();
+    return TRUE;
 }
 
 // Drop the window without touching VRAM. For a map change, where every window is torn down
@@ -92,6 +145,7 @@ static void HideChatWindow(void)
 void MmoChat_Reset(void)
 {
     sChatWindowId = WINDOW_NONE;
+    sChatWindowKind = CHAT_WINDOW_NONE;
     sFramesLeft = 0;
 }
 
@@ -101,13 +155,8 @@ static void ShowLine(const struct NetChatLine *line)
     u8 encoded[NET_TEXT_LEN + 1];
     u8 *end;
 
-    if (sChatWindowId == WINDOW_NONE)
-    {
-        sChatWindowId = AddWindow(&sChatWindowTemplate);
-        if (sChatWindowId == WINDOW_NONE)
-            return; // Every window slot is taken; the line is simply not shown.
-        LoadMessageBoxAndBorderGfx();
-    }
+    if (!EnsureChatWindow(CHAT_WINDOW_INCOMING))
+        return;
 
     // "Name: what they said", both converted from the server's ASCII, with the scope named
     // unless it is global.
@@ -148,13 +197,8 @@ static void ShowComposer(const char *typed)
     u8 scope;
     u8 *end;
 
-    if (sChatWindowId == WINDOW_NONE)
-    {
-        sChatWindowId = AddWindow(&sChatWindowTemplate);
-        if (sChatWindowId == WINDOW_NONE)
-            return;
-        LoadMessageBoxAndBorderGfx();
-    }
+    if (!EnsureChatWindow(CHAT_WINDOW_COMPOSER))
+        return;
 
     // Reparsed on every keystroke so the prompt follows what is being typed: the moment a
     // name completes, "Say:" becomes "To Bob:" and there is no doubt about who will read it.
@@ -189,6 +233,21 @@ static void ShowComposer(const char *typed)
     sFramesLeft = 0; // Stays up until the player is done.
 }
 
+// A one-off greeting in the incoming-message spot, fading like any other line. It exists purely
+// so a new player learns chat is here and which key reaches it.
+static void ShowWelcome(void)
+{
+    if (!EnsureChatWindow(CHAT_WINDOW_INCOMING))
+        return;
+
+    DrawStdWindowFrame(sChatWindowId, FALSE);
+    FillWindowPixelBuffer(sChatWindowId, PIXEL_FILL(1));
+    AddTextPrinterParameterized(sChatWindowId, FONT_NARROW, sWelcomeText, 0, 1, TEXT_SKIP_DRAW,
+                                NULL);
+    CopyWindowToVram(sChatWindowId, COPYWIN_FULL);
+    sFramesLeft = CHAT_VISIBLE_FRAMES;
+}
+
 // Ticked once per overworld frame.
 void MmoChat_Update(void)
 {
@@ -204,6 +263,8 @@ void MmoChat_Update(void)
             UnlockPlayerFieldControls();
             HideChatWindow();
         }
+        // Greet again after a reconnect, so the reminder is there for a fresh session.
+        sWelcomed = FALSE;
         return;
     }
 
@@ -246,9 +307,19 @@ void MmoChat_Update(void)
         return;
     }
 
-    // R opens the composer. The field is locked while typing so the player does not walk
-    // off mid-sentence, and the platform stops reporting buttons at all.
-    if (JOY_NEW(R_BUTTON))
+    // The first clear moment online, tell the player chat exists and how to reach it. Nothing
+    // else on screen says so, and a chat nobody knows is there may as well not be.
+    if (!sWelcomed)
+    {
+        sWelcomed = TRUE;
+        ShowWelcome();
+        return;
+    }
+
+    // Shift+Enter opens the composer. The field is locked while typing so the player does not
+    // walk off mid-sentence, and the platform stops reporting buttons at all. Shift+Enter rather
+    // than a face button so it is the same reach on a keyboard as any chat, and off the START key.
+    if (Platform_ConsumeChatOpen())
     {
         sComposing = TRUE;
         LockPlayerFieldControls();
