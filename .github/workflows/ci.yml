@@ -81,10 +81,18 @@ jobs:
       # target -- the one the server runs headless -- which links the entire game.
       - name: Install 32-bit build dependencies
         run: |
+          set -euxo pipefail
           sudo dpkg --add-architecture i386
           sudo apt-get update
+          # SDL2 headers are architecture-independent, so the amd64 -dev package supplies them
+          # and avoids the libglib2.0-dev:i386 conflict that installing libsdl2-dev:i386 drags
+          # in. Only the runtime .so needs to be i386; the linker name (libSDL2.so) is added by
+          # hand because it normally comes from the -dev package we are deliberately not using.
           sudo apt-get install -y --no-install-recommends \
-            gcc-multilib g++-multilib libsdl2-dev:i386 build-essential
+            gcc-multilib g++-multilib build-essential \
+            libsdl2-dev libsdl2-2.0-0:i386
+          SO=$(dpkg -L libsdl2-2.0-0:i386 | grep -m1 'libSDL2-2.0.so.0$')
+          sudo ln -sf "$SO" "$(dirname "$SO")/libSDL2.so"
 
       - name: Build headless
         run: make -f Makefile_pc NATIVE_LINUX=1 NO_SDL_IMAGE=1 rom -j"$(nproc)"
