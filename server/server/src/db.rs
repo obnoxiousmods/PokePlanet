@@ -165,6 +165,14 @@ ALTER TABLE characters ALTER COLUMN map_group SET DEFAULT 0;
 ALTER TABLE characters ALTER COLUMN map_num   SET DEFAULT 9;
 ALTER TABLE characters ALTER COLUMN pos_x     SET DEFAULT 17;
 ALTER TABLE characters ALTER COLUMN pos_y     SET DEFAULT 18;
+
+-- Hash any session token still stored in plaintext (issued before tokens were hashed at rest), so
+-- a database at rest never holds a usable token. encode(sha256(token::bytea),'hex') is exactly what
+-- hash_token computes in Rust, so a client's raw token still resolves after this rewrite -- nobody
+-- is logged out. A hashed token is 64 lowercase hex chars; anything else is plaintext. Idempotent:
+-- once rewritten a token matches the 64-hex pattern and is skipped on every later startup.
+UPDATE sessions SET token = encode(sha256(token::bytea), 'hex')
+WHERE token !~ '^[0-9a-f]{64}$';
 "#;
 
 /// A shared test account so pokeplanet_tester.exe signs in with no Discord login, using the fixed
@@ -181,10 +189,13 @@ ALTER TABLE characters ALTER COLUMN pos_y     SET DEFAULT 18;
 /// holds nothing of value and can be banned like any other if the shared token is abused.
 const TESTER_SEED: &str = r#"
 DO $$
-DECLARE acct BIGINT; ch BIGINT;
+DECLARE acct BIGINT; ch BIGINT; tok TEXT;
 BEGIN
-  IF NOT EXISTS (SELECT 1 FROM sessions
-                 WHERE token = 'testertoken-for-local-testing-00000000001') THEN
+  -- Store the hash, not the raw token: character_for_token matches on the hash only now, and the
+  -- client hashes the raw token before it is compared, so the two meet at the hash. sha256 hex here
+  -- is the same value hash_token produces in Rust.
+  tok := encode(sha256('testertoken-for-local-testing-00000000001'::bytea), 'hex');
+  IF NOT EXISTS (SELECT 1 FROM sessions WHERE token = tok) THEN
     INSERT INTO accounts (discord_id, discord_username)
       VALUES ('pokeplanet-tester', 'Tester')
       ON CONFLICT (discord_id) DO NOTHING;
@@ -194,7 +205,7 @@ BEGIN
       ON CONFLICT (account_id) DO NOTHING;
     SELECT id INTO ch FROM characters WHERE account_id = acct;
     INSERT INTO sessions (token, character_id, expires_at)
-      VALUES ('testertoken-for-local-testing-00000000001', ch, now() + interval '100 years')
+      VALUES (tok, ch, now() + interval '100 years')
       ON CONFLICT (token) DO NOTHING;
   END IF;
 END $$;
@@ -591,16 +602,16 @@ pub async fn character_for_token(db: &Db, token: &str) -> anyhow::Result<Option<
     // Joins accounts and excludes banned ones so a ban takes effect at the next sign-in rather
     // than whenever the 90-day session token happens to expire. A banned account's token simply
     // resolves to no character, and the connection is turned away like an unknown token.
-    // Match on the hash, or on the raw token for sessions issued before hashing existed. The
-    // second arm ages out as those 90-day sessions expire.
+    // Match on the hash only. Any token issued before hashing existed was rewritten to its hash by
+    // the startup backfill (see SCHEMA), so no token is ever stored or compared in plaintext.
     let hashed = hash_token(token);
     Ok(client
         .query_opt(
             "SELECT c.* FROM sessions s
                JOIN characters c ON c.id = s.character_id
                JOIN accounts a ON a.id = c.account_id
-              WHERE (s.token = $1 OR s.token = $2) AND s.expires_at > now() AND NOT a.banned",
-            &[&hashed, &token],
+              WHERE s.token = $1 AND s.expires_at > now() AND NOT a.banned",
+            &[&hashed],
         )
         .await?
         .as_ref()
