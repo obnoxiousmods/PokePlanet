@@ -126,6 +126,52 @@ Refused server-side, each verified against real data with a negative control:
 
 ---
 
+## Blocked on the owner, not on effort
+
+These are specified and ready to build; each is held only because completing it safely needs
+something a solo automated pass should not do unilaterally. Listed with exactly what unblocks it.
+
+### Needs a play-testing session
+
+The server side of the movement desync is fixed and live; these are client changes whose *visual*
+correctness (camera follow, VRAM layout, on-screen text) cannot be confirmed headlessly, so they
+should be watched in a real session before shipping to the live client.
+
+- **Heal from a movement correction.** `ApplyCorrection` (`src/mmo_players.c`) is deliberately a
+  no-op, so if the server and client ever disagree about the player's tile the client cannot
+  re-sync. Fix: on a genuine same-map disagreement, reposition the avatar *and* the camera
+  together (a same-map warp is the game's own camera-correct primitive). Verify: force a desync,
+  confirm the avatar converges and the map does not slide.
+- **Boot online-only.** The client still reads the local `.sav` at boot (`sdl2.c` `ReadSaveFile`)
+  and falls through to it if the server's save is late (`main_menu.c`). Decided design: never read
+  local when online; wait behind a visible "Can't reach PokePlanet — [Retry] [Quit]" screen.
+  Verify: with the server down, the client shows that screen and never a stale character.
+- **Chat everywhere, opened by a key that does not fight the menu.** The composer opens on the R
+  button (`S` key), not Enter, and its VRAM base overlaps battle BG windows so it cannot render in
+  an ordinary battle. Needs a decision on the open key (Enter is START/the field menu) and a
+  battle-safe VRAM allocation. Verify: open and send from the overworld, a battle, and the PC.
+
+### Needs a decision on the production server
+
+- **Close the replay-validation loop.** The apparatus is built — headless build, supervisor,
+  input routing, state pipe, `diverged`, reaper. Two things remain: (1) a reader in `instances.rs`
+  that consumes `POKEPLANET_STATE_PIPE` and calls `diverged` in the live path (log before it
+  refuses); (2) a running instance to develop that against, which needs **32-bit SDL2 on lucy** —
+  an Arch multilib/`lib32-sdl2` install (or bundling the `.so` via `LD_LIBRARY_PATH`) and
+  `POKEPLANET_GAME_BINARY` set in the unit. The system change to the live server is the owner's
+  call; the code half is ready to write once an instance can run.
+- **Server-authoritative battle outcome.** Builds on the replay instance: run the battle in the
+  server's own instance from the same inputs and accept only its result. Blocked behind the loop
+  above.
+
+### Needs a testable login before shipping
+
+- **Hash session and login tokens at rest**, and **bind the OAuth `state`** to close the
+  login-CSRF. Both touch the live login path — token hashing invalidates existing plaintext
+  sessions on migration — so they want a login they can exercise end to end, not a blind deploy.
+
+---
+
 ## Planned
 
 ### Next
