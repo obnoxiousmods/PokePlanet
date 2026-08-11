@@ -83,6 +83,8 @@ pub const MSG_PARTY: u8 = 0x8E;
 pub const MSG_REGION: u8 = 0x8F;
 /// One chunk of a whole save block -- the PC boxes, or SaveBlock2.
 pub const MSG_BLOCK: u8 = 0x90;
+/// A run of per-frame key states, for replay validation.
+pub const MSG_KEYS: u8 = 0x91;
 
 /// Mirrors `enum NetAuthState` in the C header.
 pub const AUTH_OFFLINE: u8 = 0;
@@ -353,6 +355,11 @@ pub enum GameMessage {
     /// The PC boxes are nine sectors -- about thirty-five kilobytes -- which is far too much to
     /// put through the pipe in a single frame, so they arrive in pieces and are reassembled.
     BlockChunk { block: u8, offset: u32, total: u32, bytes: Vec<u8> },
+    /// Key state for a run of consecutive frames, oldest first.
+    ///
+    /// Batched rather than one message per frame: sixty messages a second per player, each
+    /// carrying two bytes, would cost far more in framing than the data is worth.
+    Keys { frames: Vec<u16> },
     /// The game introducing itself, naming the sidecar it means to reach.
     Hello { instance: String },
     /// A game process connected to the sidecar.
@@ -369,6 +376,19 @@ pub fn decode_game_message(body: &[u8]) -> anyhow::Result<GameMessage> {
         .ok_or_else(|| anyhow::anyhow!("empty IPC frame"))?;
     match kind {
         MSG_BATTLE_ENDED => Ok(GameMessage::BattleEnded),
+        MSG_KEYS => {
+            // Whole frames only. A trailing odd byte means the sender and this disagree about
+            // the format, and guessing at the remainder would invent inputs nobody pressed.
+            if rest.len() % 2 != 0 {
+                anyhow::bail!("key run is not a whole number of frames");
+            }
+            Ok(GameMessage::Keys {
+                frames: rest
+                    .chunks_exact(2)
+                    .map(|c| u16::from_le_bytes([c[0], c[1]]))
+                    .collect(),
+            })
+        }
         MSG_BLOCK => {
             let head = rest.get(..9).ok_or_else(|| anyhow::anyhow!("short block chunk"))?;
             Ok(GameMessage::BlockChunk {

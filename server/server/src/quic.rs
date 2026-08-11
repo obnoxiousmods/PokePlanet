@@ -452,6 +452,24 @@ async fn control_loop(
                         .await;
                 }
             }
+            ClientControl::Keys { frames } => {
+                // Replay: hand the player's own inputs to the instance computing what should
+                // have happened. Bounded first -- a client choosing how much the server buffers
+                // is a client choosing how much memory to spend.
+                if frames.len() > 600 {
+                    tracing::warn!(player = player_id, n = frames.len(), "refusing a long key run");
+                    continue;
+                }
+                if let Some(instances) = &server.instances {
+                    let mut instances = instances.lock().await;
+                    instances.connect_ready().await;
+                    for keys in frames {
+                        // Dropped silently when no instance is running: validation is an extra
+                        // check, and its absence must never affect the player's own session.
+                        instances.send_input(character_id, keys).await;
+                    }
+                }
+            }
             ClientControl::BlockChunk { block, offset, total, bytes } => {
                 // Block 2 is the tail: Hall of Fame, Trainer Hill, recorded battle. Whole
                 // sectors including footers, spliced in as they arrived.

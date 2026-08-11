@@ -88,6 +88,10 @@ pub enum ClientControl {
     ///
     /// Appended so the existing variant numbering does not shift.
     BlockChunk { block: u8, offset: u32, total: u32, bytes: Vec<u8> },
+    /// Key state for a run of consecutive frames.
+    ///
+    /// Appended so the existing variant numbering does not shift.
+    Keys { frames: Vec<u16> },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

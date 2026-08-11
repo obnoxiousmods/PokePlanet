@@ -436,6 +436,9 @@ impl Session {
                         wire::GameMessage::LinkBlock { bytes } => {
                             write_control(&mut send, &ClientControl::LinkBlock { bytes }).await?;
                         }
+                        wire::GameMessage::Keys { frames } => {
+                            write_control(&mut send, &ClientControl::Keys { frames }).await?;
+                        }
                         wire::GameMessage::BlockChunk { block, offset, total, bytes } => {
                             write_control(
                                 &mut send,
