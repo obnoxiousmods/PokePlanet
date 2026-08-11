@@ -15,6 +15,7 @@
 #include "global.h"
 #include "battle.h"
 #include "battle_setup.h"
+#include "field_screen_effect.h"
 #include "link.h"
 #include "load_save.h"
 #include "main.h"
@@ -23,6 +24,7 @@
 #include "mmo_text.h"
 #include "net_client.h"
 #include "overworld.h"
+#include "script.h"
 #include "sound.h"
 #include "string_util.h"
 #include "tv.h"
@@ -121,18 +123,31 @@ static void CB2_ReturnFromMmoBattle(void)
     Link_ClearAssignedMultiplayerId();
     gBattleTypeFlags = 0;
 
-    // Give back what the battle borrowed, and put the map's music back.
-    Overworld_ResetMapMusic();
+    // Give back what the battle borrowed.
     LoadPlayerParty();
     SavePlayerBag();
 
-    // CB2_ReturnToFieldFromMultiplayer, not CB2_ReturnToField.
+    // Return to the overworld through the local, non-link path -- not
+    // CB2_ReturnToFieldFromMultiplayer.
     //
-    // The plain one expects the field to still be standing, which after a battle it is not:
-    // the map, its tilesets and its object events were torn down to make room. The multiplayer
-    // one rebuilds them, which is why every other link battle in the game returns through it.
+    // That multiplayer return rebuilds the field, which is why it was reached for first, but it
+    // installs FieldCB_ReturnToFieldCableLink, whose very first step is
+    // CreateTask_ReestablishCableClubLink: a handshake with a real cable partner. There is no
+    // such partner here and there never will be -- the battle ran over a QUIC server, not a wire,
+    // and MmoLink_EndBattle just tore the bridge down -- so that task never finishes, the fade-in
+    // that waits on it never runs, and both clients sit on the filled-black screen forever. That
+    // was the bug: the battle ended correctly, but the way home was waiting on a cable.
     //
-    // Using the wrong one left a black screen that never recovered. The battle had ended
-    // correctly; there was simply no field left to go back to.
-    SetMainCallback2(CB2_ReturnToFieldFromMultiplayer);
+    // Nothing needs re-establishing, so come back the way a single-player battle does.
+    // CB1_Overworld (rather than CB1_OverworldLink) makes CB2_ReturnToField take its local
+    // branch, which clears the battle's vblank/hblank callbacks and rebuilds the torn-down map,
+    // tilesets and object events exactly as an ordinary battle's return does;
+    // FieldCB_WarpExitFadeFromBlack fades in and restores the map music with no link wait anywhere
+    // in it.
+    SetMainCallback1(CB1_Overworld);
+    ResetAllMultiplayerState();
+    gFieldCallback = FieldCB_WarpExitFadeFromBlack;
+    ScriptContext_Init();
+    UnlockPlayerFieldControls();
+    CB2_ReturnToField();
 }
