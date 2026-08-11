@@ -85,9 +85,18 @@ Refused server-side, each verified against real data with a negative control:
   publishes, so the ceiling widens on a generous server rather than accusing it.
 - **Reports validated, not just uploads.** Every typed report (money, items, party, flags,
   blocks) is rebuilt into a candidate save and put through the same checks an upload gets. The
-  SaveBlock2 encryption key is pinned so it cannot be rewritten to mint money; badges cannot be
-  lost; a monotonic set of ~960 story flags the game never clears is watched (logged now,
-  enforced once real play proves it quiet); the rate ceiling applies on every path.
+  SaveBlock2 encryption key is pinned so it cannot be rewritten to mint money (and so options,
+  play time and the Pokédex still persist through it); badges cannot be lost; a monotonic set of
+  ~960 story flags the game never clears is watched (logged now, enforced once real play proves it
+  quiet); the rate ceiling applies on every path.
+- **Ids past the game's own tables are refused.** A party or boxed Pokémon whose species, held
+  item or a move is an index past the end of `NUM_SPECIES` / `ITEMS_COUNT` / `MOVES_COUNT` — a
+  value no honest save can hold and a crash the client would hit loading it — is refused, as is a
+  bag item id past the item table.
+- **Position is the server's, not the client's.** The player's coordinates and every warp datum
+  live at the top of SaveBlock1; the region-report allowlist starts *after* them, so a raw region
+  write can no longer set a character's location, map or white-out heal point. Position comes only
+  from the pose stream, which is checked for teleport, speed, diagonal moves and walls.
 - **The raw save upload is retired.** It exists only to seed a character's first save, which
   must parse and meet the caps; after that a full-image overwrite is refused, so it can no
   longer bypass the per-field checks. A save the server cannot read is refused rather than
@@ -98,10 +107,15 @@ Refused server-side, each verified against real data with a negative control:
 
 ### Multiplayer features
 - **Chat** with global, map and private scopes, bridged to IRC, with `/s`, `/w NAME` and `/r`.
-  A whisper with nobody to whisper to is dropped rather than broadcast.
+  A whisper with nobody to whisper to is dropped rather than broadcast. Opens on **Shift+Enter**
+  (kept off plain Enter, which is START); the composer sits at the bottom of the screen and
+  arriving messages at the top, so what you type is never where you are reading; and a one-off
+  "Shift+Enter to chat" line on arrival says the feature is there at all. On IRC each line is
+  tagged with the player's Discord name rather than the bridge bot's.
 - **Battles between two players.** Invitations both ways, the server assigning slots, and the
   whole link-battle protocol carried over the network instead of a cable -- intro, turn loop
-  and all. Two players can fight a match.
+  and all. Two players can fight a match, and both return to the overworld when it ends (the
+  return no longer waits on a cable-link handshake that a networked battle can never complete).
 - **Gameplay rates held by the server**: experience, encounters, money, items, catch and shop
   prices, plus per-species encounter rates. Edit one file, restart, every client is told.
 
@@ -137,19 +151,23 @@ The server side of the movement desync is fixed and live; these are client chang
 correctness (camera follow, VRAM layout, on-screen text) cannot be confirmed headlessly, so they
 should be watched in a real session before shipping to the live client.
 
-- **Heal from a movement correction.** `ApplyCorrection` (`src/mmo_players.c`) is deliberately a
-  no-op, so if the server and client ever disagree about the player's tile the client cannot
-  re-sync. Fix: on a genuine same-map disagreement, reposition the avatar *and* the camera
-  together (a same-map warp is the game's own camera-correct primitive). Verify: force a desync,
-  confirm the avatar converges and the map does not slide.
+- **Heal from a movement correction — shipped, wants a look.** `ApplyCorrection`
+  (`src/mmo_players.c`) now heals a genuine same-map disagreement by warping the avatar and camera
+  together after a persistent-mismatch streak, rather than the old no-op. Verify: force a desync,
+  confirm the avatar converges within one correction and the map does not slide.
+- **PvP return — shipped, wants a two-client look.** A player-versus-player battle used to end on a
+  black screen both sides never recovered from, because the return waited on a cable-link handshake
+  a networked battle cannot complete; it now returns through the local path a single-player battle
+  uses. Verify: two clients, a full match (both a win and a loss), both back in the overworld.
 - **Boot online-only.** The client still reads the local `.sav` at boot (`sdl2.c` `ReadSaveFile`)
   and falls through to it if the server's save is late (`main_menu.c`). Decided design: never read
   local when online; wait behind a visible "Can't reach PokePlanet — [Retry] [Quit]" screen.
   Verify: with the server down, the client shows that screen and never a stale character.
-- **Chat everywhere, opened by a key that does not fight the menu.** The composer opens on the R
-  button (`S` key), not Enter, and its VRAM base overlaps battle BG windows so it cannot render in
-  an ordinary battle. Needs a decision on the open key (Enter is START/the field menu) and a
-  battle-safe VRAM allocation. Verify: open and send from the overworld, a battle, and the PC.
+- **Chat — overworld half shipped, battle half remains.** It now opens on **Shift+Enter** (off
+  plain Enter, which is START), the composer sits at the bottom and arriving lines at the top so
+  they no longer share a spot, and a one-off banner announces the feature. What remains is a
+  battle-safe VRAM base so the composer can render during a battle without touching the battle's
+  own BG windows. Verify: open and send from the overworld now; from a battle once the VRAM is done.
 
 ### Needs a decision on the production server
 
@@ -285,11 +303,15 @@ Stated plainly, because it would be easy to read the anti-cheat list above and c
 otherwise: **movement is genuinely server-validated; progression is not, fully.**
 
 Every hard invariant the game enforces is now enforced server-side, crude edits are caught, the
-report paths are validated rather than trusted, and the raw upload can no longer bypass them.
-What remains: a patched client can still award itself *legal-looking* things it never earned —
-a rare species at level 100 with legal stats, or money below the cap it never made — and item
-acquisition and PC-box contents are not yet fully validated. Closing that is what the replay
-validation above is for; until its loop is closed, the rate ceilings are the backstop.
+report paths are validated rather than trusted (party, PC boxes, bag, money, flags and the
+region blocks, with position and the warps no longer writable at all), and the raw upload can no
+longer bypass them. What remains is the *legal-looking* forgery: a patched client can still award
+itself a rare species at level 100 with legal stats, moves and items, or money below the cap it
+never made, because each value on its own is one a real save could hold. Catching that needs the
+history the value came from, which is what the replay validation above is for; until its loop is
+closed, the rate ceilings are the backstop. One narrower gap also remains — an item is checked to
+be a real id in an existing pocket, but not that it belongs in *that* pocket, which needs the
+game's macro-generated item→pocket table.
 
 ---
 
