@@ -1555,6 +1555,49 @@ mod tests {
 
     /// Build an image with one readable slot, so the layout logic is exercised without
     /// needing a real save on disk.
+    /// Rewriting the SaveBlock2 encryption key changes decoded money — which is exactly the
+    /// attack the block-0 handler guard refuses.
+    ///
+    /// money() is money_raw ^ key, so a client that authors a new key sets money to anything
+    /// without ever touching the money path. This proves the exploit is real (money moves) and
+    /// that both signals the handler pins — encryption_key and money() — actually move when the
+    /// key is rewritten, so the guard `new.encryption_key != old.encryption_key || new.money()
+    /// != old.money()` catches it. The negative control is that re-authoring the *unchanged*
+    /// SaveBlock2 block leaves both untouched, so the guard does not refuse an honest options
+    /// or playtime report.
+    #[test]
+    fn rewriting_the_saveblock2_key_is_detectable() {
+        let mut image = image_with(0, 1, &[], &[], 5000);
+        sign(&mut image, 0, 2000);
+        let old = parse(&image).expect("readable");
+        assert_eq!(old.money(), 5000);
+
+        // Negative control: author the SaveBlock2 block back unchanged. Key and money hold, so
+        // an honest SaveBlock2 report (options, playtime) is not refused.
+        let unchanged = read_block(&image, &SAVEBLOCK2_SECTORS).expect("readable block");
+        let same = parse(&reauthor_block(&image, &SAVEBLOCK2_SECTORS, &unchanged).expect("author"))
+            .expect("parses");
+        assert_eq!(same.encryption_key, old.encryption_key, "key must not move on a no-op");
+        assert_eq!(same.money(), old.money(), "money must not move on a no-op");
+
+        // The attack: rewrite the encryption key inside the SaveBlock2 block.
+        let mut tampered = unchanged.clone();
+        tampered[OFFSET_ENCRYPTION_KEY..OFFSET_ENCRYPTION_KEY + 4]
+            .copy_from_slice(&0xDEAD_BEEFu32.to_le_bytes());
+        let attacked = parse(&reauthor_block(&image, &SAVEBLOCK2_SECTORS, &tampered).expect("author"))
+            .expect("parses");
+
+        assert_ne!(
+            attacked.encryption_key, old.encryption_key,
+            "the key changed -- the guard's encryption_key check fires"
+        );
+        assert_ne!(
+            attacked.money(),
+            old.money(),
+            "and money moved with it -- the guard's money() check fires too"
+        );
+    }
+
     fn image_with(slot: usize, counter: u32, flags: &[u8], vars: &[u16], money: u32) -> Vec<u8> {
         let mut image = vec![0u8; NUM_SECTORS * SECTOR_SIZE];
 

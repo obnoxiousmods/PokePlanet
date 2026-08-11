@@ -581,9 +581,27 @@ async fn control_loop(
                     continue;
                 };
 
+                // Block 0 is SaveBlock2, which carries the encryption key. money() is
+                // money_raw ^ key, so a client that rewrites the key sets money to anything it
+                // likes -- and this path never money-checked it. Options and playtime live in
+                // SaveBlock2 too and must still persist, so the block is accepted but the key
+                // and the money it decodes to are pinned: neither may move through here. Money
+                // has its own validated path; SaveBlock2 reports are for the rest.
+                const SAVEBLOCK2_BLOCK: u8 = 0;
+                if block == SAVEBLOCK2_BLOCK
+                    && (new.encryption_key != old.encryption_key || new.money() != old.money())
+                {
+                    tracing::warn!(
+                        player = player_id,
+                        "refusing a SaveBlock2 report that would change the key or money"
+                    );
+                    continue;
+                }
+
                 if let Some(reason) = new
                     .impossible()
                     .or_else(|| crate::save_parse::regressed(&old, &new))
+                    .or_else(|| allowance.check(&old, &new, &server.rates))
                 {
                     tracing::warn!(player = player_id, %reason, "refusing a reported block");
                     continue;
@@ -622,6 +640,7 @@ async fn control_loop(
                 if let Some(reason) = new
                     .impossible()
                     .or_else(|| crate::save_parse::regressed(&old, &new))
+                    .or_else(|| allowance.check(&old, &new, &server.rates))
                 {
                     tracing::warn!(player = player_id, %reason, "refusing a reported region");
                     continue;
