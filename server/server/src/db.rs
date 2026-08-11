@@ -507,11 +507,15 @@ pub async fn issue_session(db: &Db, character_id: i64, token: &str) -> anyhow::R
 /// Resolve a session token to its character, rejecting expired ones.
 pub async fn character_for_token(db: &Db, token: &str) -> anyhow::Result<Option<Character>> {
     let client = db.get().await?;
+    // Joins accounts and excludes banned ones so a ban takes effect at the next sign-in rather
+    // than whenever the 90-day session token happens to expire. A banned account's token simply
+    // resolves to no character, and the connection is turned away like an unknown token.
     Ok(client
         .query_opt(
             "SELECT c.* FROM sessions s
                JOIN characters c ON c.id = s.character_id
-              WHERE s.token = $1 AND s.expires_at > now()",
+               JOIN accounts a ON a.id = c.account_id
+              WHERE s.token = $1 AND s.expires_at > now() AND NOT a.banned",
             &[&token],
         )
         .await?

@@ -431,6 +431,21 @@ async fn control_loop(
     // judged on rate at all.
 
     while let Some(frame) = read_frame(recv).await? {
+        // Stop the moment this connection has been superseded by a newer sign-in.
+        //
+        // Superseded was only ever a *message* the client could ignore. A hostile client that
+        // ignored it kept this loop running, and each live connection carries its own rate
+        // allowance -- so N connections on one token meant N independent ceilings, and
+        // reconnect-spam multiplied the rate of gain without bound. Checking session currency
+        // here means a displaced connection processes no further reports: only the current
+        // session spends, and the ceiling is per character again rather than per connection.
+        if !server.world.session_is_current(player_id, session).await {
+            tracing::info!(
+                player = player_id,
+                "connection superseded; stopping its control loop"
+            );
+            return Ok(());
+        }
         match quic::decode::<ClientControl>(&frame)? {
             ClientControl::Chat { target, text } => {
                 let text = sanitize_chat(&text);
