@@ -185,31 +185,6 @@ impl World {
             return None;
         }
 
-        // Whatever else is or is not known, a position has to be on the map it claims.
-        //
-        // The two branches below deliberately take a pose on trust -- there is nothing to
-        // compare against yet, or a door has just decided the tile. Trusting *which tile* is
-        // reasonable. Trusting that it is a tile at all is not, and nothing checked it: a pose
-        // carrying the previous map's coordinates was accepted on a map change, persisted by
-        // the save ticker, and handed back at the next sign-in, putting the player off the edge
-        // of a small interior map. Refusing here keeps the bad value from ever being stored.
-        if !self
-            .collision
-            .in_bounds(pose.map.group, pose.map.num, pose.x, pose.y)
-        {
-            tracing::warn!(
-                player = id,
-                group = pose.map.group,
-                num = pose.map.num,
-                runtime_x = pose.x,
-                runtime_y = pose.y,
-                layout_x = pose.x - 7,
-                layout_y = pose.y - 7,
-                "refusing a position that is not on that map"
-            );
-            return None;
-        }
-
         // Nothing to continue from yet, so there is nothing to check against.
         if p.position_unknown {
             // Read the old map before overwriting it, or the reindex below moves the player
@@ -229,6 +204,28 @@ impl World {
         // still the client's call for now, so this trusts it; once warps are server-side
         // this becomes the check that they were adjacent to a real door.
         if pose.map != p.pose.map {
+            // On the map change -- and ONLY here, not on every step -- refuse a coordinate that
+            // is not on the destination map. This is the one place a pose carrying the previous
+            // map's coordinates can enter; checking it on every step instead flooded corrections
+            // and refused legitimate tiles whenever a map's runtime layout differs from the
+            // exported one (secret bases, the Battle Pyramid). Refusing keeps the old pose and
+            // re-arms position_unknown so the next honest report settles it, rather than
+            // persisting a bad coordinate.
+            if !self
+                .collision
+                .in_bounds(pose.map.group, pose.map.num, pose.x, pose.y)
+            {
+                tracing::warn!(
+                    player = id,
+                    group = pose.map.group,
+                    num = pose.map.num,
+                    x = pose.x,
+                    y = pose.y,
+                    "refusing a map-change onto a coordinate that is not on that map"
+                );
+                p.position_unknown = true;
+                return Some(p.pose);
+            }
             let was = p.pose.map;
             p.pose = pose;
             // The tile they arrive on is decided by the door, and the report carrying it
@@ -588,6 +585,44 @@ mod tests {
             },
             rx,
         )
+    }
+
+    /// A map change onto a coordinate that is not on the destination map is refused; onto a
+    /// real one it is accepted. Ordinary steps never touch this path.
+    ///
+    /// The negative control is the second half: if the refusal fired on a valid tile too it
+    /// would strand every player at every door, which is the live rubber-band this replaced.
+    #[tokio::test]
+    async fn a_map_change_onto_an_off_map_tile_is_refused() {
+        // (0,9) is 13x13 -> runtime 7..=19; (0,10) is 20x20 -> runtime 7..=26.
+        let world = World::with_collision(crate::collision::Collision::for_test(&[
+            (0, 9, 13, 13),
+            (0, 10, 20, 20),
+        ]));
+        let (a, _ra) = presence(1, "Ash", 10, 10);
+        world.join(1, a).await;
+        let session = world.players.read().await[&1].session;
+
+        // Settle onto (0,10) at a valid tile.
+        let start = Pose { map: MapId::new(0, 10), x: 10, y: 10, ..Default::default() };
+        assert_eq!(world.update_pose(1, session, start).await, Some(start));
+
+        // Change to (0,9) carrying a town coordinate four tiles past its bottom edge: refused,
+        // and the player keeps the pose they had rather than being flung off the map.
+        let off = Pose { map: MapId::new(0, 9), x: 14, y: 23, ..Default::default() };
+        assert_eq!(
+            world.update_pose(1, session, off).await,
+            Some(start),
+            "an off-map map-change must be refused, keeping the old pose"
+        );
+
+        // The same change onto a real tile of (0,9) is accepted.
+        let ok = Pose { map: MapId::new(0, 9), x: 12, y: 12, ..Default::default() };
+        assert_eq!(
+            world.update_pose(1, session, ok).await,
+            Some(ok),
+            "an on-map map-change must be accepted"
+        );
     }
 
     #[tokio::test]

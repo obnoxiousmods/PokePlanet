@@ -90,6 +90,18 @@ impl Collision {
         self.maps.len()
     }
 
+    /// A collision table of all-walkable maps of the given sizes, for tests in other modules.
+    /// Each tuple is (group, num, width, height); runtime coords 7..width+7 are on the map.
+    #[cfg(test)]
+    pub(crate) fn for_test(maps: &[(u8, u8, u16, u16)]) -> Self {
+        let mut m = std::collections::HashMap::new();
+        for &(group, num, width, height) in maps {
+            let bytes = (width as usize * height as usize).div_ceil(8);
+            m.insert((group, num), MapCollision { width, height, bits: vec![0u8; bytes] });
+        }
+        Self { maps: m }
+    }
+
     /// True when this position is a real place on this map.
     ///
     /// Unknown maps pass, for the same reason `walkable` lets them: a map the table does not
