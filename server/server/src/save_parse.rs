@@ -1917,7 +1917,11 @@ mod tests {
             applied.encryption_key, old.encryption_key,
             "the key is pinned to the server's own"
         );
-        assert_eq!(applied.money(), old.money(), "so decoded money does not move");
+        assert_eq!(
+            applied.money(),
+            old.money(),
+            "so decoded money does not move"
+        );
         let block = read_block(&candidate, &SAVEBLOCK2_SECTORS).expect("readable");
         assert_eq!(
             block[OPTIONS_BYTE], 2,
