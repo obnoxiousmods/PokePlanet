@@ -13,6 +13,10 @@ pub struct Config {
     pub database_url: String,
     /// Externally reachable base URL, used to build the Discord redirect.
     pub public_url: String,
+    /// Path to a headless build of the game, used to replay and check a client's account of
+    /// what happened. Absent means that check is simply not run -- a server without the binary
+    /// keeps every rule it already enforced.
+    pub game_binary: Option<String>,
 
     pub discord_client_id: String,
     pub discord_client_secret: String,
@@ -58,6 +62,7 @@ impl Config {
                 "postgres://pokeplanet@%2Frun%2Fpostgresql/pokeplanet",
             ),
             public_url: var_or("POKEPLANET_PUBLIC_URL", "https://pokeplanet.obby.ca"),
+            game_binary: std::env::var("POKEPLANET_GAME_BINARY").ok(),
 
             discord_client_id: var("DISCORD_CLIENT_ID")?,
             discord_client_secret: var("DISCORD_CLIENT_SECRET")?,

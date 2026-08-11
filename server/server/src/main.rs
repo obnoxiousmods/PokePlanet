@@ -66,6 +66,20 @@ async fn main() -> anyhow::Result<()> {
         }
     };
 
+    // The game binary, if this host has one. Named by config so a machine without it simply
+    // runs without replay validation instead of failing to start.
+    let instances = cfg.game_binary.as_ref().and_then(|path| {
+        if std::path::Path::new(path).exists() {
+            tracing::info!(%path, "replay validation enabled");
+            Some(Arc::new(tokio::sync::Mutex::new(
+                crate::instances::Instances::new(path),
+            )))
+        } else {
+            tracing::warn!(%path, "game binary not found; replay validation disabled");
+            None
+        }
+    });
+
     let server = Arc::new(quic::Server {
         cfg: cfg.clone(),
         rates: rates.clone(),
@@ -75,6 +89,7 @@ async fn main() -> anyhow::Result<()> {
             .user_agent("PokePlanet/0.1 (+https://github.com/obnoxiousmods/PokePlanet)")
             .timeout(std::time::Duration::from_secs(15))
             .build()?,
+            instances,
     });
 
     let endpoint = quic::endpoint(&cfg).context("binding the QUIC endpoint")?;

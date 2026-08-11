@@ -35,6 +35,14 @@ pub struct Server {
     pub db: Db,
     pub world: SharedWorld,
     pub http: reqwest::Client,
+    /// Headless instances of the game, one per signed-in character, used to check the client's
+    /// account of what happened against the server's own. See instances.rs.
+    ///
+    /// Optional because it needs the game binary, which a server does not necessarily have --
+    /// and a missing binary must degrade to the rules that already exist, not stop anyone
+    /// playing. A Mutex rather than per-connection state because the cap is global: the whole
+    /// point of a bound is that it is shared.
+    pub instances: Option<Arc<tokio::sync::Mutex<crate::instances::Instances>>>,
 }
 
 pub fn endpoint(cfg: &Config) -> anyhow::Result<Endpoint> {
@@ -300,6 +308,13 @@ async fn run_session(
     let online = server.world.online_count().await;
     tracing::info!(player = player_id, %name, online, "player online");
 
+    // Bring up this character's validation instance. Best effort by design: if it will not
+    // start, the server falls back to the rules it already enforces rather than refusing the
+    // player. An extra check that can deny access is worse than no extra check.
+    if let Some(instances) = &server.instances {
+        instances.lock().await.start(character.id);
+    }
+
     let writer = tokio::spawn(async move {
         while let Some(msg) = control_rx.recv().await {
             if write_frame(&mut send, &msg).await.is_err() {
@@ -320,6 +335,12 @@ async fn run_session(
         &server, &conn, &mut recv, player_id, session, &name, character.id, &session_token,
     )
     .await;
+
+    // The instance goes when the player does. Left running it would be a process per departed
+    // player, which is precisely the leak the sidecar took all day to stop being.
+    if let Some(instances) = &server.instances {
+        instances.lock().await.stop(character.id).await;
+    }
 
     server.world.leave(player_id, session).await;
     if let Some(pose) = server.world.pose_of(player_id).await {
