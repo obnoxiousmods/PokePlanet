@@ -104,6 +104,7 @@ async fn main() -> anyhow::Result<()> {
             .timeout(std::time::Duration::from_secs(15))
             .build()?,
         instances,
+        save_locks: std::sync::Mutex::new(std::collections::HashMap::new()),
     });
 
     let endpoint = quic::endpoint(&cfg).context("binding the QUIC endpoint")?;

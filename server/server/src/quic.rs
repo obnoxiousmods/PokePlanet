@@ -42,6 +42,41 @@ pub struct Server {
     /// playing. A Mutex rather than per-connection state because the cap is global: the whole
     /// point of a bound is that it is shared.
     pub instances: Option<Arc<tokio::sync::Mutex<crate::instances::Instances>>>,
+    /// One lock per character, guarding the load->modify->store of that character's save.
+    ///
+    /// A typed report reads the 128KB save, rewrites the changed part, and stores it back, across
+    /// separate pooled connections. Two overlapping sessions for one character (a fast reconnect,
+    /// or a second client -- several session tokens are valid at once) could otherwise interleave:
+    /// both read the same image, and the second store clobbers the first's delta, silently losing a
+    /// just-gained item or Pokemon. Serialising the read-modify-write per character removes that
+    /// window. Weak so the map does not grow without bound: an entry is reused while any session
+    /// holds the lock and re-created afterward. Only heavy (save-touching) messages take it.
+    pub save_locks: SaveLocks,
+}
+
+/// Per-character save locks, keyed by character id. Weak so a character seen once does not pin a
+/// lock forever: the entry is live only while a session holds it.
+pub type SaveLocks =
+    std::sync::Mutex<std::collections::HashMap<i64, std::sync::Weak<tokio::sync::Mutex<()>>>>;
+
+/// The save lock for a character, creating it if this is the first live reference. Two callers for
+/// the same character get the same lock; different characters get independent locks.
+fn save_lock_in(locks: &SaveLocks, character_id: i64) -> Arc<tokio::sync::Mutex<()>> {
+    let mut map = locks.lock().expect("save-lock map is never poisoned");
+    if let Some(lock) = map.get(&character_id).and_then(std::sync::Weak::upgrade) {
+        return lock;
+    }
+    let lock = Arc::new(tokio::sync::Mutex::new(()));
+    map.insert(character_id, Arc::downgrade(&lock));
+    lock
+}
+
+impl Server {
+    /// The save lock for a character. Held across a heavy handler's load->modify->store so
+    /// overlapping sessions for one character cannot interleave and lose a delta.
+    pub fn save_lock(&self, character_id: i64) -> Arc<tokio::sync::Mutex<()>> {
+        save_lock_in(&self.save_locks, character_id)
+    }
 }
 
 pub fn endpoint(cfg: &Config) -> anyhow::Result<Endpoint> {
@@ -538,17 +573,29 @@ async fn control_loop(
             return Ok(());
         }
         let control = quic::decode::<ClientControl>(&frame)?;
+        let heavy = is_heavy_control(&control);
         // Throttle only the operations that make the server do heavy save work. Over budget, the
         // message is dropped rather than the connection cut: an honest client never spends its way
         // empty (see RequestBudget), and a dropped report is reconciled by the next one or a resync,
         // so this cannot corrupt a save or disconnect a laggy but honest player.
-        if is_heavy_control(&control) && !heavy_budget.take() {
+        if heavy && !heavy_budget.take() {
             tracing::warn!(
                 player = player_id,
                 "throttling a burst of heavy save operations from one connection"
             );
             continue;
         }
+        // Serialise this character's save read-modify-write. Held across the whole heavy handler
+        // (load -> author -> store), so two overlapping sessions for one character cannot interleave
+        // and clobber each other's delta. Only heavy messages take it; cheap ones (keys, chat) run
+        // unserialised. A single honest session never contends -- it holds and releases in order.
+        let _save_guard = if heavy {
+            // lock_owned, not lock: the guard has to outlive the Arc returned by save_lock (it is
+            // held across the whole match arm below), so it must own that Arc rather than borrow it.
+            Some(server.save_lock(character_id).lock_owned().await)
+        } else {
+            None
+        };
         match control {
             ClientControl::Chat { target, text } => {
                 let text = sanitize_chat(&text);
@@ -1312,5 +1359,89 @@ async fn movement_loop(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicI32, Ordering};
+
+    fn empty_locks() -> SaveLocks {
+        std::sync::Mutex::new(std::collections::HashMap::new())
+    }
+
+    /// One character shares one lock (so overlapping sessions contend); different characters get
+    /// independent locks (so they never block each other); and once no session holds it, the entry
+    /// does not pin a stale lock forever.
+    #[test]
+    fn save_locks_are_per_character_and_release() {
+        let locks = empty_locks();
+
+        let a = save_lock_in(&locks, 1);
+        let b = save_lock_in(&locks, 1);
+        assert!(Arc::ptr_eq(&a, &b), "one character shares one lock");
+
+        let other = save_lock_in(&locks, 2);
+        assert!(
+            !Arc::ptr_eq(&a, &other),
+            "different characters get independent locks"
+        );
+
+        drop(a);
+        drop(b);
+        let refreshed = save_lock_in(&locks, 1);
+        assert!(
+            !Arc::ptr_eq(&refreshed, &other),
+            "a freed character gets a fresh lock, not a leaked one"
+        );
+    }
+
+    /// The point of the lock: a character's read-modify-write cannot lose an update under overlap.
+    ///
+    /// Each task models one report -- read the stored value, yield (the window where an unlocked
+    /// writer would interleave), write value+1. All fifty run on the same character, so all take the
+    /// same lock; every increment must survive. Without the lock the yield between load and store
+    /// loses updates and the total falls short.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn overlapping_writers_on_one_character_lose_no_update() {
+        let locks = Arc::new(empty_locks());
+        let stored = Arc::new(AtomicI32::new(0));
+
+        let mut handles = Vec::new();
+        for _ in 0..50 {
+            let locks = locks.clone();
+            let stored = stored.clone();
+            handles.push(tokio::spawn(async move {
+                let lock = save_lock_in(&locks, 42);
+                let _guard = lock.lock().await;
+                let current = stored.load(Ordering::SeqCst);
+                tokio::task::yield_now().await; // an unlocked writer would interleave here
+                stored.store(current + 1, Ordering::SeqCst);
+            }));
+        }
+        for h in handles {
+            h.await.unwrap();
+        }
+
+        assert_eq!(
+            stored.load(Ordering::SeqCst),
+            50,
+            "every increment survived; the per-character lock let none be clobbered"
+        );
+    }
+
+    /// The negative control: two *different* characters are not serialised against each other, so an
+    /// honest single session per character is never blocked by another character's report.
+    #[tokio::test]
+    async fn different_characters_do_not_block_each_other() {
+        let locks = empty_locks();
+        let a = save_lock_in(&locks, 1);
+        let b = save_lock_in(&locks, 2);
+        let _held_a = a.lock().await;
+        // b belongs to a different character; acquiring it must not wait on a's held guard.
+        let _held_b = b
+            .try_lock()
+            .expect("a different character's lock is free while ours is held");
     }
 }
