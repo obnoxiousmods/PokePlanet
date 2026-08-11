@@ -509,9 +509,9 @@ int main(int argc, char **argv)
     SDL_SetHint(SDL_HINT_ORIENTATIONS, "LandscapeLeft LandscapeRight");
 #endif
 #if defined(NATIVE_LINUX) || defined(_WIN32)
-    sdlWindow = SDL_CreateWindow("Pokemon Emerald", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 1280, 720, SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
+    sdlWindow = SDL_CreateWindow("PokePlanet", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, 1280, 720, SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
 #else
-    sdlWindow = SDL_CreateWindow("pokeemerald", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, DISPLAY_WIDTH * videoScale, DISPLAY_HEIGHT * videoScale, SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
+    sdlWindow = SDL_CreateWindow("PokePlanet", SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, DISPLAY_WIDTH * videoScale, DISPLAY_HEIGHT * videoScale, SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE);
 #endif
     if (sdlWindow == NULL)
     {
@@ -522,7 +522,12 @@ int main(int argc, char **argv)
 #ifdef __ANDROID__
     sdlRenderer = SDL_CreateRenderer(sdlWindow, -1, SDL_RENDERER_ACCELERATED);
 #else
-    sdlRenderer = SDL_CreateRenderer(sdlWindow, -1, SDL_RENDERER_PRESENTVSYNC);
+    // Ask for hardware acceleration, not only vsync. Without the flag SDL is free to pick the
+    // software renderer -- which the logs showed it doing -- and a player on a fast machine
+    // was getting a slow path for no reason. Falls back to software on its own if no
+    // accelerated driver is available, so this cannot make a working setup fail.
+    sdlRenderer = SDL_CreateRenderer(sdlWindow, -1,
+                                     SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
 #endif
     if (sdlRenderer == NULL)
     {

@@ -46,8 +46,23 @@ failed=0
 copy_or_explain "$SRC/pokeemerald.exe" "$DEST/pokeplanet.exe" || failed=1
 copy_or_explain "$SRC/pokeemerald.exe" "$DEST/pokeplanet_tester.exe" || failed=1
 copy_or_explain "$SRC/server/target/x86_64-pc-windows-gnu/release/pokeplanet-net.exe" "$DEST/" || failed=1
-cp -v "$SRC"/*.bmp "$DEST/"
-cp -v /usr/i686-w64-mingw32/bin/SDL2.dll "$DEST/"
+# These were plain `cp -v`, which under `set -e` aborted the whole script the instant a file
+# was locked -- before the friendly "close the game" summary, on the one failure that actually
+# happens. Route them through the same handler as the binaries.
+for bmp in "$SRC"/*.bmp; do
+    copy_or_explain "$bmp" "$DEST/" || failed=1
+done
+
+# Skip SDL2.dll when it is already the exact same file: it changes almost never, and copying
+# it is the step most likely to be blocked (Windows holds the DLL of a running process), so
+# re-copying an identical DLL would fail the deploy for no reason.
+SDL_SRC=/usr/i686-w64-mingw32/bin/SDL2.dll
+if ! cmp -s "$SDL_SRC" "$DEST/SDL2.dll"; then
+    copy_or_explain "$SDL_SRC" "$DEST/" || failed=1
+else
+    echo "  SDL2.dll unchanged, skipping"
+fi
+
 [ "$failed" -eq 0 ] || exit 1
 
 echo "== deployed =="
