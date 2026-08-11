@@ -30,6 +30,10 @@
 #include "constants/characters.h"
 
 #define CHAT_WINDOW_BASE_BLOCK 0x139
+// In a battle the overworld base 0x139 collides with the standard battle window at 0x16e, so chat
+// uses its own base there. 0x1F8..0x290 is verified free in the standard battle window set (the
+// only set the MMO's battles use), with room for the incoming window's 78 tiles.
+#define CHAT_WINDOW_BATTLE_BASE 0x1F8
 #define CHAT_WINDOW_WIDTH      26
 
 // Long enough to read a line, short enough that the screen is mostly clear.
@@ -100,12 +104,28 @@ STATIC_ASSERT(MMO_CHAT_SCOPE_PRIVATE == NET_CHAT_PRIVATE, ChatScopePrivateAgrees
 // Who last whispered, so /r can answer without retyping the name.
 static char sLastWhisper[NET_SENDER_LEN];
 
+// Tear down the current window's on-screen tiles. In a battle the window has no std frame (see
+// EnsureChatWindow), so clearing one -- which reads the shared border gfx the battle owns -- would
+// corrupt the battle's own frames; clear only the window's own tilemap there instead.
+static void ClearChatTiles(void)
+{
+    if (gMain.inBattle)
+    {
+        ClearWindowTilemap(sChatWindowId);
+        CopyWindowToVram(sChatWindowId, COPYWIN_MAP);
+    }
+    else
+    {
+        ClearStdWindowAndFrame(sChatWindowId, TRUE);
+    }
+}
+
 static void HideChatWindow(void)
 {
     if (sChatWindowId == WINDOW_NONE)
         return;
 
-    ClearStdWindowAndFrame(sChatWindowId, TRUE);
+    ClearChatTiles();
     RemoveWindow(sChatWindowId);
     sChatWindowId = WINDOW_NONE;
     sChatWindowKind = CHAT_WINDOW_NONE;
@@ -123,20 +143,28 @@ static bool8 EnsureChatWindow(u8 kind)
 
     if (sChatWindowId != WINDOW_NONE)
     {
-        ClearStdWindowAndFrame(sChatWindowId, TRUE);
+        ClearChatTiles();
         RemoveWindow(sChatWindowId);
         sChatWindowId = WINDOW_NONE;
         sChatWindowKind = CHAT_WINDOW_NONE;
     }
 
-    sChatWindowId = AddWindow(kind == CHAT_WINDOW_COMPOSER
-                                  ? &sComposerWindowTemplate
-                                  : &sIncomingWindowTemplate);
+    // In a battle, move the window off the overworld base (which collides with battle windows) and
+    // render frameless -- the std frame's border gfx would overwrite the battle's own frames.
+    {
+        struct WindowTemplate template = (kind == CHAT_WINDOW_COMPOSER)
+                                             ? sComposerWindowTemplate
+                                             : sIncomingWindowTemplate;
+        if (gMain.inBattle)
+            template.baseBlock = CHAT_WINDOW_BATTLE_BASE;
+        sChatWindowId = AddWindow(&template);
+    }
     if (sChatWindowId == WINDOW_NONE)
         return FALSE; // Every window slot is taken; the line is simply not shown.
 
     sChatWindowKind = kind;
-    LoadMessageBoxAndBorderGfx();
+    if (!gMain.inBattle)
+        LoadMessageBoxAndBorderGfx();
     return TRUE;
 }
 
@@ -171,7 +199,10 @@ static void ShowLine(const struct NetChatLine *line)
     MmoText_FromAscii(encoded, line->text, sizeof(encoded));
     StringCopy(end, encoded);
 
-    DrawStdWindowFrame(sChatWindowId, FALSE);
+    // No std frame in a battle: its border gfx would land on tiles the battle's own frames use.
+    // The pixel-fill below still gives the text a solid backing, so it stays readable frameless.
+    if (!gMain.inBattle)
+        DrawStdWindowFrame(sChatWindowId, FALSE);
     FillWindowPixelBuffer(sChatWindowId, PIXEL_FILL(1));
     AddTextPrinterParameterized(sChatWindowId, FONT_NARROW, text, 0, 1, TEXT_SKIP_DRAW, NULL);
     CopyWindowToVram(sChatWindowId, COPYWIN_FULL);
@@ -226,7 +257,10 @@ static void ShowComposer(const char *typed)
     *end++ = CHAR_UNDERSCORE;
     *end = EOS;
 
-    DrawStdWindowFrame(sChatWindowId, FALSE);
+    // No std frame in a battle: its border gfx would land on tiles the battle's own frames use.
+    // The pixel-fill below still gives the text a solid backing, so it stays readable frameless.
+    if (!gMain.inBattle)
+        DrawStdWindowFrame(sChatWindowId, FALSE);
     FillWindowPixelBuffer(sChatWindowId, PIXEL_FILL(1));
     AddTextPrinterParameterized(sChatWindowId, FONT_NARROW, text, 0, 1, TEXT_SKIP_DRAW, NULL);
     CopyWindowToVram(sChatWindowId, COPYWIN_FULL);
@@ -240,7 +274,10 @@ static void ShowWelcome(void)
     if (!EnsureChatWindow(CHAT_WINDOW_INCOMING))
         return;
 
-    DrawStdWindowFrame(sChatWindowId, FALSE);
+    // No std frame in a battle: its border gfx would land on tiles the battle's own frames use.
+    // The pixel-fill below still gives the text a solid backing, so it stays readable frameless.
+    if (!gMain.inBattle)
+        DrawStdWindowFrame(sChatWindowId, FALSE);
     FillWindowPixelBuffer(sChatWindowId, PIXEL_FILL(1));
     AddTextPrinterParameterized(sChatWindowId, FONT_NARROW, sWelcomeText, 0, 1, TEXT_SKIP_DRAW,
                                 NULL);
@@ -248,10 +285,20 @@ static void ShowWelcome(void)
     sFramesLeft = CHAT_VISIBLE_FRAMES;
 }
 
-// Ticked once per overworld frame.
+// Ticked once per frame, in the overworld and in a battle.
 void MmoChat_Update(void)
 {
+    // Crossing into or out of a battle tears down every window this owns, along with the rest of
+    // the field's. Forget the id on that boundary rather than reuse a freed one -- which is the
+    // window equivalent of a dangling pointer, and would draw chat into whatever took its slot.
+    static bool8 sWasInBattle = FALSE;
     struct NetChatLine line;
+
+    if (gMain.inBattle != sWasInBattle)
+    {
+        MmoChat_Reset();
+        sWasInBattle = gMain.inBattle;
+    }
 
     if (!Net_IsLinked() || Net_GetAuthState() != NET_AUTH_ONLINE)
     {
@@ -260,7 +307,8 @@ void MmoChat_Update(void)
             // Went offline mid-sentence; there is nowhere to send it.
             Platform_EndTextInput();
             sComposing = FALSE;
-            UnlockPlayerFieldControls();
+            if (!gMain.inBattle)
+                UnlockPlayerFieldControls();
             HideChatWindow();
         }
         // Greet again after a reconnect, so the reminder is there for a fresh session.
@@ -281,7 +329,10 @@ void MmoChat_Update(void)
 
         Platform_EndTextInput();
         sComposing = FALSE;
-        UnlockPlayerFieldControls();
+        // Not in a battle: there the battle holds the field lock, and releasing it here (without
+        // having taken it -- see the open below) would hand control back mid-battle.
+        if (!gMain.inBattle)
+            UnlockPlayerFieldControls();
 
         if (result == 1)
         {
@@ -301,7 +352,11 @@ void MmoChat_Update(void)
 
     // A script owns the screen while it runs, and the dialogue box shares this layer.
     // Lines that arrive meanwhile stay queued in net_client until the field is clear.
-    if (ScriptContext_IsEnabled() || ArePlayerFieldControlsLocked())
+    //
+    // In a battle the field controls are always locked -- that is not a script, it is just how a
+    // battle holds the field -- so that condition is skipped there, or chat could never open in a
+    // battle at all. The battle has its own base and renders frameless, so it is safe to draw.
+    if (!gMain.inBattle && (ScriptContext_IsEnabled() || ArePlayerFieldControlsLocked()))
     {
         HideChatWindow();
         return;
@@ -322,7 +377,11 @@ void MmoChat_Update(void)
     if (Platform_ConsumeChatOpen())
     {
         sComposing = TRUE;
-        LockPlayerFieldControls();
+        // In a battle the field is already the battle's to hold, so do not take it here (and so
+        // do not release it on close). Platform_BeginTextInput stops button input either way, so
+        // the battle receives nothing while the player types -- the move waits until they finish.
+        if (!gMain.inBattle)
+            LockPlayerFieldControls();
         Platform_BeginTextInput();
         ShowComposer("");
         return;
