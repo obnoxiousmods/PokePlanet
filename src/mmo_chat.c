@@ -267,11 +267,15 @@ static void ShowComposer(const char *typed)
     sFramesLeft = 0; // Stays up until the player is done.
 }
 
-// A one-off greeting in the incoming-message spot, fading like any other line. It exists purely
-// so a new player learns chat is here and which key reaches it.
+// A one-off greeting so a new player learns chat is here and which key reaches it.
+//
+// Drawn at the bottom, in the composer's spot, rather than the top with incoming lines: it shows
+// the instant the player enters the world, which is exactly when the map-name popup occupies the
+// top of the screen, and the two were landing on top of each other. The bottom is clear then, and
+// the message is about typing anyway, so it belongs where the composer will open.
 static void ShowWelcome(void)
 {
-    if (!EnsureChatWindow(CHAT_WINDOW_INCOMING))
+    if (!EnsureChatWindow(CHAT_WINDOW_COMPOSER))
         return;
 
     // No std frame in a battle: its border gfx would land on tiles the battle's own frames use.
