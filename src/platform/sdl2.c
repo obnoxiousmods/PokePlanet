@@ -26,6 +26,7 @@
 #endif
 
 #ifdef NATIVE_LINUX
+#include <fcntl.h>
 #include <unistd.h>
 #include <sys/types.h>
 #endif
@@ -1378,6 +1379,60 @@ static u16 ControllerButtonMask(Uint8 button)
 // anything end to end.
 #define AUTOKEY_DEFAULT_HOLD 2
 
+// Input handed to this instance by whoever is driving it.
+//
+// POKEPLANET_AUTOKEYS drives the game from a fixed list, which is right for a test and useless
+// for a server-run instance: replaying a player's session means feeding the inputs they actually
+// sent, which are not known in advance. This reads a stream instead -- one u16 of GBA key bits
+// per frame, from a pipe named by POKEPLANET_INPUT_PIPE.
+//
+// It shares PumpScriptedInput's home on purpose. That is the point where the game samples its
+// keys once per frame, so a press delivered here cannot be missed or double-counted; a second
+// input path would have to rediscover that and would drift out of step with this one.
+//
+// Non-blocking: a frame with nothing waiting is a frame with no keys held, exactly as if the
+// player were resting their hands. Blocking would tie the game's frame rate to the writer, which
+// on a slow or wedged supervisor would hang the instance rather than idle it.
+static u16 PumpPipedInput(void)
+{
+    static int sPipe = -2;  // -2 unchecked, -1 unavailable
+    u16 keys = 0;
+
+    if (sPipe == -2)
+    {
+        const char *path = SDL_getenv("POKEPLANET_INPUT_PIPE");
+
+        sPipe = -1;
+#if defined(NATIVE_LINUX)
+        if (path != NULL && path[0] != '\0')
+        {
+            sPipe = open(path, O_RDONLY | O_NONBLOCK);
+            if (sPipe < 0)
+                SDL_Log("input: could not open %s; this instance has no driver", path);
+            else
+                SDL_Log("input: reading from %s", path);
+        }
+#else
+        (void)path;
+#endif
+    }
+
+#if defined(NATIVE_LINUX)
+    if (sPipe >= 0)
+    {
+        u8 frame[2];
+        ssize_t got = read(sPipe, frame, sizeof(frame));
+
+        // Only a whole reading counts. A partial read would mean interpreting half of one
+        // frame's keys as a whole frame's, which is a press the driver never sent.
+        if (got == (ssize_t)sizeof(frame))
+            keys = (u16)frame[0] | ((u16)frame[1] << 8);
+    }
+#endif
+
+    return keys;
+}
+
 static u16 PumpScriptedInput(void)
 {
     static const char *sScript = NULL;
@@ -1752,7 +1807,10 @@ u16 Platform_GetKeyInput(void)
 {
     // Called once per game frame from ReadKeys, which is what makes it the right place to
     // step the test script: the game cannot miss a press it is itself sampling.
-    u16 scripted = PumpScriptedInput();
+    //
+    // Piped input is or'd in beside the scripted list so the two cannot fight: a server-run
+    // instance sets one, a test sets the other, and neither has to know about the other.
+    u16 scripted = PumpScriptedInput() | PumpPipedInput();
 
     // While the player is typing, the keyboard belongs to the text field. Without this,
     // composing "start again" would press START, SELECT and A along the way.
