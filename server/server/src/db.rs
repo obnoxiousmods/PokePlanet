@@ -219,7 +219,6 @@ pub async fn connect(url: &str) -> anyhow::Result<Db> {
 #[derive(Debug, Clone)]
 pub struct Character {
     pub id: i64,
-    #[allow(dead_code)] // carried for future ownership checks; not yet read
     pub account_id: i64,
     pub name: String,
     pub graphics_id: u8,
@@ -548,6 +547,24 @@ pub async fn issue_session(db: &Db, character_id: i64, token: &str) -> anyhow::R
         )
         .await?;
     Ok(())
+}
+
+/// The Discord username behind an account.
+///
+/// Used where the character name is not the right identity: the IRC bridge posts under a single
+/// bot nick, so people in the channel would otherwise have no idea which player is speaking. It
+/// tags each relayed line with this instead. Returns None on any error rather than failing the
+/// caller -- a missing name should cost a nicer label, not the message.
+pub async fn discord_username_for_account(db: &Db, account_id: i64) -> Option<String> {
+    let client = db.get().await.ok()?;
+    let row = client
+        .query_opt(
+            "SELECT discord_username FROM accounts WHERE id = $1",
+            &[&account_id],
+        )
+        .await
+        .ok()??;
+    Some(row.get::<_, String>("discord_username"))
 }
 
 /// Resolve a session token to its character, rejecting expired ones.

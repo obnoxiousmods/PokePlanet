@@ -269,6 +269,14 @@ async fn run_session(
     let player_id = character.id as PlayerId;
     let session = crate::world::next_session_id();
     let name = character.name.clone();
+    // The handle this player's chat carries into the IRC channel. The bridge posts under one bot
+    // nick, so tagging each line with the player's Discord name is what lets people in the channel
+    // tell who is speaking. In-game chat still shows the character name -- that is the identity
+    // other players see in the overworld -- so this is fetched separately and used only for IRC.
+    // Falls back to the character name if the account has no name on record.
+    let irc_handle = db::discord_username_for_account(&server.db, character.account_id)
+        .await
+        .unwrap_or_else(|| name.clone());
     let session_token = auth::random_token();
     db::issue_session(&server.db, character.id, &session_token).await?;
 
@@ -370,6 +378,7 @@ async fn run_session(
         player_id,
         session,
         &name,
+        &irc_handle,
         character.id,
         &session_token,
     )
@@ -443,6 +452,7 @@ async fn control_loop(
     player_id: PlayerId,
     session: crate::world::SessionId,
     name: &str,
+    irc_handle: &str,
     character_id: i64,
     session_token: &str,
 ) -> anyhow::Result<()> {
@@ -487,7 +497,7 @@ async fn control_loop(
                     .world
                     .route_chat(player_id, name, &target, &text)
                     .await;
-                crate::irc::relay_to_irc(name, &target, &text);
+                crate::irc::relay_to_irc(irc_handle, &target, &text);
             }
             ClientControl::EnterMap { map } => {
                 if let Some(mut pose) = server.world.pose_of(player_id).await {
