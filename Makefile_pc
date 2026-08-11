@@ -84,7 +84,7 @@ override CFLAGS += -fno-pie
 ROM := pokeemerald
 OBJ_DIR := build/linux$(HOST_BITS)
 else
-override CFLAGS += -fleading-underscore -msse2
+override CFLAGS += -fleading-underscore -msse2 -mfxsr
 ROM := pokeemerald.exe
 OBJ_DIR := build/pc
 endif
