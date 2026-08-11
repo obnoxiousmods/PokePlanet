@@ -242,8 +242,10 @@ impl World {
             return Some(pose);
         }
 
-        let dx = (pose.x - p.pose.x).abs();
-        let dy = (pose.y - p.pose.y).abs();
+        // Widen before subtracting/abs: both operands are client-controlled i16, and abs() on
+        // i16::MIN panics just as the subtraction can overflow. i32 makes every reported pose safe.
+        let dx = (pose.x as i32 - p.pose.x as i32).abs();
+        let dy = (pose.y as i32 - p.pose.y as i32).abs();
 
         // Standing still, turning, or a single step along one axis. Diagonals are not a
         // thing the player avatar can do.
@@ -307,8 +309,11 @@ impl World {
 
         if visible.len() > MAX_VISIBLE_PLAYERS {
             visible.sort_by_key(|p| {
-                let dx = (p.pose.x - from.x) as i32;
-                let dy = (p.pose.y - from.y) as i32;
+                // Widen before subtracting: pose.x/y are client-controlled i16 and a hostile
+                // client can plant -32768, so an i16 subtraction here would overflow (panic under
+                // overflow-checks, wrap in release) on a value another player never chose.
+                let dx = p.pose.x as i32 - from.x as i32;
+                let dy = p.pose.y as i32 - from.y as i32;
                 dx * dx + dy * dy
             });
             visible.truncate(MAX_VISIBLE_PLAYERS);

@@ -128,6 +128,7 @@ struct NetState
     bool8 hasProfile;
 
     struct NetRates rates;
+    bool8 hasRates; // whether a rates frame has actually arrived; 0 is a valid experience rate
     struct NetLinkBlock blockInbox[LINK_BLOCK_INBOX];
     u8 blockHead;
     u8 blockTail;
@@ -339,8 +340,10 @@ static void HandleSnapshot(const u8 *payload, u32 len)
 
 static void HandleProfile(const u8 *payload, u32 len)
 {
-    // graphicsId, badges, caught, seen, playTime, money, name
-    if (len < 1 + 1 + 2 + 2 + 4 + 4 + 1 + 1 + 2 + 2 + NET_NAME_LEN)
+    // graphicsId, badges, caught, seen, playTime, money, mapGroup, mapNum, x, y, name, and the
+    // playerId appended after the name. The last four bytes were added but this length check was
+    // not, so a short frame passed it and ReadU32(payload + 20 + NET_NAME_LEN) read past the body.
+    if (len < 1 + 1 + 2 + 2 + 4 + 4 + 1 + 1 + 2 + 2 + NET_NAME_LEN + 4)
         return;
 
     SDL_LockMutex(sNet.lock);
@@ -373,6 +376,7 @@ static void HandleRates(const u8 *payload, u32 len)
     sNet.rates.items      = (u16)(payload[6] | (payload[7] << 8));
     sNet.rates.catch      = (u16)(payload[8] | (payload[9] << 8));
     sNet.rates.shopPrice  = (u16)(payload[10] | (payload[11] << 8));
+    sNet.hasRates = TRUE;
     SDL_UnlockMutex(sNet.lock);
     SDL_Log("net: rates x%u.%02u exp, x%u.%02u encounter, x%u.%02u money",
             sNet.rates.experience / 100, sNet.rates.experience % 100,
@@ -399,7 +403,7 @@ void Net_GetRates(struct NetRates *out)
         return;
 
     SDL_LockMutex(sNet.lock);
-    if (sNet.rates.experience != 0)
+    if (sNet.hasRates)
         *out = sNet.rates;
     SDL_UnlockMutex(sNet.lock);
 }
@@ -1048,21 +1052,26 @@ void Net_SendKeys(u16 keys)
         return;
     }
 
-    sBatch[sCount++] = keys;
+    // Guarded so sBatch can never be indexed past its end even if the invariant below were ever
+    // broken; in practice sCount is 0..KEYS_BATCH_FRAMES-1 here and the flush resets it at the cap.
+    if (sCount < KEYS_BATCH_FRAMES)
+        sBatch[sCount++] = keys;
     if (sCount >= KEYS_BATCH_FRAMES)
     {
         u8 body[1 + KEYS_BATCH_FRAMES * 2];
         u8 i;
 
         body[0] = MSG_KEYS;
-        for (i = 0; i < sCount; i++)
+        // Loop to the constant, not sCount: the batch is always exactly full here, and a constant
+        // bound keeps every body[] write provably inside the fixed-size buffer.
+        for (i = 0; i < KEYS_BATCH_FRAMES; i++)
         {
             body[1 + i * 2] = (u8)(sBatch[i] & 0xFF);
             body[1 + i * 2 + 1] = (u8)((sBatch[i] >> 8) & 0xFF);
         }
         // Dropped on backpressure like any other report: a lost run of inputs is a gap the
         // divergence check tolerates, not a reason to stall the game.
-        Enqueue(body, (u16)(1 + sCount * 2));
+        Enqueue(body, (u16)(1 + KEYS_BATCH_FRAMES * 2));
         sCount = 0;
     }
 }
