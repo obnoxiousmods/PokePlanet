@@ -404,5 +404,6 @@ $(ROM): $(OBJS) $(WINDOWS_BORDER)
 ifeq ($(NATIVE_LINUX),1)
 	$(CC) $(CFLAGS) -no-pie -Wl,--demangle $(OBJS) $(PLATFORM_INCLUDES) -o $@
 else
-	$(CC) $(CFLAGS) -Wl,--demangle $(OBJS) -static-libgcc -L$(SDL_DIR)/lib $(PLATFORM_INCLUDES) -lwinmm -lxinput -lws2_32 -o $@
+	$(file >$(OBJ_DIR)/pokeemerald-link.rsp,$(OBJS))
+	$(CC) $(CFLAGS) -Wl,--demangle @$(OBJ_DIR)/pokeemerald-link.rsp -static-libgcc -L$(SDL_DIR)/lib $(PLATFORM_INCLUDES) -lwinmm -lxinput -lws2_32 -o $@
 endif
