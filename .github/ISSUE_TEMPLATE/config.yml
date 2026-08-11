@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security or anti-cheat report
+    url: https://github.com/obnoxiousmods/PokePlanet/security/advisories/new
+    about: A way to forge state or affect another player -- please report privately, not here.

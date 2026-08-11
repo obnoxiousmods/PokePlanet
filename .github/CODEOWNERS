@@ -1,0 +1,7 @@
+# Default owner for everything. The networked and server code is where a review matters most,
+# because a mistake there is a security bug, not just a gameplay one.
+*                       @obnoxiousmods
+
+/server/                @obnoxiousmods
+/src/platform/          @obnoxiousmods
+/src/mmo_             @obnoxiousmods
