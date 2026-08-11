@@ -1,0 +1,146 @@
+name: Release readiness
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW32
+          update: true
+          install: >-
+            base-devel
+            git
+            make
+            zip
+            p7zip
+            mingw-w64-i686-gcc
+            mingw-w64-i686-SDL2
+            mingw-w64-i686-SDL2_image
+            mingw-w64-i686-imagemagick
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-gnu
+      - name: Build game and sidecar
+        run: |
+          make -f Makefile_pc SDL_DIR=/mingw32 -j"$(nproc)"
+          cd server
+          cargo build --release -p pokeplanet-net --bin pokeplanet-net --target x86_64-pc-windows-gnu
+      - name: Package
+        run: SDL_DLL=/mingw32/bin/SDL2.dll tools/release/package-windows.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-windows
+          path: dist/*
+
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install 32-bit SDL build dependencies
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-multilib g++-multilib build-essential libsdl2-dev \
+            libsdl2-2.0-0:i386 libpng-dev zlib1g-dev zip zstd
+          SO=$(dpkg -L libsdl2-2.0-0:i386 | grep -m1 'libSDL2-2.0.so.0$')
+          sudo ln -sf "$SO" "$(dirname "$SO")/libSDL2.so"
+          sudo mkdir -p /usr/include/i386-linux-gnu/SDL2
+          sudo ln -sf /usr/include/x86_64-linux-gnu/SDL2/_real_SDL_config.h \
+            /usr/include/i386-linux-gnu/SDL2/_real_SDL_config.h
+      - name: Build and smoke test
+        run: |
+          make -f Makefile_pc NATIVE_LINUX=1 HOST_BITS=32 NO_SDL_IMAGE=1 rom -j"$(nproc)"
+          cd server && cargo build --release -p pokeplanet-net --bin pokeplanet-net
+          cd .. && tools/debug/headless-smoke.sh
+      - name: Package
+        run: tools/release/package-linux.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-linux
+          path: dist/*
+
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: android-actions/setup-android@v3
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.10"
+      - name: Build Android application
+        working-directory: android
+        run: gradle :app:assembleRelease :app:bundleRelease
+      - name: Package
+        run: tools/release/package-android.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-android
+          path: dist/*
+
+  macos-sidecar-and-package-contract:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Verify native browser support and sidecar
+        working-directory: server
+        run: cargo test -p pokeplanet-net && cargo build --release -p pokeplanet-net --bin pokeplanet-net
+      - name: Verify app bundle packaging contract
+        run: |
+          test -x tools/release/package-macos.sh
+          plutil -lint packaging/macos/Info.plist.in
+          echo "Game binary remains gated by the 64-bit pointer/assembly port documented in RELEASES.md"
+
+  manifest-contract:
+    needs: [windows, linux, android, macos-sidecar-and-package-contract]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: dist
+          merge-multiple: true
+      - run: tools/release/manifest.py
+      - name: Require current publishable platforms
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          data = json.loads(Path("dist/release-manifest.json").read_text())
+          present = {item["platform"] for item in data["assets"]}
+          required = {"windows", "linux", "android"}
+          missing = required - present
+          if missing:
+              raise SystemExit(f"missing release artifacts: {sorted(missing)}")
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-manifest
+          path: |
+            dist/SHA256SUMS
+            dist/release-manifest.json

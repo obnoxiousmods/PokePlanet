@@ -9,7 +9,7 @@ The project has three build targets:
 | Target | Toolchain | Output |
 |---|---|---|
 | Windows client | `i686-w64-mingw32` (32-bit) | `pokeemerald.exe` → renamed `pokeplanet.exe` |
-| Linux headless client | native 32-bit (`-m32`) | `pokeemerald` (for server-run instances) |
+| Linux client | native 32-bit (`HOST_BITS=32`) | `pokeemerald` |
 | Server + sidecar | Rust (stable) | `pokeplanet-server`, `pokeplanet-net.exe` |
 
 The client is a 32-bit build in both cases — a constraint inherited from the GBA decompilation.
@@ -49,6 +49,10 @@ on one machine.
 make -f Makefile_pc NATIVE_LINUX=1 NO_SDL_IMAGE=1 rom -j"$(nproc)"   # -> ./pokeemerald
 tools/debug/headless-smoke.sh                                        # proves it runs with no display
 ```
+
+The architecture is explicit. `HOST_BITS=32` is the verified release target; `HOST_BITS=64`
+uses a separate `build/linux64` object tree for ongoing Linux/macOS portability work and must
+not be shipped until the pointer-width warnings described in `RELEASES.md` are resolved.
 
 This is the build the server runs for replay validation. It runs under `SDL_VIDEODRIVER=dummy`
 with no window; the smoke test asserts the game loop actually turns rather than just that the

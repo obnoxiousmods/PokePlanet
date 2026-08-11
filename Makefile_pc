@@ -1,4 +1,15 @@
 NATIVE_LINUX ?= 0
+HOST_BITS ?= 32
+
+ifeq ($(HOST_BITS),32)
+ARCH_CFLAGS := -m32
+ARCH_ASFLAGS := --32
+else ifeq ($(HOST_BITS),64)
+ARCH_CFLAGS := -m64
+ARCH_ASFLAGS := --64
+else
+$(error HOST_BITS must be 32 or 64)
+endif
 
 ifeq ($(NATIVE_LINUX),1)
 PREFIX :=
@@ -62,16 +73,16 @@ DATA_ASM_BUILDDIR = $(OBJ_DIR)/$(DATA_ASM_SUBDIR)
 SONG_BUILDDIR = $(OBJ_DIR)/$(SONG_SUBDIR)
 MID_BUILDDIR = $(OBJ_DIR)/$(MID_SUBDIR)
 
-ASFLAGS := --32 --defsym MODERN=$(MODERN) --defsym PORTABLE=1 --defsym UBFIX=1
+ASFLAGS := $(ARCH_ASFLAGS) --defsym MODERN=$(MODERN) --defsym PORTABLE=1 --defsym UBFIX=1
 
 GCC_VER := $(shell $(CC) -dumpversion)
 
 CC1 	:= $(shell $(PREFIX)gcc --print-prog-name=cc1) -quiet
-override CFLAGS += -Wno-trigraphs -Wimplicit -Wparentheses -Wunused -m32 -std=gnu99 -fno-dce -fno-builtin -Wno-unused-function -DPORTABLE -DNONMATCHING -D UBFIX -DMODERN=$(MODERN)
+override CFLAGS += -Wno-trigraphs -Wimplicit -Wparentheses -Wunused $(ARCH_CFLAGS) -std=gnu99 -fno-dce -fno-builtin -Wno-unused-function -DPORTABLE -DNONMATCHING -D UBFIX -DMODERN=$(MODERN)
 ifeq ($(NATIVE_LINUX),1)
 override CFLAGS += -fno-pie
 ROM := pokeemerald
-OBJ_DIR := build/linux
+OBJ_DIR := build/linux$(HOST_BITS)
 else
 override CFLAGS += -fleading-underscore
 ROM := pokeemerald.exe
@@ -94,7 +105,7 @@ else
 SDL_PKGS := sdl2 SDL2_image
 endif
 endif
-CPPFLAGS += -m32 -D NATIVE_LINUX $(shell pkg-config --cflags $(SDL_PKGS))
+CPPFLAGS += $(ARCH_CFLAGS) -D NATIVE_LINUX $(shell pkg-config --cflags $(SDL_PKGS))
 else
 CPPFLAGS += -I$(SDL_DIR)/include -L$(SDL_DIR)/lib
 endif
