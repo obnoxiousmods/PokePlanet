@@ -147,6 +147,33 @@ ALTER TABLE characters ALTER COLUMN map_group SET DEFAULT 0;
 ALTER TABLE characters ALTER COLUMN map_num   SET DEFAULT 9;
 ALTER TABLE characters ALTER COLUMN pos_x     SET DEFAULT 17;
 ALTER TABLE characters ALTER COLUMN pos_y     SET DEFAULT 18;
+
+-- A shared test account so pokeplanet_tester.exe signs in with no Discord login, using the
+-- fixed token that build carries. The goal "the tester needs no account" only holds for
+-- everyone if the account exists on a fresh database, not just on the one machine where it was
+-- created by hand.
+--
+-- Guarded on the token already existing, so a deployment that made the tester by hand (with a
+-- different character id) is left exactly as it is -- no orphan account, no relink. The account
+-- holds nothing of value and can be banned like any other if the shared token is abused.
+DO $$
+DECLARE acct BIGINT; ch BIGINT;
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM sessions
+                 WHERE token = 'testertoken-for-local-testing-00000000001') THEN
+    INSERT INTO accounts (discord_id, discord_username)
+      VALUES ('pokeplanet-tester', 'Tester')
+      ON CONFLICT (discord_id) DO NOTHING;
+    SELECT id INTO acct FROM accounts WHERE discord_id = 'pokeplanet-tester';
+    INSERT INTO characters (account_id, name, graphics_id)
+      VALUES (acct, 'Tester', 7)
+      ON CONFLICT (account_id) DO NOTHING;
+    SELECT id INTO ch FROM characters WHERE account_id = acct;
+    INSERT INTO sessions (token, character_id, expires_at)
+      VALUES ('testertoken-for-local-testing-00000000001', ch, now() + interval '100 years')
+      ON CONFLICT (token) DO NOTHING;
+  END IF;
+END $$;
 "#;
 
 pub async fn connect(url: &str) -> anyhow::Result<Db> {
