@@ -513,6 +513,80 @@ fn saveblock1(image: &[u8], slot: usize) -> Option<Vec<u8>> {
     Some(out)
 }
 
+/// What the client says, against what the server's own run of the game produced.
+///
+/// This is the point of running the game at all. Every other rule here judges a *result* --
+/// a level that is too high, money gained too fast -- and those catch a careless forgery while
+/// a careful one simply reports figures that are individually plausible. Replaying the session
+/// and comparing removes that freedom: the server is no longer asking whether a number looks
+/// reasonable, it has computed its own.
+///
+/// Returns the first material disagreement, or None when the two accounts match.
+///
+/// What is deliberately *not* compared matters as much as what is. Playtime, the RNG state, step
+/// counters and anything else that turns on wall-clock timing or the exact frame an input landed
+/// will differ between two honest runs, and treating those as evidence would accuse everybody.
+/// The comparison is restricted to things a player cares about and cannot honestly disagree on:
+/// money, the party, and the bag.
+pub fn diverged(claimed: &SaveState, computed: &SaveState) -> Option<String> {
+    if claimed.money() != computed.money() {
+        return Some(format!(
+            "money: client says {}, the server's own run produced {}",
+            claimed.money(),
+            computed.money()
+        ));
+    }
+
+    for want in &computed.party {
+        // Matched by identity, not by slot: reordering a party is not a disagreement.
+        let Some(got) = claimed
+            .party
+            .iter()
+            .find(|m| m.personality == want.personality && m.ot_id == want.ot_id)
+        else {
+            return Some(format!(
+                "a Pokemon the server's run has (personality {}) is missing from the client's",
+                want.personality
+            ));
+        };
+
+        // Only records both sides decoded. An undecodable substruct invents numbers, and
+        // accusing somebody on the strength of an invented number is worse than missing a cheat.
+        if !want.checksum_ok || !got.checksum_ok {
+            continue;
+        }
+
+        if got.level != want.level {
+            return Some(format!(
+                "level: client says {}, the server's own run produced {}",
+                got.level, want.level
+            ));
+        }
+        if got.experience != want.experience {
+            return Some(format!(
+                "experience: client says {}, the server's own run produced {}",
+                got.experience, want.experience
+            ));
+        }
+    }
+
+    for (pocket, item, quantity) in &computed.bag {
+        let got = claimed
+            .bag
+            .iter()
+            .find(|(p, i, _)| p == pocket && i == item)
+            .map(|(_, _, q)| *q)
+            .unwrap_or(0);
+        if got != *quantity {
+            return Some(format!(
+                "item {item}: client says {got}, the server's own run produced {quantity}"
+            ));
+        }
+    }
+
+    None
+}
+
 /// A copy of this save's SaveBlock1 with money set to `amount`.
 ///
 /// Money is stored XOR'd with the save's own key, so setting it means encoding it the way the
@@ -1434,6 +1508,48 @@ mod tests {
         assert!(
             regressed(&good_high, &level_drop).is_some(),
             "losing levels must still be caught independently of experience"
+        );
+    }
+
+    /// Divergence is reported when the two accounts differ, and not when they agree.
+    #[test]
+    fn divergence_is_found_only_where_it_exists() {
+        let a = with_mon(20, 8000, true);
+
+        // Negative control first: identical states must not be an accusation. Without this a
+        // function that always reported divergence would look like it was catching cheats.
+        assert!(diverged(&a, &a).is_none(), "identical accounts must agree");
+
+        // A level the client claims but the server's run did not produce.
+        let mut lying = a.clone();
+        lying.party[0].level = 60;
+        assert!(diverged(&lying, &a).is_some(), "an invented level must be caught");
+
+        // Experience likewise.
+        let mut richer = a.clone();
+        richer.party[0].experience = 999_999;
+        assert!(diverged(&richer, &a).is_some(), "invented experience must be caught");
+
+        // An undecodable record is not evidence either way -- same rule as `regressed`.
+        let mut undecodable = a.clone();
+        undecodable.party[0].level = 60;
+        undecodable.party[0].checksum_ok = false;
+        assert!(
+            diverged(&undecodable, &a).is_none(),
+            "a record that did not decode must not become an accusation"
+        );
+
+        // Reordering is not divergence: a second Pokemon, then the same two the other way round.
+        let mut two = a.clone();
+        let mut second = two.party[0].clone();
+        second.personality = 99;
+        second.ot_id = 99;
+        two.party.push(second);
+        let mut swapped = two.clone();
+        swapped.party.swap(0, 1);
+        assert!(
+            diverged(&swapped, &two).is_none(),
+            "reordering a party is not a disagreement"
         );
     }
 
