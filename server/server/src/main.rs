@@ -80,6 +80,20 @@ async fn main() -> anyhow::Result<()> {
         }
     });
 
+    // Reap exited instances on a timer. Without this a crash-looping instance holds its slot
+    // forever -- the supervisor keeps counting it as running -- and eventually every player is
+    // refused a validation instance for a reason nothing surfaces. Only runs when replay
+    // validation is enabled at all.
+    if let Some(instances) = instances.clone() {
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(30));
+            loop {
+                tick.tick().await;
+                instances.lock().await.reap();
+            }
+        });
+    }
+
     let server = Arc::new(quic::Server {
         cfg: cfg.clone(),
         rates: rates.clone(),
