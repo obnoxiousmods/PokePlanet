@@ -94,6 +94,13 @@ jobs:
             libpng-dev zlib1g-dev
           SO=$(dpkg -L libsdl2-2.0-0:i386 | grep -m1 'libSDL2-2.0.so.0$')
           sudo ln -sf "$SO" "$(dirname "$SO")/libSDL2.so"
+          # SDL2's multiarch SDL_config.h is a stub that includes _real_SDL_config.h from the
+          # arch include dir. A -m32 compile looks in i386-linux-gnu, which the amd64 -dev
+          # package does not populate; the amd64 real config is fine for our API-only use, so
+          # point the i386 path at it rather than pull the conflicting libsdl2-dev:i386.
+          sudo mkdir -p /usr/include/i386-linux-gnu/SDL2
+          sudo ln -sf /usr/include/x86_64-linux-gnu/SDL2/_real_SDL_config.h \
+            /usr/include/i386-linux-gnu/SDL2/_real_SDL_config.h
 
       - name: Build headless
         run: make -f Makefile_pc NATIVE_LINUX=1 NO_SDL_IMAGE=1 rom -j"$(nproc)"
