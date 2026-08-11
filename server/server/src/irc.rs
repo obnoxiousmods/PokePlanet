@@ -126,7 +126,8 @@ async fn session(
     let (read_half, mut write_half) = tokio::io::split(stream);
     let mut lines = BufReader::new(read_half).lines();
 
-    let nick = "PokePlanet";
+    // The nick can change if the server says it is taken (see 433 below), so it is owned here.
+    let mut nick = "PokePlanet".to_string();
     write_half
         .write_all(
             format!("NICK {nick}\r\nUSER pokeplanet 0 * :PokePlanet game bridge\r\n").as_bytes(),
@@ -134,14 +135,34 @@ async fn session(
         .await?;
     tracing::info!(host = %cfg.irc_host, channel = %cfg.irc_channel, "IRC bridge connecting");
 
+    // Detecting a wedged connection, which is what an ircd restart leaves behind: the socket
+    // stays open (so nothing errors) but nothing arrives. Without this the bridge sat on a dead
+    // connection forever, silently dropping every message. The heartbeat sends a PING when the
+    // link has been quiet, and gives up if that PING is not answered by the next tick.
     let mut joined = false;
+    let start = tokio::time::Instant::now();
+    let register_deadline = start + std::time::Duration::from_secs(30);
+    let mut heartbeat = tokio::time::interval(std::time::Duration::from_secs(30));
+    heartbeat.tick().await; // the first tick fires immediately; skip it
+    let mut awaiting_pong = false;
+
     loop {
         tokio::select! {
             line = lines.next_line() => {
+                awaiting_pong = false; // any line proves the link is alive
                 let Some(line) = line? else { return Ok(()) };
                 // Keep the connection alive.
                 if let Some(payload) = line.strip_prefix("PING ") {
                     write_half.write_all(format!("PONG {payload}\r\n").as_bytes()).await?;
+                    continue;
+                }
+                // 433 is ERR_NICKNAMEINUSE. After an ircd restart a ghost of our old session can
+                // still hold the nick, and without handling this registration never finishes and
+                // the bridge is stuck. Take a variant and try again.
+                if line.contains(" 433 ") {
+                    nick.push('_');
+                    tracing::warn!(%nick, "IRC nick was taken; retrying with a variant");
+                    write_half.write_all(format!("NICK {nick}\r\n").as_bytes()).await?;
                     continue;
                 }
                 // 001 is RPL_WELCOME: registration finished, safe to join.
@@ -166,6 +187,17 @@ async fn session(
                     let line = format!("PRIVMSG {} :{}\r\n", cfg.irc_channel, msg);
                     write_half.write_all(line.as_bytes()).await?;
                 }
+            }
+            _ = heartbeat.tick() => {
+                if !joined && tokio::time::Instant::now() >= register_deadline {
+                    anyhow::bail!("IRC registration did not complete in time; reconnecting");
+                }
+                if awaiting_pong {
+                    // A PING went unanswered since the last tick: the link is dead.
+                    anyhow::bail!("IRC connection went silent; reconnecting");
+                }
+                write_half.write_all(b"PING :pokeplanet-keepalive\r\n").await?;
+                awaiting_pong = true;
             }
         }
     }
