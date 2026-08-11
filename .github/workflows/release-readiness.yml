@@ -38,7 +38,7 @@ jobs:
       - name: Build game and sidecar
         run: |
           export PATH="$PATH:/mingw64/bin"
-          make -f Makefile_pc CPP=/mingw32/bin/cpp.exe SDL_DIR=/mingw32 -j"$(nproc)"
+          make -f Makefile_pc PREFIX= SDL_DIR=/mingw32 -j"$(nproc)"
           cd server
           CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=/mingw64/bin/gcc.exe \
             cargo build --release -p pokeplanet-net --bin pokeplanet-net \
