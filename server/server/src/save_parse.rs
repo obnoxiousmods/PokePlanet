@@ -826,6 +826,26 @@ pub fn diverged(claimed: &SaveState, computed: &SaveState) -> Option<String> {
     None
 }
 
+/// Overwrite the encryption key inside a reassembled SaveBlock2 with `key`.
+///
+/// The game generates a fresh key every time it saves and re-encrypts money, coins and item
+/// quantities to match (load_save.c: ApplyNewEncryptionKeyToAllEncryptedData), so a SaveBlock2
+/// report carrying a key different from the stored one is the *normal* case, not a money edit --
+/// which is exactly why an earlier "the key must not move" guard refused every SaveBlock2 report
+/// a client ever sent, taking options, play time and the Pokedex down with it.
+///
+/// The server keeps its own key: its stored money_raw and coins_raw are encoded against that key,
+/// and money() is money_raw ^ key. Pinning the key when a report is applied leaves those decoded
+/// values untouched while the rest of SaveBlock2 updates, and makes a key-rewrite cheat inert --
+/// money cannot move through a block whose key does not move, and money_raw lives in SaveBlock1,
+/// which a SaveBlock2 report never touches.
+pub fn pin_encryption_key(saveblock2: &mut [u8], key: u32) {
+    if saveblock2.len() >= OFFSET_ENCRYPTION_KEY + 4 {
+        saveblock2[OFFSET_ENCRYPTION_KEY..OFFSET_ENCRYPTION_KEY + 4]
+            .copy_from_slice(&key.to_le_bytes());
+    }
+}
+
 /// A copy of this save's SaveBlock1 with money set to `amount`.
 ///
 /// Money is stored XOR'd with the save's own key, so setting it means encoding it the way the
@@ -1853,52 +1873,55 @@ mod tests {
         );
     }
 
-    /// Build an image with one readable slot, so the layout logic is exercised without
-    /// needing a real save on disk.
-    /// Rewriting the SaveBlock2 encryption key changes decoded money — which is exactly the
-    /// attack the block-0 handler guard refuses.
+    /// A SaveBlock2 report keeps the server's encryption key, so options persist while money
+    /// does not move -- even though the reported block carries a fresh key.
     ///
-    /// money() is money_raw ^ key, so a client that authors a new key sets money to anything
-    /// without ever touching the money path. This proves the exploit is real (money moves) and
-    /// that both signals the handler pins — encryption_key and money() — actually move when the
-    /// key is rewritten, so the guard `new.encryption_key != old.encryption_key || new.money()
-    /// != old.money()` catches it. The negative control is that re-authoring the *unchanged*
-    /// SaveBlock2 block leaves both untouched, so the guard does not refuse an honest options
-    /// or playtime report.
+    /// The game re-rolls the key on every save, so a report almost always carries a key different
+    /// from the stored one; money() is money_raw ^ key, so applying that key verbatim would move
+    /// decoded money without the money path ever being touched. The first half proves that threat
+    /// is real. pin_encryption_key restores the stored key before the block is authored, so the
+    /// second half shows the key and money holding while a non-money field (an options byte) still
+    /// goes through -- which is the whole reason options can now persist. This is the case an
+    /// earlier "refuse if the key moved" guard got wrong by rejecting every such report outright.
     #[test]
-    fn rewriting_the_saveblock2_key_is_detectable() {
+    fn a_saveblock2_report_pins_the_key_so_options_persist_and_money_holds() {
         let mut image = image_with(0, 1, &[], &[], 5000);
         sign(&mut image, 0, 2000);
         let old = parse(&image).expect("readable");
         assert_eq!(old.money(), 5000);
 
-        // Negative control: author the SaveBlock2 block back unchanged. Key and money hold, so
-        // an honest SaveBlock2 report (options, playtime) is not refused.
-        let unchanged = read_block(&image, &SAVEBLOCK2_SECTORS).expect("readable block");
-        let same = parse(&reauthor_block(&image, &SAVEBLOCK2_SECTORS, &unchanged).expect("author"))
-            .expect("parses");
-        assert_eq!(
-            same.encryption_key, old.encryption_key,
-            "key must not move on a no-op"
-        );
-        assert_eq!(same.money(), old.money(), "money must not move on a no-op");
-
-        // The attack: rewrite the encryption key inside the SaveBlock2 block.
-        let mut tampered = unchanged.clone();
-        tampered[OFFSET_ENCRYPTION_KEY..OFFSET_ENCRYPTION_KEY + 4]
+        // A report: the stored SaveBlock2 with a fresh key, as the game writes on save, and a
+        // changed options byte (optionsButtonMode, the first options field, at 0x13).
+        const OPTIONS_BYTE: usize = 0x13;
+        let mut reported = read_block(&image, &SAVEBLOCK2_SECTORS).expect("readable block");
+        reported[OFFSET_ENCRYPTION_KEY..OFFSET_ENCRYPTION_KEY + 4]
             .copy_from_slice(&0xDEAD_BEEFu32.to_le_bytes());
-        let attacked =
-            parse(&reauthor_block(&image, &SAVEBLOCK2_SECTORS, &tampered).expect("author"))
-                .expect("parses");
+        reported[OPTIONS_BYTE] = 2;
 
+        // Threat: applied verbatim, the fresh key moves decoded money.
+        let verbatim =
+            parse(&reauthor_block(&image, &SAVEBLOCK2_SECTORS, &reported).expect("author"))
+                .expect("parses");
         assert_ne!(
-            attacked.encryption_key, old.encryption_key,
-            "the key changed -- the guard's encryption_key check fires"
-        );
-        assert_ne!(
-            attacked.money(),
+            verbatim.money(),
             old.money(),
-            "and money moved with it -- the guard's money() check fires too"
+            "a fresh key moves money if it is applied verbatim -- the threat is real"
+        );
+
+        // Fix: pin the stored key first. The key and money hold; the options byte still lands.
+        let mut pinned = reported.clone();
+        pin_encryption_key(&mut pinned, old.encryption_key);
+        let candidate = reauthor_block(&image, &SAVEBLOCK2_SECTORS, &pinned).expect("author");
+        let applied = parse(&candidate).expect("parses");
+        assert_eq!(
+            applied.encryption_key, old.encryption_key,
+            "the key is pinned to the server's own"
+        );
+        assert_eq!(applied.money(), old.money(), "so decoded money does not move");
+        let block = read_block(&candidate, &SAVEBLOCK2_SECTORS).expect("readable");
+        assert_eq!(
+            block[OPTIONS_BYTE], 2,
+            "while the options byte the report carried was applied"
         );
     }
 
