@@ -180,6 +180,13 @@ void MmoLink_Update(void)
             if (sPending.fromSlot == GetMultiplayerId())
                 continue;
 
+            // fromSlot arrives off the wire as a raw byte (0..255). It is about to be used as a
+            // shift amount below -- `1 << fromSlot` is undefined once it reaches the width of an
+            // int -- and as a block-buffer index in Deliver. A slot the hardware could never have
+            // is a confused server or a lying client; drop it rather than shift or index by it.
+            if (sPending.fromSlot >= MAX_RFU_PLAYERS)
+                continue;
+
             sHasPending = TRUE;
         }
 

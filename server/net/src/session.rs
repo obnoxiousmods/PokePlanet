@@ -404,37 +404,47 @@ impl Session {
                             .await?;
                         }
                         wire::GameMessage::SaveChunk { offset, total, bytes } => {
-                            // Reassemble in place. The game sends the image in order from
-                            // zero, so a chunk that does not continue the current one means
-                            // a new save started and whatever was half-collected is stale.
-                            if offset == 0 || save_image.len() != offset as usize {
+                            // Cap the claimed size before allocating anything for it, the same bound
+                            // the server->game direction uses (see MAX_SAVE_BYTES above). `total` is
+                            // whatever the game process sent; a compromised one claiming 4GB would
+                            // otherwise reserve 4GB here and take the sidecar down. Oversized is
+                            // dropped, not honoured.
+                            if total as usize > MAX_SAVE_BYTES {
+                                tracing::warn!(total, "refusing an oversized save from the game");
                                 save_image.clear();
-                                save_image.reserve(total as usize);
-                            }
-                            if save_image.len() == offset as usize {
-                                save_image.extend_from_slice(&bytes);
-                                if save_image.len() == total as usize {
-                                    tracing::info!(
-                                        bytes = save_image.len(),
-                                        "save received from the game; uploading"
-                                    );
-                                    // Forward in the same slices rather than one huge frame,
-                                    // so a save never blocks the control stream that chat
-                                    // and battle messages also share.
-                                    for (i, piece) in
-                                        save_image.chunks(SAVE_UPLOAD_CHUNK).enumerate()
-                                    {
-                                        write_control(
-                                            &mut send,
-                                            &ClientControl::SaveUpload {
-                                                offset: (i * SAVE_UPLOAD_CHUNK) as u32,
-                                                total,
-                                                bytes: piece.to_vec(),
-                                            },
-                                        )
-                                        .await?;
-                                    }
+                            } else {
+                                // Reassemble in place. The game sends the image in order from
+                                // zero, so a chunk that does not continue the current one means
+                                // a new save started and whatever was half-collected is stale.
+                                if offset == 0 || save_image.len() != offset as usize {
                                     save_image.clear();
+                                    save_image.reserve(total as usize);
+                                }
+                                if save_image.len() == offset as usize {
+                                    save_image.extend_from_slice(&bytes);
+                                    if save_image.len() == total as usize {
+                                        tracing::info!(
+                                            bytes = save_image.len(),
+                                            "save received from the game; uploading"
+                                        );
+                                        // Forward in the same slices rather than one huge frame,
+                                        // so a save never blocks the control stream that chat
+                                        // and battle messages also share.
+                                        for (i, piece) in
+                                            save_image.chunks(SAVE_UPLOAD_CHUNK).enumerate()
+                                        {
+                                            write_control(
+                                                &mut send,
+                                                &ClientControl::SaveUpload {
+                                                    offset: (i * SAVE_UPLOAD_CHUNK) as u32,
+                                                    total,
+                                                    bytes: piece.to_vec(),
+                                                },
+                                            )
+                                            .await?;
+                                        }
+                                        save_image.clear();
+                                    }
                                 }
                             }
                         }

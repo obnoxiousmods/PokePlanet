@@ -1001,12 +1001,31 @@ u8 Net_GetAuthState(void)
 
 const char *Net_GetPlayerName(void)
 {
-    return sInitialised ? sNet.playerName : "";
+    // The socket thread writes sNet.playerName under the lock (see the auth handler). Reading the
+    // raw field here without it let the game thread copy a name the socket thread was midway
+    // through overwriting -- a torn read. Copy it out under the same lock into a buffer this thread
+    // owns. Only the game thread calls this, so the static is not itself contended between callers;
+    // callers use the result immediately (SeatPlayer, MmoText_FromAscii) rather than caching it.
+    static char name[NET_NAME_LEN];
+    if (!sInitialised)
+        return "";
+    SDL_LockMutex(sNet.lock);
+    memcpy(name, sNet.playerName, sizeof(name));
+    SDL_UnlockMutex(sNet.lock);
+    return name;
 }
 
 const char *Net_GetLoginUrl(void)
 {
-    return sInitialised ? sNet.loginUrl : "";
+    // Same torn-read hazard as Net_GetPlayerName: loginUrl is written by the socket thread under
+    // the lock, so read it out under the lock into a game-thread-owned buffer.
+    static char url[NET_URL_LEN];
+    if (!sInitialised)
+        return "";
+    SDL_LockMutex(sNet.lock);
+    memcpy(url, sNet.loginUrl, sizeof(url));
+    SDL_UnlockMutex(sNet.lock);
+    return url;
 }
 
 bool8 Net_GetProfile(struct NetProfile *out)
