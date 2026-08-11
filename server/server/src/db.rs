@@ -10,6 +10,24 @@ use tokio_postgres::{NoTls, Row};
 
 pub type Db = Pool;
 
+/// The at-rest form of a session token: its SHA-256, hex-encoded.
+///
+/// A 40-character random token is not brute-forceable, so the only threat is a database read
+/// leak handing an attacker live sessions. Storing the hash instead of the token closes that:
+/// the client still holds and sends the real token, the server hashes what it receives and
+/// matches on the hash, and a leaked row is useless. Lookups also accept the raw token, so
+/// sessions issued before this keep working until they expire -- a non-breaking migration.
+pub fn hash_token(token: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(token.as_bytes());
+    let mut hex = String::with_capacity(64);
+    for byte in digest {
+        use std::fmt::Write;
+        let _ = write!(hex, "{byte:02x}");
+    }
+    hex
+}
+
 /// Applied at startup. Idempotent, so a restart against an existing database is a no-op.
 const SCHEMA: &str = r#"
 CREATE TABLE IF NOT EXISTS accounts (
@@ -521,11 +539,12 @@ pub async fn save_position(
 
 pub async fn issue_session(db: &Db, character_id: i64, token: &str) -> anyhow::Result<()> {
     let client = db.get().await?;
+    let hashed = hash_token(token);
     client
         .execute(
             "INSERT INTO sessions (token, character_id, expires_at)
              VALUES ($1, $2, now() + interval '90 days')",
-            &[&token, &character_id],
+            &[&hashed, &character_id],
         )
         .await?;
     Ok(())
@@ -537,13 +556,16 @@ pub async fn character_for_token(db: &Db, token: &str) -> anyhow::Result<Option<
     // Joins accounts and excludes banned ones so a ban takes effect at the next sign-in rather
     // than whenever the 90-day session token happens to expire. A banned account's token simply
     // resolves to no character, and the connection is turned away like an unknown token.
+    // Match on the hash, or on the raw token for sessions issued before hashing existed. The
+    // second arm ages out as those 90-day sessions expire.
+    let hashed = hash_token(token);
     Ok(client
         .query_opt(
             "SELECT c.* FROM sessions s
                JOIN characters c ON c.id = s.character_id
                JOIN accounts a ON a.id = c.account_id
-              WHERE s.token = $1 AND s.expires_at > now() AND NOT a.banned",
-            &[&token],
+              WHERE (s.token = $1 OR s.token = $2) AND s.expires_at > now() AND NOT a.banned",
+            &[&hashed, &token],
         )
         .await?
         .as_ref()

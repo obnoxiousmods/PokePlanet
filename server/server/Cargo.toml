@@ -7,6 +7,7 @@ license.workspace = true
 [dependencies]
 pokeplanet-proto.workspace = true
 anyhow.workspace = true
+sha2 = "0.10"
 quinn.workspace = true
 rustls.workspace = true
 rustls-pemfile.workspace = true
