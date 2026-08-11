@@ -23,6 +23,7 @@
 #include "intro.h"
 #include "main.h"
 #include "mmo_link.h"
+#include "net_client.h"
 #include "trainer_hill.h"
 #include "platform.h"
 #include "constants/rgb.h"
@@ -269,6 +270,10 @@ static void ReadKeys(void)
 #else
     u16 keyInput = Platform_GetKeyInput();
 #endif
+    // Report the raw input to the server so a validation instance replays the same frames. Sent
+    // here, before any remapping below, because the instance runs its own ReadKeys over these bits
+    // and must remap them itself or the two would process the same press differently.
+    Net_SendKeys(keyInput);
     gMain.newKeysRaw = keyInput & ~gMain.heldKeysRaw;
     gMain.newKeys = gMain.newKeysRaw;
     gMain.newAndRepeatedKeys = gMain.newKeysRaw;

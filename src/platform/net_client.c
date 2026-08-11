@@ -61,6 +61,7 @@
 #define MSG_PARTY           0x8E
 #define MSG_REGION          0x8F
 #define MSG_BLOCK           0x90
+#define MSG_KEYS            0x91
 
 // Lives in the SDL backend, like the sidecar port beside it.
 extern const char *Platform_GetInstanceToken(void);
@@ -1026,6 +1027,44 @@ void Net_BeginLogin(void)
         return;
     body[0] = MSG_BEGIN_LOGIN;
     Enqueue(body, 1);
+}
+
+// One frame's key state, for the server to drive this character's validation instance with.
+//
+// Batched rather than sent every frame: sixty two-byte messages a second would be almost all
+// framing. Frames accumulate and go out together a few times a second, which is what the sidecar
+// and server both expect (a run of frames, not one). Only sent while linked; there is nowhere for
+// them to go otherwise, and the server simply drops them when no instance is running for this
+// character, so this costs nothing until replay validation is switched on.
+#define KEYS_BATCH_FRAMES 6
+void Net_SendKeys(u16 keys)
+{
+    static u16 sBatch[KEYS_BATCH_FRAMES];
+    static u8 sCount;
+
+    if (!sInitialised || !Net_IsLinked())
+    {
+        sCount = 0; // do not carry a half-batch across a disconnect
+        return;
+    }
+
+    sBatch[sCount++] = keys;
+    if (sCount >= KEYS_BATCH_FRAMES)
+    {
+        u8 body[1 + KEYS_BATCH_FRAMES * 2];
+        u8 i;
+
+        body[0] = MSG_KEYS;
+        for (i = 0; i < sCount; i++)
+        {
+            body[1 + i * 2] = (u8)(sBatch[i] & 0xFF);
+            body[1 + i * 2 + 1] = (u8)((sBatch[i] >> 8) & 0xFF);
+        }
+        // Dropped on backpressure like any other report: a lost run of inputs is a gap the
+        // divergence check tolerates, not a reason to stall the game.
+        Enqueue(body, (u16)(1 + sCount * 2));
+        sCount = 0;
+    }
 }
 
 void Net_CancelLogin(void)

@@ -104,6 +104,10 @@ const char *Net_GetLoginUrl(void);
 bool8 Net_GetProfile(struct NetProfile *out);
 
 void Net_BeginLogin(void);
+
+// Report one frame's key state, so the server can drive this character's validation instance with
+// the same inputs the player gave. Batched and only sent while linked; a no-op otherwise.
+void Net_SendKeys(u16 keys);
 void Net_CancelLogin(void);
 void Net_Logout(void);
 
