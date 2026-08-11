@@ -69,3 +69,25 @@ jobs:
             diff README.md ROADMAP.md || true
             exit 1
           fi
+
+  game:
+    name: Game builds (Linux headless)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Nothing used to compile the C at all, so a link-breaking change reached a shipped
+      # binary once this session and was caught only by luck. This builds the native Linux
+      # target -- the one the server runs headless -- which links the entire game.
+      - name: Install 32-bit build dependencies
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            gcc-multilib g++-multilib libsdl2-dev:i386 build-essential
+
+      - name: Build headless
+        run: make -f Makefile_pc NATIVE_LINUX=1 NO_SDL_IMAGE=1 rom -j"$(nproc)"
+
+      - name: Confirm the binary exists
+        run: test -x ./pokeemerald && file ./pokeemerald

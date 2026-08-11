@@ -36,7 +36,11 @@ pub struct Session {
 
 impl Session {
     pub fn new(settings: Settings, link: GameLink, tokens: TokenStore) -> Self {
-        Self { settings, link, tokens }
+        Self {
+            settings,
+            link,
+            tokens,
+        }
     }
 
     /// Run forever, reconnecting with backoff. Each attempt reports its status to the

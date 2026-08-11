@@ -5,9 +5,7 @@ use crate::config::Config;
 use crate::db::{self, Db};
 use crate::world::{Presence, SharedWorld};
 use anyhow::Context;
-use pokeplanet_proto::quic::{
-    self, ClientControl, ClientMovement, ServerControl, ServerSnapshot,
-};
+use pokeplanet_proto::quic::{self, ClientControl, ClientMovement, ServerControl, ServerSnapshot};
 use pokeplanet_proto::{PlayerId, Pose};
 use quinn::{Connection, Endpoint, RecvStream, SendStream};
 use std::sync::Arc;
@@ -22,6 +20,7 @@ const MAX_CONTROL_FRAME: usize = 64 * 1024;
 /// The game's flash image, and therefore the largest save that can be genuine.
 const MAX_SAVE_BYTES: usize = 128 * 1024;
 /// Slice size for handing a stored save back to a client.
+#[allow(dead_code)]
 const SAVE_STREAM_CHUNK: usize = 1024;
 
 /// The game's BLOCK_BUFFER_SIZE. A block larger than the buffer it is destined for cannot
@@ -69,7 +68,9 @@ pub fn endpoint(cfg: &Config) -> anyhow::Result<Endpoint> {
     Ok(Endpoint::server(server_config, cfg.quic_addr)?)
 }
 
-fn load_certs(path: &std::path::Path) -> anyhow::Result<Vec<rustls::pki_types::CertificateDer<'static>>> {
+fn load_certs(
+    path: &std::path::Path,
+) -> anyhow::Result<Vec<rustls::pki_types::CertificateDer<'static>>> {
     let data = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
     let certs: Result<Vec<_>, _> = rustls_pemfile::certs(&mut &data[..]).collect();
     let certs = certs.context("parsing certificate chain")?;
@@ -293,7 +294,7 @@ async fn run_session(
             Presence {
                 session,
                 pending_invite: None,
-            battle: None,
+                battle: None,
                 position_unknown: true,
                 character_id: character.id,
                 name: name.clone(),
@@ -332,7 +333,14 @@ async fn run_session(
 
     // Control messages from the client until it hangs up.
     let result = control_loop(
-        &server, &conn, &mut recv, player_id, session, &name, character.id, &session_token,
+        &server,
+        &conn,
+        &mut recv,
+        player_id,
+        session,
+        &name,
+        character.id,
+        &session_token,
     )
     .await;
 
@@ -374,7 +382,9 @@ async fn hand_over_save(
     // from a new character. Guessing wrong drops the player into the world on stale local data.
     // Sending zero bytes makes the two cases distinct, and the wait can then be a wait for an
     // answer rather than a wait for a deadline.
-    let image = db::load_save(&server.db, character_id).await?.unwrap_or_default();
+    let image = db::load_save(&server.db, character_id)
+        .await?
+        .unwrap_or_default();
     // Spawned so a slow client reading its save cannot hold up whatever asked for it.
     let conn = conn.clone();
     tokio::spawn(async move {
@@ -427,7 +437,10 @@ async fn control_loop(
                 if text.is_empty() {
                     continue;
                 }
-                server.world.route_chat(player_id, name, &target, &text).await;
+                server
+                    .world
+                    .route_chat(player_id, name, &target, &text)
+                    .await;
                 crate::irc::relay_to_irc(name, &target, &text);
             }
             ClientControl::EnterMap { map } => {
@@ -457,7 +470,11 @@ async fn control_loop(
                 // have happened. Bounded first -- a client choosing how much the server buffers
                 // is a client choosing how much memory to spend.
                 if frames.len() > 600 {
-                    tracing::warn!(player = player_id, n = frames.len(), "refusing a long key run");
+                    tracing::warn!(
+                        player = player_id,
+                        n = frames.len(),
+                        "refusing a long key run"
+                    );
                     continue;
                 }
                 if let Some(instances) = &server.instances {
@@ -470,7 +487,12 @@ async fn control_loop(
                     }
                 }
             }
-            ClientControl::BlockChunk { block, offset, total, bytes } => {
+            ClientControl::BlockChunk {
+                block,
+                offset,
+                total,
+                bytes,
+            } => {
                 // Block 2 is the tail: Hall of Fame, Trainer Hill, recorded battle. Whole
                 // sectors including footers, spliced in as they arrived.
                 const TAIL_BLOCK: u8 = 2;
@@ -534,7 +556,12 @@ async fn control_loop(
                     || offset as usize + bytes.len() > total as usize
                     || bytes.len() > 0x400
                 {
-                    tracing::warn!(player = player_id, block, total, "refusing a malformed chunk");
+                    tracing::warn!(
+                        player = player_id,
+                        block,
+                        total,
+                        "refusing a malformed chunk"
+                    );
                     block_buf.clear();
                     continue;
                 }
@@ -573,7 +600,11 @@ async fn control_loop(
                 let Some(candidate) =
                     crate::save_parse::reauthor_block(&stored, sectors, &assembled)
                 else {
-                    tracing::warn!(player = player_id, block, "could not rebuild the save block");
+                    tracing::warn!(
+                        player = player_id,
+                        block,
+                        "could not rebuild the save block"
+                    );
                     continue;
                 };
                 let Some(new) = crate::save_parse::parse(&candidate) else {
@@ -614,7 +645,11 @@ async fn control_loop(
                 // Bounded before it is used for anything: the allowlist inside with_region is
                 // the real check, but a length the wire chose should never reach a copy.
                 if bytes.len() > 0x400 {
-                    tracing::warn!(player = player_id, len = bytes.len(), "refusing a large region");
+                    tracing::warn!(
+                        player = player_id,
+                        len = bytes.len(),
+                        "refusing a large region"
+                    );
                     continue;
                 }
                 let Ok(Some(stored)) = db::load_save(&server.db, character_id).await else {
@@ -623,10 +658,13 @@ async fn control_loop(
                 let Some(old) = crate::save_parse::parse(&stored) else {
                     continue;
                 };
-                let Some(block1) =
-                    crate::save_parse::with_region(&old, offset as usize, &bytes)
+                let Some(block1) = crate::save_parse::with_region(&old, offset as usize, &bytes)
                 else {
-                    tracing::warn!(player = player_id, offset, "refusing a region not on the list");
+                    tracing::warn!(
+                        player = player_id,
+                        offset,
+                        "refusing a region not on the list"
+                    );
                     continue;
                 };
                 let Some(candidate) = crate::save_parse::reauthor(&stored, &block1) else {
@@ -660,7 +698,11 @@ async fn control_loop(
                 // client that is broken or probing, and neither should get to choose how much
                 // the server copies.
                 if mons.len() != 600 || count > 6 {
-                    tracing::warn!(player = player_id, len = mons.len(), "refusing a malformed party");
+                    tracing::warn!(
+                        player = player_id,
+                        len = mons.len(),
+                        "refusing a malformed party"
+                    );
                     continue;
                 }
                 let Ok(Some(stored)) = db::load_save(&server.db, character_id).await else {
@@ -673,7 +715,10 @@ async fn control_loop(
                     continue;
                 };
                 let Some(old) = crate::save_parse::parse(&stored) else {
-                    tracing::warn!(player = player_id, "party reported against an unreadable save");
+                    tracing::warn!(
+                        player = player_id,
+                        "party reported against an unreadable save"
+                    );
                     continue;
                 };
                 let Some(block1) = crate::save_parse::with_party(&old, count, &mons) else {
@@ -681,7 +726,10 @@ async fn control_loop(
                     continue;
                 };
                 let Some(candidate) = crate::save_parse::reauthor(&stored, &block1) else {
-                    tracing::warn!(player = player_id, "could not rebuild the save to set the party");
+                    tracing::warn!(
+                        player = player_id,
+                        "could not rebuild the save to set the party"
+                    );
                     continue;
                 };
                 let Some(new) = crate::save_parse::parse(&candidate) else {
@@ -694,45 +742,61 @@ async fn control_loop(
                 if let Some(reason) = new
                     .impossible()
                     .or_else(|| crate::save_parse::regressed(&old, &new))
-                    .or_else(|| {
-                        allowance.check(&old, &new, &server.rates)
-                    })
+                    .or_else(|| allowance.check(&old, &new, &server.rates))
                 {
                     tracing::warn!(player = player_id, %reason, "refusing a reported party");
                     continue;
                 }
                 db::store_save(&server.db, character_id, &candidate).await?;
-                if let Err(e) = db::store_inventory_and_party(
-                    &server.db, character_id, &new.bag, &new.party,
-                )
-                .await
+                if let Err(e) =
+                    db::store_inventory_and_party(&server.db, character_id, &new.bag, &new.party)
+                        .await
                 {
                     tracing::warn!(error = %e, "could not store the party");
                 }
-                tracing::info!(player = player_id, party = new.party.len(), "party set by report");
+                tracing::info!(
+                    player = player_id,
+                    party = new.party.len(),
+                    "party set by report"
+                );
             }
-            ClientControl::ItemChanged { pocket, item, quantity } => {
+            ClientControl::ItemChanged {
+                pocket,
+                item,
+                quantity,
+            } => {
                 // Same shape as money: build the save the report implies, then judge it exactly
                 // as an uploaded one. impossible() already knows the per-slot ceiling, so an
                 // over-full slot is refused here by the rule that refuses it there.
                 let Ok(Some(stored)) = db::load_save(&server.db, character_id).await else {
-                    tracing::warn!(player = player_id, "item reported with no save to apply it to");
+                    tracing::warn!(
+                        player = player_id,
+                        "item reported with no save to apply it to"
+                    );
                     continue;
                 };
                 let Some(old) = crate::save_parse::parse(&stored) else {
-                    tracing::warn!(player = player_id, "item reported against an unreadable save");
+                    tracing::warn!(
+                        player = player_id,
+                        "item reported against an unreadable save"
+                    );
                     continue;
                 };
                 let Some(block1) = crate::save_parse::with_item(&old, pocket, item, quantity)
                 else {
                     tracing::warn!(
-                        player = player_id, pocket, item,
+                        player = player_id,
+                        pocket,
+                        item,
                         "no room for a reported item, or no such pocket"
                     );
                     continue;
                 };
                 let Some(candidate) = crate::save_parse::reauthor(&stored, &block1) else {
-                    tracing::warn!(player = player_id, "could not rebuild the save to set an item");
+                    tracing::warn!(
+                        player = player_id,
+                        "could not rebuild the save to set an item"
+                    );
                     continue;
                 };
                 let Some(new) = crate::save_parse::parse(&candidate) else {
@@ -749,10 +813,9 @@ async fn control_loop(
                 }
 
                 db::store_save(&server.db, character_id, &candidate).await?;
-                if let Err(e) = db::store_inventory_and_party(
-                    &server.db, character_id, &new.bag, &new.party,
-                )
-                .await
+                if let Err(e) =
+                    db::store_inventory_and_party(&server.db, character_id, &new.bag, &new.party)
+                        .await
                 {
                     tracing::warn!(error = %e, "could not store the bag");
                 }
@@ -769,11 +832,17 @@ async fn control_loop(
                 // second, laxer set of rules for the direct path would make the direct path the
                 // way to cheat.
                 let Ok(Some(stored)) = db::load_save(&server.db, character_id).await else {
-                    tracing::warn!(player = player_id, "money reported with no save to apply it to");
+                    tracing::warn!(
+                        player = player_id,
+                        "money reported with no save to apply it to"
+                    );
                     continue;
                 };
                 let Some(old) = crate::save_parse::parse(&stored) else {
-                    tracing::warn!(player = player_id, "money reported against an unreadable save");
+                    tracing::warn!(
+                        player = player_id,
+                        "money reported against an unreadable save"
+                    );
                     continue;
                 };
 
@@ -781,7 +850,10 @@ async fn control_loop(
                 let Some(candidate) = crate::save_parse::reauthor(&stored, &block1) else {
                     // reauthor proves it can rebuild this image faithfully before writing to
                     // it, so declining here means the save was not one it could author safely.
-                    tracing::warn!(player = player_id, "could not rebuild the save to set money");
+                    tracing::warn!(
+                        player = player_id,
+                        "could not rebuild the save to set money"
+                    );
                     continue;
                 };
                 let Some(new) = crate::save_parse::parse(&candidate) else {
@@ -792,17 +864,23 @@ async fn control_loop(
                 if let Some(reason) = new
                     .impossible()
                     .or_else(|| crate::save_parse::regressed(&old, &new))
-                    .or_else(|| {
-                        allowance.check(&old, &new, &server.rates)
-                    })
+                    .or_else(|| allowance.check(&old, &new, &server.rates))
                 {
                     tracing::warn!(player = player_id, %reason, "refusing reported money");
                     continue;
                 }
                 db::store_save(&server.db, character_id, &candidate).await?;
-                tracing::info!(player = player_id, money = new.money(), "money set by report");
+                tracing::info!(
+                    player = player_id,
+                    money = new.money(),
+                    "money set by report"
+                );
             }
-            ClientControl::SaveUpload { offset, total, bytes } => {
+            ClientControl::SaveUpload {
+                offset,
+                total,
+                bytes,
+            } => {
                 // A save is never larger than the flash image the game actually has, so a
                 // client claiming otherwise is either broken or probing; refuse rather than
                 // let the wire decide how much memory to hold.
@@ -846,14 +924,13 @@ async fn control_loop(
                         // Compare against the copy already held, which is the only way to
                         // see a change rather than a state. Loading it costs one read per
                         // save and is what makes going backwards visible at all.
-                        if let (Some(new), Ok(Some(old_image))) =
-                            (parsed.as_ref(), db::load_save(&server.db, character_id).await)
-                        {
+                        if let (Some(new), Ok(Some(old_image))) = (
+                            parsed.as_ref(),
+                            db::load_save(&server.db, character_id).await,
+                        ) {
                             if let Some(old) = crate::save_parse::parse(&old_image) {
                                 if let Some(reason) = crate::save_parse::regressed(&old, new)
-                                    .or_else(|| {
-                                        allowance.check(&old, new, &server.rates)
-                                    })
+                                    .or_else(|| allowance.check(&old, new, &server.rates))
                                 {
                                     tracing::warn!(
                                         player = player_id, %reason,
@@ -865,9 +942,7 @@ async fn control_loop(
                             }
                         }
                         db::store_save(&server.db, character_id, &save_image).await?;
-                        tracing::info!(
-                            player = player_id, bytes = save_image.len(), "save stored"
-                        );
+                        tracing::info!(player = player_id, bytes = save_image.len(), "save stored");
 
                         // A save that will not parse at all is still kept. The client can
                         // already play it -- it is the image the game wrote -- and refusing
@@ -875,13 +950,13 @@ async fn control_loop(
                         // understand yet.
                         match parsed {
                             Some(state) => {
-                                let vars: Vec<u8> = state
-                                    .vars
-                                    .iter()
-                                    .flat_map(|v| v.to_le_bytes())
-                                    .collect();
+                                let vars: Vec<u8> =
+                                    state.vars.iter().flat_map(|v| v.to_le_bytes()).collect();
                                 if let Err(e) = db::store_story_state(
-                                    &server.db, character_id, &state.flags, &vars,
+                                    &server.db,
+                                    character_id,
+                                    &state.flags,
+                                    &vars,
                                 )
                                 .await
                                 {
@@ -891,7 +966,10 @@ async fn control_loop(
                                 // Beside the story state: the same save, projected into tables
                                 // the server can query instead of bytes it can only keep.
                                 if let Err(e) = db::store_inventory_and_party(
-                                    &server.db, character_id, &state.bag, &state.party,
+                                    &server.db,
+                                    character_id,
+                                    &state.bag,
+                                    &state.party,
                                 )
                                 .await
                                 {
@@ -899,13 +977,16 @@ async fn control_loop(
                                 }
 
                                 tracing::info!(
-                                    player = player_id, money = state.money(),
-                                    items = state.bag.len(), party = state.party.len(),
+                                    player = player_id,
+                                    money = state.money(),
+                                    items = state.bag.len(),
+                                    party = state.party.len(),
                                     "progress read from the save"
                                 );
                             }
                             None => tracing::warn!(
-                                player = player_id, "could not read the uploaded save"
+                                player = player_id,
+                                "could not read the uploaded save"
                             ),
                         }
                         save_image.clear();
@@ -930,8 +1011,11 @@ async fn control_loop(
                     profile.y = pose.y;
                 }
                 tracing::info!(
-                    player = player_id, map_group = profile.map_group,
-                    map_num = profile.map_num, x = profile.x, y = profile.y,
+                    player = player_id,
+                    map_group = profile.map_group,
+                    map_num = profile.map_num,
+                    x = profile.x,
+                    y = profile.y,
                     "resyncing a newly attached game"
                 );
                 // The rates go out again too. They are sent once after Welcome, which is
@@ -974,7 +1058,9 @@ async fn control_loop(
                 // hostile client rather than a battle.
                 if bytes.len() > MAX_LINK_BLOCK {
                     tracing::warn!(
-                        player = player_id, len = bytes.len(), "refusing an oversized block"
+                        player = player_id,
+                        len = bytes.len(),
+                        "refusing an oversized block"
                     );
                     break;
                 }
@@ -984,7 +1070,9 @@ async fn control_loop(
                 server.world.clear_battle(player_id).await;
             }
             ClientControl::Goodbye => break,
-            ClientControl::Hello { .. } | ClientControl::BeginLogin | ClientControl::PollLogin { .. } => {
+            ClientControl::Hello { .. }
+            | ClientControl::BeginLogin
+            | ClientControl::PollLogin { .. } => {
                 // Already authenticated; nothing to do.
             }
         }

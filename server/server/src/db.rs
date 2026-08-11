@@ -174,6 +174,7 @@ pub async fn connect(url: &str) -> anyhow::Result<Db> {
 #[derive(Debug, Clone)]
 pub struct Character {
     pub id: i64,
+    #[allow(dead_code)] // carried for future ownership checks; not yet read
     pub account_id: i64,
     pub name: String,
     pub graphics_id: u8,
@@ -281,7 +282,10 @@ pub async fn ensure_character(
     let client = db.get().await?;
 
     if let Some(row) = client
-        .query_opt("SELECT * FROM characters WHERE account_id = $1", &[&account_id])
+        .query_opt(
+            "SELECT * FROM characters WHERE account_id = $1",
+            &[&account_id],
+        )
         .await?
     {
         return Ok(Character::from_row(&row));
@@ -309,7 +313,10 @@ pub async fn ensure_character(
                 // connection. Check the second before assuming the first, or two
                 // simultaneous sign-ins would spend a thousand attempts renaming nobody.
                 if let Some(row) = client
-                    .query_opt("SELECT * FROM characters WHERE account_id = $1", &[&account_id])
+                    .query_opt(
+                        "SELECT * FROM characters WHERE account_id = $1",
+                        &[&account_id],
+                    )
                     .await?
                 {
                     return Ok(Character::from_row(&row));
@@ -345,8 +352,11 @@ pub async fn store_inventory_and_party(
     let mut client = db.get().await?;
     let tx = client.transaction().await?;
 
-    tx.execute("DELETE FROM inventory WHERE character_id = $1", &[&character_id])
-        .await?;
+    tx.execute(
+        "DELETE FROM inventory WHERE character_id = $1",
+        &[&character_id],
+    )
+    .await?;
     for (slot, (pocket, item, quantity)) in bag.iter().enumerate() {
         // The parser has already refused zero and over-99 quantities, so anything here is
         // storable; the CHECK on the column is the backstop rather than the gate.
@@ -456,7 +466,11 @@ pub async fn character_by_id(db: &Db, id: i64) -> anyhow::Result<Option<Characte
 }
 
 /// Persist the character's last known overworld position so they resume where they left off.
-pub async fn save_position(db: &Db, character_id: i64, pose: &pokeplanet_proto::Pose) -> anyhow::Result<()> {
+pub async fn save_position(
+    db: &Db,
+    character_id: i64,
+    pose: &pokeplanet_proto::Pose,
+) -> anyhow::Result<()> {
     let client = db.get().await?;
     client
         .execute(

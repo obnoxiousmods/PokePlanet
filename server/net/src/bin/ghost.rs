@@ -91,8 +91,7 @@ fn parse_options() -> anyhow::Result<Options> {
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info".into()),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
         )
         .init();
     rustls::crypto::ring::default_provider()
@@ -108,8 +107,9 @@ async fn main() -> anyhow::Result<()> {
         .with_root_certificates(roots)
         .with_no_client_auth();
     tls.alpn_protocols = vec![b"pokeplanet/1".to_vec()];
-    let mut client_config =
-        quinn::ClientConfig::new(Arc::new(quinn::crypto::rustls::QuicClientConfig::try_from(tls)?));
+    let mut client_config = quinn::ClientConfig::new(Arc::new(
+        quinn::crypto::rustls::QuicClientConfig::try_from(tls)?,
+    ));
     let mut transport = quinn::TransportConfig::default();
     transport.keep_alive_interval(Some(Duration::from_secs(10)));
     client_config.transport_config(Arc::new(transport));
@@ -149,7 +149,9 @@ async fn main() -> anyhow::Result<()> {
                 return;
             }
             match quic::decode::<ServerControl>(&body) {
-                Ok(ServerControl::Welcome { player_id, profile, .. }) => {
+                Ok(ServerControl::Welcome {
+                    player_id, profile, ..
+                }) => {
                     tracing::info!(
                         player_id, name = %profile.name, graphics_id = profile.graphics_id,
                         "signed in"
@@ -172,8 +174,14 @@ async fn main() -> anyhow::Result<()> {
     // Walk a four-tile square so the real client has visible movement to animate.
     // DIR: 1=south 2=north 3=west 4=east
     let loop_path: [(i16, i16, u8); 8] = [
-        (1, 0, 4), (1, 0, 4), (0, 1, 1), (0, 1, 1),
-        (-1, 0, 3), (-1, 0, 3), (0, -1, 2), (0, -1, 2),
+        (1, 0, 4),
+        (1, 0, 4),
+        (0, 1, 1),
+        (0, 1, 1),
+        (-1, 0, 3),
+        (-1, 0, 3),
+        (0, -1, 2),
+        (0, -1, 2),
     ];
     let mut step = 0usize;
     let mut pose = Pose {

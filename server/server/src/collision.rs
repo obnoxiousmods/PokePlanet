@@ -59,7 +59,10 @@ impl Collision {
     /// refuses teleports, it just cannot tell a wall from a path.
     pub fn load(path: &Path) -> anyhow::Result<Self> {
         let data = std::fs::read(path)?;
-        anyhow::ensure!(data.len() >= 8, "collision table is too short to hold a header");
+        anyhow::ensure!(
+            data.len() >= 8,
+            "collision table is too short to hold a header"
+        );
         anyhow::ensure!(&data[..4] == MAGIC, "collision table has the wrong magic");
 
         let count = u16::from_le_bytes([data[6], data[7]]) as usize;
@@ -74,11 +77,15 @@ impl Collision {
             let height = u16::from_le_bytes([data[at + 4], data[at + 5]]);
             at += 6;
 
-            let bytes = (width as usize * height as usize + 7) / 8;
+            let bytes = (width as usize * height as usize).div_ceil(8);
             anyhow::ensure!(at + bytes <= data.len(), "collision table ends mid-map");
             maps.insert(
                 (group, num),
-                MapCollision { width, height, bits: data[at..at + bytes].to_vec() },
+                MapCollision {
+                    width,
+                    height,
+                    bits: data[at..at + bytes].to_vec(),
+                },
             );
             at += bytes;
         }
@@ -97,7 +104,14 @@ impl Collision {
         let mut m = std::collections::HashMap::new();
         for &(group, num, width, height) in maps {
             let bytes = (width as usize * height as usize).div_ceil(8);
-            m.insert((group, num), MapCollision { width, height, bits: vec![0u8; bytes] });
+            m.insert(
+                (group, num),
+                MapCollision {
+                    width,
+                    height,
+                    bits: vec![0u8; bytes],
+                },
+            );
         }
         Self { maps: m }
     }
@@ -141,7 +155,14 @@ mod tests {
             bits[i / 8] |= 1 << (i % 8);
         }
         let mut maps = HashMap::new();
-        maps.insert((0, 9), MapCollision { width, height, bits });
+        maps.insert(
+            (0, 9),
+            MapCollision {
+                width,
+                height,
+                bits,
+            },
+        );
         Collision { maps }
     }
 
@@ -174,7 +195,14 @@ mod bounds_tests {
     fn one_map(width: u16, height: u16) -> Collision {
         let bytes = (width as usize * height as usize).div_ceil(8);
         let mut maps = HashMap::new();
-        maps.insert((1u8, 4u8), MapCollision { width, height, bits: vec![0u8; bytes] });
+        maps.insert(
+            (1u8, 4u8),
+            MapCollision {
+                width,
+                height,
+                bits: vec![0u8; bytes],
+            },
+        );
         Collision { maps }
     }
 
@@ -188,16 +216,31 @@ mod bounds_tests {
         let c = one_map(13, 13);
 
         assert!(c.in_bounds(1, 4, 7, 7), "the top-left tile is on the map");
-        assert!(c.in_bounds(1, 4, 19, 19), "the bottom-right tile is on the map");
-        assert!(c.in_bounds(1, 4, 13, 14), "somewhere in the middle is on the map");
+        assert!(
+            c.in_bounds(1, 4, 19, 19),
+            "the bottom-right tile is on the map"
+        );
+        assert!(
+            c.in_bounds(1, 4, 13, 14),
+            "somewhere in the middle is on the map"
+        );
 
         // The reported failure: the lab's door in Littleroot is runtime (14, 23). Fine in a
         // 20x20 town, four tiles past the bottom of a 13x13 lab.
-        assert!(!c.in_bounds(1, 4, 14, 23), "town coordinates are not on the lab");
-        assert!(!c.in_bounds(1, 4, 20, 19), "one tile past the right edge is off the map");
+        assert!(
+            !c.in_bounds(1, 4, 14, 23),
+            "town coordinates are not on the lab"
+        );
+        assert!(
+            !c.in_bounds(1, 4, 20, 19),
+            "one tile past the right edge is off the map"
+        );
         assert!(!c.in_bounds(1, 4, 6, 7), "above the border is off the map");
 
         // A map the table does not know must not become a cage.
-        assert!(c.in_bounds(9, 9, 1000, 1000), "unknown maps are not policed");
+        assert!(
+            c.in_bounds(9, 9, 1000, 1000),
+            "unknown maps are not policed"
+        );
     }
 }

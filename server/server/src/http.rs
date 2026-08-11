@@ -30,7 +30,10 @@ struct LoginQuery {
 /// Entry point the game opens in the player's browser. The ticket is carried through
 /// Discord as the OAuth2 `state` parameter so the callback knows which game session to
 /// attach the resulting login to.
-async fn login(State(server): State<Arc<Server>>, Query(q): Query<LoginQuery>) -> impl IntoResponse {
+async fn login(
+    State(server): State<Arc<Server>>,
+    Query(q): Query<LoginQuery>,
+) -> impl IntoResponse {
     Redirect::temporary(&auth::authorize_url(&server.cfg, &q.t))
 }
 
@@ -68,17 +71,18 @@ async fn callback(
         }
     };
 
-    let (character, token) = match auth::finish_login(&server.db, &server.http, &server.cfg, &user).await {
-        Ok(v) => v,
-        Err(e) => {
-            tracing::warn!(error = %e, "login rejected");
-            return (
-                StatusCode::FORBIDDEN,
-                page("Login refused", "This account cannot sign in."),
-            )
-                .into_response();
-        }
-    };
+    let (character, token) =
+        match auth::finish_login(&server.db, &server.http, &server.cfg, &user).await {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::warn!(error = %e, "login rejected");
+                return (
+                    StatusCode::FORBIDDEN,
+                    page("Login refused", "This account cannot sign in."),
+                )
+                    .into_response();
+            }
+        };
 
     match crate::db::complete_ticket(&server.db, &ticket, character.id, &token).await {
         Ok(true) => page(

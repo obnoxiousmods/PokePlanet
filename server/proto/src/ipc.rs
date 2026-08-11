@@ -318,18 +318,36 @@ pub fn encode_link_block(from_slot: u8, bytes: &[u8]) -> Vec<u8> {
 /// A message the game sent us.
 #[derive(Debug, Clone)]
 pub enum GameMessage {
-    SelfState { pose: Pose, graphics_id: u8 },
+    SelfState {
+        pose: Pose,
+        graphics_id: u8,
+    },
     BeginLogin,
     CancelLogin,
-    ChatSend { kind: u8, target: String, text: String },
+    ChatSend {
+        kind: u8,
+        target: String,
+        text: String,
+    },
     Logout,
-    RequestBattle { target: PlayerId },
-    RespondToBattle { from: PlayerId, accepted: bool },
+    RequestBattle {
+        target: PlayerId,
+    },
+    RespondToBattle {
+        from: PlayerId,
+        accepted: bool,
+    },
     /// One slice of the save. `total` is the whole image, so the receiver knows when it
     /// has all of it without a separate end marker.
-    SaveChunk { offset: u32, total: u32, bytes: Vec<u8> },
+    SaveChunk {
+        offset: u32,
+        total: u32,
+        bytes: Vec<u8>,
+    },
     /// One block of link-battle traffic, bound for whoever this player is battling.
-    LinkBlock { bytes: Vec<u8> },
+    LinkBlock {
+        bytes: Vec<u8>,
+    },
     /// The battle this player was in has finished.
     BattleEnded,
     /// This character's money is now this.
@@ -339,29 +357,50 @@ pub enum GameMessage {
     /// server reads its state out of, and the server can only ever audit what it is handed.
     /// Reporting a field directly lets the server write that field into its own copy, so for
     /// money specifically the upload stops being the thing that carries it.
-    MoneyChanged { amount: u32 },
+    MoneyChanged {
+        amount: u32,
+    },
     /// This character now holds `quantity` of `item`, in `pocket`.
     ///
     /// A count rather than a delta, deliberately. A delta that arrives twice, or not at all,
     /// leaves the bag wrong in a way nothing afterwards can detect; a count that arrives twice
     /// is simply the same truth said twice.
-    ItemChanged { pocket: u8, item: u16, quantity: u16 },
+    ItemChanged {
+        pocket: u8,
+        item: u16,
+        quantity: u16,
+    },
     /// The whole party, as the game's own bytes.
-    PartyChanged { count: u8, mons: Vec<u8> },
+    PartyChanged {
+        count: u8,
+        mons: Vec<u8>,
+    },
     /// One allowlisted region of SaveBlock1, as the game's own bytes.
-    RegionChanged { offset: u32, bytes: Vec<u8> },
+    RegionChanged {
+        offset: u32,
+        bytes: Vec<u8>,
+    },
     /// One chunk of a whole save block.
     ///
     /// The PC boxes are nine sectors -- about thirty-five kilobytes -- which is far too much to
     /// put through the pipe in a single frame, so they arrive in pieces and are reassembled.
-    BlockChunk { block: u8, offset: u32, total: u32, bytes: Vec<u8> },
+    BlockChunk {
+        block: u8,
+        offset: u32,
+        total: u32,
+        bytes: Vec<u8>,
+    },
     /// Key state for a run of consecutive frames, oldest first.
     ///
     /// Batched rather than one message per frame: sixty messages a second per player, each
     /// carrying two bytes, would cost far more in framing than the data is worth.
-    Keys { frames: Vec<u16> },
+    Keys {
+        frames: Vec<u16>,
+    },
     /// The game introducing itself, naming the sidecar it means to reach.
-    Hello { instance: String },
+    Hello {
+        instance: String,
+    },
     /// A game process connected to the sidecar.
     ///
     /// Synthesised locally rather than decoded from a frame: the game cannot send this,
@@ -390,7 +429,9 @@ pub fn decode_game_message(body: &[u8]) -> anyhow::Result<GameMessage> {
             })
         }
         MSG_BLOCK => {
-            let head = rest.get(..9).ok_or_else(|| anyhow::anyhow!("short block chunk"))?;
+            let head = rest
+                .get(..9)
+                .ok_or_else(|| anyhow::anyhow!("short block chunk"))?;
             Ok(GameMessage::BlockChunk {
                 block: head[0],
                 offset: u32::from_le_bytes([head[1], head[2], head[3], head[4]]),
@@ -399,7 +440,9 @@ pub fn decode_game_message(body: &[u8]) -> anyhow::Result<GameMessage> {
             })
         }
         MSG_REGION => {
-            let head = rest.get(..4).ok_or_else(|| anyhow::anyhow!("short region"))?;
+            let head = rest
+                .get(..4)
+                .ok_or_else(|| anyhow::anyhow!("short region"))?;
             Ok(GameMessage::RegionChanged {
                 offset: u32::from_le_bytes([head[0], head[1], head[2], head[3]]),
                 bytes: rest[4..].to_vec(),
@@ -407,7 +450,10 @@ pub fn decode_game_message(body: &[u8]) -> anyhow::Result<GameMessage> {
         }
         MSG_PARTY => {
             let count = *rest.first().ok_or_else(|| anyhow::anyhow!("short party"))?;
-            Ok(GameMessage::PartyChanged { count, mons: rest[1..].to_vec() })
+            Ok(GameMessage::PartyChanged {
+                count,
+                mons: rest[1..].to_vec(),
+            })
         }
         MSG_ITEM => {
             let b = rest
@@ -485,7 +531,10 @@ pub fn decode_game_message(body: &[u8]) -> anyhow::Result<GameMessage> {
             let total = u32::from_le_bytes([rest[4], rest[5], rest[6], rest[7]]);
             let len = u16::from_le_bytes([rest[8], rest[9]]) as usize;
             if rest.len() < 10 + len {
-                anyhow::bail!("SAVE_CHUNK claims {len} bytes but carries {}", rest.len() - 10);
+                anyhow::bail!(
+                    "SAVE_CHUNK claims {len} bytes but carries {}",
+                    rest.len() - 10
+                );
             }
             // A chunk that runs past the end it declares is malformed, and trusting it
             // would size an allocation from the wire.
@@ -558,7 +607,10 @@ mod tests {
         b.push(pose.elevation);
 
         match decode_game_message(&b).unwrap() {
-            GameMessage::SelfState { pose: got, graphics_id } => {
+            GameMessage::SelfState {
+                pose: got,
+                graphics_id,
+            } => {
                 assert_eq!(got, pose);
                 assert_eq!(graphics_id, 42);
             }

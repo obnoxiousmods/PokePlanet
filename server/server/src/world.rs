@@ -85,7 +85,10 @@ impl World {
     }
 
     pub fn with_collision(collision: crate::collision::Collision) -> SharedWorld {
-        Arc::new(World { collision, ..Default::default() })
+        Arc::new(World {
+            collision,
+            ..Default::default()
+        })
     }
 
     pub async fn join(&self, id: PlayerId, presence: Presence) {
@@ -393,11 +396,7 @@ impl World {
     /// are refused across maps because the two avatars must be standing together for the
     /// battle to make sense in the overworld, and refused when either side already has one
     /// outstanding so a player cannot be spammed into a battle they did not choose.
-    pub async fn invite_to_battle(
-        &self,
-        from: PlayerId,
-        target: PlayerId,
-    ) -> Result<(), String> {
+    pub async fn invite_to_battle(&self, from: PlayerId, target: PlayerId) -> Result<(), String> {
         if from == target {
             return Err("You can't battle yourself.".into());
         }
@@ -452,11 +451,13 @@ impl World {
             .unwrap_or_default();
         let inviter = players.get(&from).ok_or("They are no longer online.")?;
         let inviter_name = inviter.name.clone();
-        let _ = inviter.control.try_send(ServerControl::BattleInvitationAnswered {
-            from: responder,
-            from_name: responder_name.clone(),
-            accepted,
-        });
+        let _ = inviter
+            .control
+            .try_send(ServerControl::BattleInvitationAnswered {
+                from: responder,
+                from_name: responder_name.clone(),
+                accepted,
+            });
 
         if accepted {
             // Assign the slots here rather than letting the clients decide. The one who
@@ -482,10 +483,16 @@ impl World {
         if accepted {
             let mut players = self.players.write().await;
             if let Some(p) = players.get_mut(&from) {
-                p.battle = Some(BattleSeat { peer: responder, slot: 0 });
+                p.battle = Some(BattleSeat {
+                    peer: responder,
+                    slot: 0,
+                });
             }
             if let Some(p) = players.get_mut(&responder) {
-                p.battle = Some(BattleSeat { peer: from, slot: 1 });
+                p.battle = Some(BattleSeat {
+                    peer: from,
+                    slot: 1,
+                });
             }
         }
         Ok(())
@@ -499,7 +506,10 @@ impl World {
     /// costs the other side nothing they had.
     pub async fn clear_battle(&self, id: PlayerId) {
         let mut players = self.players.write().await;
-        let peer = players.get_mut(&id).and_then(|p| p.battle.take()).map(|s| s.peer);
+        let peer = players
+            .get_mut(&id)
+            .and_then(|p| p.battle.take())
+            .map(|s| s.peer);
         if let Some(peer) = peer {
             if let Some(p) = players.get_mut(&peer) {
                 // Only if they still name this player; they may already have moved on to
@@ -534,11 +544,12 @@ impl World {
             return false;
         }
         peer.control
-            .try_send(ServerControl::LinkBlock { from_slot: seat.slot, bytes })
+            .try_send(ServerControl::LinkBlock {
+                from_slot: seat.slot,
+                bytes,
+            })
             .is_ok()
     }
-
-
 
     /// Send one control message to a single player.
     pub async fn tell(&self, id: PlayerId, msg: ServerControl) {
@@ -564,7 +575,12 @@ impl World {
 mod tests {
     use super::*;
 
-    fn presence(character_id: i64, name: &str, x: i16, y: i16) -> (Presence, mpsc::Receiver<ServerControl>) {
+    fn presence(
+        character_id: i64,
+        name: &str,
+        x: i16,
+        y: i16,
+    ) -> (Presence, mpsc::Receiver<ServerControl>) {
         let (tx, rx) = mpsc::channel(16);
         (
             Presence {
@@ -604,12 +620,22 @@ mod tests {
         let session = world.players.read().await[&1].session;
 
         // Settle onto (0,10) at a valid tile.
-        let start = Pose { map: MapId::new(0, 10), x: 10, y: 10, ..Default::default() };
+        let start = Pose {
+            map: MapId::new(0, 10),
+            x: 10,
+            y: 10,
+            ..Default::default()
+        };
         assert_eq!(world.update_pose(1, session, start).await, Some(start));
 
         // Change to (0,9) carrying a town coordinate four tiles past its bottom edge: refused,
         // and the player keeps the pose they had rather than being flung off the map.
-        let off = Pose { map: MapId::new(0, 9), x: 14, y: 23, ..Default::default() };
+        let off = Pose {
+            map: MapId::new(0, 9),
+            x: 14,
+            y: 23,
+            ..Default::default()
+        };
         assert_eq!(
             world.update_pose(1, session, off).await,
             Some(start),
@@ -617,7 +643,12 @@ mod tests {
         );
 
         // The same change onto a real tile of (0,9) is accepted.
-        let ok = Pose { map: MapId::new(0, 9), x: 12, y: 12, ..Default::default() };
+        let ok = Pose {
+            map: MapId::new(0, 9),
+            x: 12,
+            y: 12,
+            ..Default::default()
+        };
         assert_eq!(
             world.update_pose(1, session, ok).await,
             Some(ok),
@@ -633,17 +664,32 @@ mod tests {
         let session = world.players.read().await[&1].session;
 
         // Settle in: the join grace is used up by the first report.
-        let start = Pose { map: MapId::new(1, 4), x: 5, y: 5, ..Default::default() };
+        let start = Pose {
+            map: MapId::new(1, 4),
+            x: 5,
+            y: 5,
+            ..Default::default()
+        };
         world.update_pose(1, session, start).await;
 
         // Walk into a building. The map changes, and the tile arrived on is wherever the
         // door leads -- nowhere near the tile outside it.
-        let doorway = Pose { map: MapId::new(9, 1), x: 4, y: 8, ..Default::default() };
+        let doorway = Pose {
+            map: MapId::new(9, 1),
+            x: 4,
+            y: 8,
+            ..Default::default()
+        };
         assert_eq!(world.update_pose(1, session, doorway).await, Some(doorway));
 
         // The report that actually carries the arrival tile can be the next one, and it
         // must not be read as a teleport across the new map.
-        let inside = Pose { map: MapId::new(9, 1), x: 12, y: 2, ..Default::default() };
+        let inside = Pose {
+            map: MapId::new(9, 1),
+            x: 12,
+            y: 2,
+            ..Default::default()
+        };
         assert_eq!(
             world.update_pose(1, session, inside).await,
             Some(inside),
@@ -651,7 +697,12 @@ mod tests {
         );
 
         // Once settled, the rules apply again on the new map.
-        let jump = Pose { map: MapId::new(9, 1), x: 40, y: 40, ..Default::default() };
+        let jump = Pose {
+            map: MapId::new(9, 1),
+            x: 40,
+            y: 40,
+            ..Default::default()
+        };
         let answer = world.update_pose(1, session, jump).await.unwrap();
         assert_ne!(answer, jump, "a teleport inside the building was accepted");
     }
@@ -671,7 +722,12 @@ mod tests {
         // They start together and can see each other.
         assert_eq!(world.snapshot(2, here, Pose::default()).await.len(), 1);
 
-        let moved = Pose { map: there, x: 5, y: 5, ..Default::default() };
+        let moved = Pose {
+            map: there,
+            x: 5,
+            y: 5,
+            ..Default::default()
+        };
         world.update_pose(1, session, moved).await;
 
         // Gone from the old map, present on the new one. An index left un-updated shows
@@ -687,7 +743,12 @@ mod tests {
         world.join(1, a).await;
         let session = world.players.read().await[&1].session;
 
-        let step = Pose { map: MapId::new(1, 4), x: 10, y: 11, ..Default::default() };
+        let step = Pose {
+            map: MapId::new(1, 4),
+            x: 10,
+            y: 11,
+            ..Default::default()
+        };
         assert_eq!(
             world.update_pose(1, session, step).await,
             Some(step),
@@ -695,7 +756,12 @@ mod tests {
         );
 
         // Across the map in one report: the classic teleport.
-        let jump = Pose { map: MapId::new(1, 4), x: 40, y: 60, ..Default::default() };
+        let jump = Pose {
+            map: MapId::new(1, 4),
+            x: 40,
+            y: 60,
+            ..Default::default()
+        };
         let answer = world.update_pose(1, session, jump).await.unwrap();
         assert_ne!(answer, jump, "a teleport was accepted");
         assert_eq!(
@@ -717,12 +783,22 @@ mod tests {
 
         // Settle first: the report right after joining is taken as given, because that is
         // the client telling the server where its save puts it.
-        let start = Pose { map: MapId::new(1, 4), x: 5, y: 5, ..Default::default() };
+        let start = Pose {
+            map: MapId::new(1, 4),
+            x: 5,
+            y: 5,
+            ..Default::default()
+        };
         world.update_pose(1, session, start).await;
 
         // The player avatar cannot move diagonally, so one report covering both axes is
         // two steps' worth of distance in one tick.
-        let diagonal = Pose { map: MapId::new(1, 4), x: 6, y: 6, ..Default::default() };
+        let diagonal = Pose {
+            map: MapId::new(1, 4),
+            x: 6,
+            y: 6,
+            ..Default::default()
+        };
         let answer = world.update_pose(1, session, diagonal).await.unwrap();
         assert_ne!(answer, diagonal, "a diagonal step was accepted");
     }
@@ -820,7 +896,14 @@ mod tests {
         world.join(2, b).await;
 
         let seen = world
-            .snapshot(1, MapId::new(1, 4), Pose { map: MapId::new(1, 4), ..Default::default() })
+            .snapshot(
+                1,
+                MapId::new(1, 4),
+                Pose {
+                    map: MapId::new(1, 4),
+                    ..Default::default()
+                },
+            )
             .await;
         assert_eq!(seen.len(), 1);
         assert_eq!(seen[0].name, "Misty");
@@ -878,7 +961,10 @@ mod tests {
         assert!(ok);
         assert!(ra.try_recv().is_ok(), "sender should see their own PM");
         assert!(rb.try_recv().is_ok(), "recipient should receive the PM");
-        assert!(rc.try_recv().is_err(), "third party must not receive the PM");
+        assert!(
+            rc.try_recv().is_err(),
+            "third party must not receive the PM"
+        );
     }
 
     /// Names are matched without regard to case, so addressing someone does not depend on
@@ -916,10 +1002,15 @@ mod tests {
         while rb.try_recv().is_ok() {}
         while rc.try_recv().is_ok() {}
 
-        let ok = world.route_chat(1, "Ash", &ChatTarget::Local, "hello").await;
+        let ok = world
+            .route_chat(1, "Ash", &ChatTarget::Local, "hello")
+            .await;
         assert!(ok);
         assert!(ra.try_recv().is_ok(), "sender should see their own line");
-        assert!(rb.try_recv().is_ok(), "someone on the same map should hear it");
+        assert!(
+            rb.try_recv().is_ok(),
+            "someone on the same map should hear it"
+        );
         assert!(rc.try_recv().is_err(), "someone on another map must not");
     }
 
@@ -935,7 +1026,9 @@ mod tests {
         while ra.try_recv().is_ok() {}
         while rb.try_recv().is_ok() {}
 
-        let ok = world.route_chat(1, "Ash", &ChatTarget::Global, "hello").await;
+        let ok = world
+            .route_chat(1, "Ash", &ChatTarget::Global, "hello")
+            .await;
         assert!(ok);
         assert!(ra.try_recv().is_ok());
         assert!(rb.try_recv().is_ok(), "global must cross maps");
@@ -995,7 +1088,10 @@ mod tests {
         while rb.try_recv().is_ok() {}
 
         assert!(!world.route_link_block(1, vec![1, 2, 3]).await);
-        assert!(rb.try_recv().is_err(), "an unseated player must not reach anyone");
+        assert!(
+            rb.try_recv().is_err(),
+            "an unseated player must not reach anyone"
+        );
     }
 
     /// Declining seats nobody, so the battle traffic has nowhere to go.
@@ -1024,11 +1120,20 @@ mod tests {
         world.join(2, b).await;
         world.invite_to_battle(1, 2).await.unwrap();
         world.answer_battle(2, 1, true).await.unwrap();
-        assert!(world.route_link_block(1, vec![1]).await, "seated to begin with");
+        assert!(
+            world.route_link_block(1, vec![1]).await,
+            "seated to begin with"
+        );
 
         world.clear_battle(1).await;
-        assert!(!world.route_link_block(1, vec![1]).await, "the ender is unseated");
-        assert!(!world.route_link_block(2, vec![1]).await, "and so is the opponent");
+        assert!(
+            !world.route_link_block(1, vec![1]).await,
+            "the ender is unseated"
+        );
+        assert!(
+            !world.route_link_block(2, vec![1]).await,
+            "and so is the opponent"
+        );
     }
 
     /// When one player drops, the other must not be left seated against a ghost.
@@ -1110,7 +1215,11 @@ mod tests {
 
         world.answer_battle(2, 1, true).await.unwrap();
         match ra.try_recv() {
-            Ok(ServerControl::BattleInvitationAnswered { accepted, from_name, .. }) => {
+            Ok(ServerControl::BattleInvitationAnswered {
+                accepted,
+                from_name,
+                ..
+            }) => {
                 assert!(accepted);
                 assert_eq!(from_name, "Misty");
             }
@@ -1127,7 +1236,10 @@ mod tests {
         world.join(1, a).await;
         world.join(2, b).await;
 
-        assert!(world.invite_to_battle(1, 1).await.is_err(), "self-challenge");
+        assert!(
+            world.invite_to_battle(1, 1).await.is_err(),
+            "self-challenge"
+        );
         assert!(world.invite_to_battle(1, 2).await.is_err(), "different map");
         assert!(world.invite_to_battle(1, 99).await.is_err(), "not online");
     }
@@ -1160,7 +1272,10 @@ mod tests {
         world.invite_to_battle(1, 2).await.unwrap();
         // Answering an invitation that was never sent must not clear the real one.
         assert!(world.answer_battle(2, 99, true).await.is_err());
-        assert!(world.answer_battle(2, 1, true).await.is_ok(), "real one survives");
+        assert!(
+            world.answer_battle(2, 1, true).await.is_ok(),
+            "real one survives"
+        );
     }
 
     #[tokio::test]
@@ -1173,7 +1288,16 @@ mod tests {
         world.join(1, second).await;
 
         world
-            .update_pose(1, stale_session, Pose { map: MapId::new(1, 4), x: 99, y: 99, ..Default::default() })
+            .update_pose(
+                1,
+                stale_session,
+                Pose {
+                    map: MapId::new(1, 4),
+                    x: 99,
+                    y: 99,
+                    ..Default::default()
+                },
+            )
             .await;
 
         assert_eq!(world.pose_of(1).await.unwrap().x, 5, "stale report ignored");

@@ -103,7 +103,8 @@ async fn session(
     let tcp = TcpStream::connect((cfg.irc_host.as_str(), cfg.irc_port)).await?;
     tcp.set_nodelay(true)?;
 
-    let is_loopback = cfg.irc_host == "127.0.0.1" || cfg.irc_host == "::1" || cfg.irc_host == "localhost";
+    let is_loopback =
+        cfg.irc_host == "127.0.0.1" || cfg.irc_host == "::1" || cfg.irc_host == "localhost";
     let tls_config = if is_loopback {
         rustls::ClientConfig::builder()
             .dangerous()

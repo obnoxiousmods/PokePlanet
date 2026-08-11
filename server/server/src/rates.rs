@@ -65,6 +65,7 @@ impl Default for Rates {
 
 impl Rates {
     /// The multiplier for encountering one species: the global rate and its own, together.
+    #[allow(dead_code)] // per-species rates: parsed and tested, wiring pending
     pub fn encounter_for(&self, species: u16) -> f32 {
         self.encounter * self.species_encounter.get(&species).copied().unwrap_or(1.0)
     }
@@ -123,9 +124,13 @@ impl Rates {
             Ok(text) => {
                 let rates = Self::parse(&text)?;
                 tracing::info!(
-                    experience = rates.experience, encounter = rates.encounter,
-                    money = rates.money, items = rates.items, catch = rates.catch,
-                    species = rates.species_encounter.len(), "rates loaded"
+                    experience = rates.experience,
+                    encounter = rates.encounter,
+                    money = rates.money,
+                    items = rates.items,
+                    catch = rates.catch,
+                    species = rates.species_encounter.len(),
+                    "rates loaded"
                 );
                 Ok(rates)
             }
@@ -133,7 +138,7 @@ impl Rates {
                 tracing::info!("no rates file; using the original game's rates");
                 Ok(Self::default())
             }
-            Err(e) => Err(e).map_err(anyhow::Error::from),
+            Err(e) => Err(anyhow::Error::from(e)),
         }
     }
 }
@@ -227,8 +232,7 @@ impl Allowance {
         let exp_rate = EXPERIENCE_PER_SECOND * ceiling_scale(rates.experience);
 
         self.money = (self.money + money_rate * seconds).min(money_rate * BURST_SECONDS);
-        self.experience =
-            (self.experience + exp_rate * seconds).min(exp_rate * BURST_SECONDS);
+        self.experience = (self.experience + exp_rate * seconds).min(exp_rate * BURST_SECONDS);
     }
 
     /// Judge a change, spending the allowance it costs.
@@ -280,6 +284,7 @@ impl Allowance {
     }
 }
 
+#[allow(dead_code)] // superseded by Allowance; retained for its ceiling-math tests
 pub fn gained_too_fast(
     before: &crate::save_parse::SaveState,
     after: &crate::save_parse::SaveState,
@@ -448,7 +453,10 @@ mod tests {
     #[test]
     fn a_normal_session_is_allowed() {
         let r = Rates::default();
-        assert_eq!(gained_too_fast(&state(1000, 0), &state(50_000, 20_000), &r, secs(60)), None);
+        assert_eq!(
+            gained_too_fast(&state(1000, 0), &state(50_000, 20_000), &r, secs(60)),
+            None
+        );
     }
 
     /// A client awarding itself a fortune between two saves is not.
@@ -463,7 +471,10 @@ mod tests {
     fn a_sudden_level_is_refused() {
         let r = Rates::default();
         let out = gained_too_fast(&state(0, 0), &state(0, 1_600_000), &r, secs(1));
-        assert!(out.is_some(), "a full experience bar in a second is not play");
+        assert!(
+            out.is_some(),
+            "a full experience bar in a second is not play"
+        );
     }
 
     /// A generous server must allow generously, or its own rates become an accusation.
@@ -484,7 +495,10 @@ mod tests {
     #[test]
     fn spending_is_not_a_gain() {
         let r = Rates::default();
-        assert_eq!(gained_too_fast(&state(900_000, 0), &state(10, 0), &r, secs(1)), None);
+        assert_eq!(
+            gained_too_fast(&state(900_000, 0), &state(10, 0), &r, secs(1)),
+            None
+        );
     }
 
     #[test]
@@ -527,8 +541,14 @@ mod tests {
     fn nonsense_is_refused_rather_than_ignored() {
         assert!(Rates::parse("experience = fast\n").is_err());
         assert!(Rates::parse("experience = -1\n").is_err());
-        assert!(Rates::parse("expreience = 2\n").is_err(), "a misspelt key is a typo");
-        assert!(Rates::parse("experience 2\n").is_err(), "missing the equals");
+        assert!(
+            Rates::parse("expreience = 2\n").is_err(),
+            "a misspelt key is a typo"
+        );
+        assert!(
+            Rates::parse("experience 2\n").is_err(),
+            "missing the equals"
+        );
     }
 
     #[test]

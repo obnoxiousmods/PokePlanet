@@ -198,6 +198,8 @@ mod tests {
     #[test]
     fn unknown_arguments_are_an_error_rather_than_ignored() {
         let mut s = Settings::default();
-        assert!(s.apply_args(["--nonsense".to_string()].into_iter()).is_err());
+        assert!(s
+            .apply_args(["--nonsense".to_string()].into_iter())
+            .is_err());
     }
 }

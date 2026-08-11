@@ -75,12 +75,30 @@ const BOX_OFFSET_CHECKSUM: usize = 28;
 /// plausible-looking nonsense rather than an obvious failure -- which is why this is copied
 /// rather than reasoned about.
 const SUBSTRUCT_ORDER: [[usize; 4]; 24] = [
-    [0, 1, 2, 3], [0, 1, 3, 2], [0, 2, 1, 3], [0, 3, 1, 2],
-    [0, 2, 3, 1], [0, 3, 2, 1], [1, 0, 2, 3], [1, 0, 3, 2],
-    [2, 0, 1, 3], [3, 0, 1, 2], [2, 0, 3, 1], [3, 0, 2, 1],
-    [1, 2, 0, 3], [1, 3, 0, 2], [2, 1, 0, 3], [3, 1, 0, 2],
-    [2, 3, 0, 1], [3, 2, 0, 1], [1, 2, 3, 0], [1, 3, 2, 0],
-    [2, 1, 3, 0], [3, 1, 2, 0], [2, 3, 1, 0], [3, 2, 1, 0],
+    [0, 1, 2, 3],
+    [0, 1, 3, 2],
+    [0, 2, 1, 3],
+    [0, 3, 1, 2],
+    [0, 2, 3, 1],
+    [0, 3, 2, 1],
+    [1, 0, 2, 3],
+    [1, 0, 3, 2],
+    [2, 0, 1, 3],
+    [3, 0, 1, 2],
+    [2, 0, 3, 1],
+    [3, 0, 2, 1],
+    [1, 2, 0, 3],
+    [1, 3, 0, 2],
+    [2, 1, 0, 3],
+    [3, 1, 0, 2],
+    [2, 3, 0, 1],
+    [3, 2, 0, 1],
+    [1, 2, 3, 0],
+    [1, 3, 2, 0],
+    [2, 1, 3, 0],
+    [3, 1, 2, 0],
+    [2, 3, 1, 0],
+    [3, 2, 1, 0],
 ];
 
 const OFFSET_MONEY: usize = 0x490;
@@ -158,11 +176,14 @@ fn read_mon(bytes: &[u8]) -> Option<PartyMon> {
     }
 
     // The game's own sum: every decrypted substruct byte, as 16-bit words.
-    let computed: u16 = plain
-        .chunks_exact(2)
-        .fold(0u16, |acc, c| acc.wrapping_add(u16::from_le_bytes([c[0], c[1]])));
+    let computed: u16 = plain.chunks_exact(2).fold(0u16, |acc, c| {
+        acc.wrapping_add(u16::from_le_bytes([c[0], c[1]]))
+    });
     let stored = u16::from_le_bytes(
-        bytes.get(BOX_OFFSET_CHECKSUM..BOX_OFFSET_CHECKSUM + 2)?.try_into().ok()?,
+        bytes
+            .get(BOX_OFFSET_CHECKSUM..BOX_OFFSET_CHECKSUM + 2)?
+            .try_into()
+            .ok()?,
     );
 
     let order = SUBSTRUCT_ORDER[(personality % 24) as usize];
@@ -174,7 +195,10 @@ fn read_mon(bytes: &[u8]) -> Option<PartyMon> {
         return None; // an empty slot
     }
     let experience = u32::from_le_bytes([
-        plain[growth + 4], plain[growth + 5], plain[growth + 6], plain[growth + 7],
+        plain[growth + 4],
+        plain[growth + 5],
+        plain[growth + 6],
+        plain[growth + 7],
     ]);
 
     let mut evs = [0u8; 6];
@@ -336,7 +360,9 @@ impl SaveState {
             if *quantity == 0 || *quantity > MAX_ITEM_QUANTITY {
                 return Some(format!(
                     "bag pocket {} holds {} of item {}, which the game cannot store",
-                    pocket + 1, quantity, item
+                    pocket + 1,
+                    quantity,
+                    item
                 ));
             }
         }
@@ -347,7 +373,9 @@ impl SaveState {
             if mon.level > MAX_LEVEL {
                 return Some(format!(
                     "party slot {} is level {}, above the maximum of {}",
-                    i + 1, mon.level, MAX_LEVEL
+                    i + 1,
+                    mon.level,
+                    MAX_LEVEL
                 ));
             }
 
@@ -369,7 +397,9 @@ impl SaveState {
             if mon.experience > MAX_EXPERIENCE {
                 return Some(format!(
                     "party slot {} has {} experience, above the {} any species can hold",
-                    i + 1, mon.experience, MAX_EXPERIENCE
+                    i + 1,
+                    mon.experience,
+                    MAX_EXPERIENCE
                 ));
             }
             // And a Pokemon at the maximum level must have earned at least what the fastest
@@ -378,7 +408,10 @@ impl SaveState {
             if mon.level == MAX_LEVEL && mon.experience < MIN_EXPERIENCE_AT_MAX_LEVEL {
                 return Some(format!(
                     "party slot {} is level {} on {} experience, below the {} it would need",
-                    i + 1, mon.level, mon.experience, MIN_EXPERIENCE_AT_MAX_LEVEL
+                    i + 1,
+                    mon.level,
+                    mon.experience,
+                    MIN_EXPERIENCE_AT_MAX_LEVEL
                 ));
             }
 
@@ -389,13 +422,17 @@ impl SaveState {
             if total > MAX_EV_TOTAL {
                 return Some(format!(
                     "party slot {} has {} effort points, above the maximum of {}",
-                    i + 1, total, MAX_EV_TOTAL
+                    i + 1,
+                    total,
+                    MAX_EV_TOTAL
                 ));
             }
             if let Some(ev) = mon.evs.iter().find(|e| **e as u16 > MAX_EV_PER_STAT) {
                 return Some(format!(
                     "party slot {} has {} effort points in one stat, above the maximum of {}",
-                    i + 1, ev, MAX_EV_PER_STAT
+                    i + 1,
+                    ev,
+                    MAX_EV_PER_STAT
                 ));
             }
         }
@@ -528,6 +565,7 @@ fn saveblock1(image: &[u8], slot: usize) -> Option<Vec<u8>> {
 /// will differ between two honest runs, and treating those as evidence would accuse everybody.
 /// The comparison is restricted to things a player cares about and cannot honestly disagree on:
 /// money, the party, and the bag.
+#[allow(dead_code)] // called once the state-readback pipe is wired (replay tier)
 pub fn diverged(claimed: &SaveState, computed: &SaveState) -> Option<String> {
     if claimed.money() != computed.money() {
         return Some(format!(
@@ -611,12 +649,7 @@ pub fn with_money(state: &SaveState, amount: u32) -> Vec<u8> {
 /// silently. A player whose bag is full should be told no by the game before it ever reports,
 /// so reaching that here means the two disagree, and guessing which is right is how saves get
 /// quietly wrong.
-pub fn with_item(
-    state: &SaveState,
-    pocket: u8,
-    item: u16,
-    quantity: u16,
-) -> Option<Vec<u8>> {
+pub fn with_item(state: &SaveState, pocket: u8, item: u16, quantity: u16) -> Option<Vec<u8>> {
     let (at, slots) = *BAG_POCKETS.get(pocket as usize)?;
     let mut block1 = state.block1.clone();
 
@@ -627,7 +660,13 @@ pub fn with_item(
         let here = u16::from_le_bytes([raw[0], raw[1]]);
 
         if here == item {
-            return Some(write_slot(block1, off, item, quantity, state.encryption_key));
+            return Some(write_slot(
+                block1,
+                off,
+                item,
+                quantity,
+                state.encryption_key,
+            ));
         }
         if here == 0 && empty.is_none() {
             empty = Some(off);
@@ -645,7 +684,11 @@ pub fn with_item(
 }
 
 fn write_slot(mut block1: Vec<u8>, off: usize, item: u16, quantity: u16, key: u32) -> Vec<u8> {
-    let (item, quantity) = if quantity == 0 { (0, 0) } else { (item, quantity) };
+    let (item, quantity) = if quantity == 0 {
+        (0, 0)
+    } else {
+        (item, quantity)
+    };
     block1[off..off + 2].copy_from_slice(&item.to_le_bytes());
     // Quantities carry the low half of the same key as money, per GetBagItemQuantity.
     let hidden = quantity ^ (key as u16);
@@ -724,12 +767,17 @@ pub const REPORTABLE: &[(usize, usize)] = &[
 /// exactly, because accepting a subrange lets a caller write one byte at a time at an offset
 /// of its choosing, which is the same arbitrary write with extra steps.
 pub fn with_region(state: &SaveState, offset: usize, bytes: &[u8]) -> Option<Vec<u8>> {
-    if !REPORTABLE.iter().any(|&(at, len)| at == offset && len == bytes.len()) {
+    if !REPORTABLE
+        .iter()
+        .any(|&(at, len)| at == offset && len == bytes.len())
+    {
         return None;
     }
 
     let mut block1 = state.block1.clone();
-    block1.get_mut(offset..offset + bytes.len())?.copy_from_slice(bytes);
+    block1
+        .get_mut(offset..offset + bytes.len())?
+        .copy_from_slice(bytes);
     Some(block1)
 }
 
@@ -837,9 +885,7 @@ pub const STORAGE_SECTORS: [u16; 9] = [5, 6, 7, 8, 9, 10, 11, 12, 13];
 /// sector in front of it -- so the restriction to one block was an accident of how this grew
 /// rather than anything the format requires.
 pub fn write_block(image: &[u8], sectors: &[u16], data: &[u8]) -> Option<Vec<u8>> {
-    if image.len() != NUM_SECTORS * SECTOR_SIZE
-        || data.len() != sectors.len() * SECTOR_DATA_SIZE
-    {
+    if image.len() != NUM_SECTORS * SECTOR_SIZE || data.len() != sectors.len() * SECTOR_DATA_SIZE {
         return None;
     }
 
@@ -916,7 +962,9 @@ pub fn parse(image: &[u8]) -> Option<SaveState> {
     for i in 0..SECTORS_PER_SLOT {
         let sector = read_sector(image, slot * SECTORS_PER_SLOT + i)?;
         if sector.signature == SECTOR_SIGNATURE && sector.id == SAVEBLOCK2_SECTOR {
-            let at = sector.data.get(OFFSET_ENCRYPTION_KEY..OFFSET_ENCRYPTION_KEY + 4)?;
+            let at = sector
+                .data
+                .get(OFFSET_ENCRYPTION_KEY..OFFSET_ENCRYPTION_KEY + 4)?;
             encryption_key = u32::from_le_bytes(at.try_into().ok()?);
             break;
         }
@@ -946,8 +994,7 @@ pub fn parse(image: &[u8]) -> Option<SaveState> {
             if item == 0 {
                 continue;
             }
-            let quantity =
-                u16::from_le_bytes([raw[2], raw[3]]) ^ (encryption_key as u16);
+            let quantity = u16::from_le_bytes([raw[2], raw[3]]) ^ (encryption_key as u16);
             bag.push((pocket as u8, item, quantity));
         }
     }
@@ -1102,7 +1149,11 @@ mod tests {
         let after = parse(&rebuilt).expect("the rebuilt save must still parse");
 
         assert_eq!(after.money(), 4321, "the field asked for should change");
-        assert_eq!(before.money(), 1234, "and it should not have been that already");
+        assert_eq!(
+            before.money(),
+            1234,
+            "and it should not have been that already"
+        );
         assert_eq!(after.flags, before.flags, "flags must survive authoring");
         assert_eq!(after.vars, before.vars, "vars must survive authoring");
         assert_eq!(
@@ -1141,7 +1192,10 @@ mod tests {
             };
             let want = checksum(&rebuilt[start..start + SECTOR_DATA_SIZE], size);
             let got = u16::from_le_bytes([rebuilt[footer + 2], rebuilt[footer + 3]]);
-            assert_eq!(got, want, "sector {id} carries a checksum the game would reject");
+            assert_eq!(
+                got, want,
+                "sector {id} carries a checksum the game would reject"
+            );
         }
     }
 
@@ -1190,13 +1244,21 @@ mod tests {
         sign(&mut image, 0, 2000);
 
         let old = parse(&image).expect("readable");
-        assert_eq!(old.money(), 1234, "the starting point must not already be the answer");
+        assert_eq!(
+            old.money(),
+            1234,
+            "the starting point must not already be the answer"
+        );
 
         let candidate =
             reauthor(&image, &with_money(&old, 8000)).expect("authoring should succeed");
         let new = parse(&candidate).expect("the rebuilt save must parse");
 
-        assert_eq!(new.money(), 8000, "the reported value should be what the save now holds");
+        assert_eq!(
+            new.money(),
+            8000,
+            "the reported value should be what the save now holds"
+        );
         assert_eq!(new.flags, old.flags, "nothing else should move");
         assert_eq!(new.block1[0x2BE0], 0xA7, "including what nothing parses");
 
@@ -1223,19 +1285,30 @@ mod tests {
         let mut image = image_with(0, 1, &[0xFF], &[3], 100);
         sign(&mut image, 0, 2000);
         let old = parse(&image).expect("readable");
-        assert!(old.bag.is_empty(), "the bag must start empty or this proves nothing");
+        assert!(
+            old.bag.is_empty(),
+            "the bag must start empty or this proves nothing"
+        );
 
         // Key items are second in the save even though POCKET_KEY_ITEMS is 5. Writing to
         // pocket 1 and reading it back as pocket 1 is what pins that down: if the write and
         // the read disagreed about the order, an item would surface in the wrong pocket.
         let block1 = with_item(&old, 1, 260, 1).expect("a free slot exists");
         let new = parse(&reauthor(&image, &block1).expect("authoring")).expect("parses");
-        assert_eq!(new.bag, vec![(1u8, 260u16, 1u16)], "one key item, in the key item pocket");
+        assert_eq!(
+            new.bag,
+            vec![(1u8, 260u16, 1u16)],
+            "one key item, in the key item pocket"
+        );
 
         // The offsets are far enough apart that a pocket mix-up shows up as a different index.
         let block1 = with_item(&old, 4, 133, 7).expect("a free slot exists");
         let new = parse(&reauthor(&image, &block1).expect("authoring")).expect("parses");
-        assert_eq!(new.bag, vec![(4u8, 133u16, 7u16)], "berries land in the berry pocket");
+        assert_eq!(
+            new.bag,
+            vec![(4u8, 133u16, 7u16)],
+            "berries land in the berry pocket"
+        );
 
         // Adding to an existing entry sets the count rather than making a second slot.
         let block1 = with_item(&new, 4, 133, 12).expect("the slot is already there");
@@ -1246,10 +1319,16 @@ mod tests {
         // the bag as an entry the player cannot use and cannot get rid of.
         let block1 = with_item(&again, 4, 133, 0).expect("clearing works");
         let gone = parse(&reauthor(&image, &block1).expect("authoring")).expect("parses");
-        assert!(gone.bag.is_empty(), "a count of zero should leave no slot behind");
+        assert!(
+            gone.bag.is_empty(),
+            "a count of zero should leave no slot behind"
+        );
 
         // A pocket that does not exist is refused rather than written somewhere convenient.
-        assert!(with_item(&old, 9, 1, 1).is_none(), "there is no ninth pocket");
+        assert!(
+            with_item(&old, 9, 1, 1).is_none(),
+            "there is no ninth pocket"
+        );
     }
 
     /// An over-full slot is caught after being written, by the same rule that catches it in an
@@ -1283,7 +1362,10 @@ mod tests {
         let mut image = image_with(0, 1, &[0xFF], &[3], 100);
         sign(&mut image, 0, 2000);
         let old = parse(&image).expect("readable");
-        assert!(old.party.is_empty(), "the party must start empty or this proves nothing");
+        assert!(
+            old.party.is_empty(),
+            "the party must start empty or this proves nothing"
+        );
 
         // One Pokemon at a legal level. Level lives at 0x54 within the hundred-byte record.
         let mut mons = vec![0u8; PARTY_SIZE * MON_SIZE];
@@ -1308,8 +1390,14 @@ mod tests {
         );
 
         // Refusals rather than guesses about size.
-        assert!(with_party(&old, 1, &mons[..10]).is_none(), "a short party must be refused");
-        assert!(with_party(&old, 9, &mons).is_none(), "more than six must be refused");
+        assert!(
+            with_party(&old, 1, &mons[..10]).is_none(),
+            "a short party must be refused"
+        );
+        assert!(
+            with_party(&old, 9, &mons).is_none(),
+            "more than six must be refused"
+        );
     }
 
     /// The allowlist, written out as literals.
@@ -1362,7 +1450,10 @@ mod tests {
         chunk[OFFSET_FLAGS - at] = 0xAB;
         let block1 = with_region(&old, at, &chunk).expect("a listed chunk is writable");
         let new = parse(&reauthor(&image, &block1).expect("authoring")).expect("parses");
-        assert_eq!(new.flags[0], 0xAB, "the reported chunk should be what the save now holds");
+        assert_eq!(
+            new.flags[0], 0xAB,
+            "the reported chunk should be what the save now holds"
+        );
         assert_ne!(old.flags[0], 0xAB, "and must not have been that already");
 
         // An offset nobody listed. Without this check it is an arbitrary write into the
@@ -1523,12 +1614,18 @@ mod tests {
         // A level the client claims but the server's run did not produce.
         let mut lying = a.clone();
         lying.party[0].level = 60;
-        assert!(diverged(&lying, &a).is_some(), "an invented level must be caught");
+        assert!(
+            diverged(&lying, &a).is_some(),
+            "an invented level must be caught"
+        );
 
         // Experience likewise.
         let mut richer = a.clone();
         richer.party[0].experience = 999_999;
-        assert!(diverged(&richer, &a).is_some(), "invented experience must be caught");
+        assert!(
+            diverged(&richer, &a).is_some(),
+            "invented experience must be caught"
+        );
 
         // An undecodable record is not evidence either way -- same rule as `regressed`.
         let mut undecodable = a.clone();
@@ -1577,15 +1674,19 @@ mod tests {
         let unchanged = read_block(&image, &SAVEBLOCK2_SECTORS).expect("readable block");
         let same = parse(&reauthor_block(&image, &SAVEBLOCK2_SECTORS, &unchanged).expect("author"))
             .expect("parses");
-        assert_eq!(same.encryption_key, old.encryption_key, "key must not move on a no-op");
+        assert_eq!(
+            same.encryption_key, old.encryption_key,
+            "key must not move on a no-op"
+        );
         assert_eq!(same.money(), old.money(), "money must not move on a no-op");
 
         // The attack: rewrite the encryption key inside the SaveBlock2 block.
         let mut tampered = unchanged.clone();
         tampered[OFFSET_ENCRYPTION_KEY..OFFSET_ENCRYPTION_KEY + 4]
             .copy_from_slice(&0xDEAD_BEEFu32.to_le_bytes());
-        let attacked = parse(&reauthor_block(&image, &SAVEBLOCK2_SECTORS, &tampered).expect("author"))
-            .expect("parses");
+        let attacked =
+            parse(&reauthor_block(&image, &SAVEBLOCK2_SECTORS, &tampered).expect("author"))
+                .expect("parses");
 
         assert_ne!(
             attacked.encryption_key, old.encryption_key,
@@ -1689,7 +1790,9 @@ mod tests {
             assert!(
                 *quantity > 0 && *quantity <= MAX_ITEM_QUANTITY,
                 "pocket {} item {} decoded to {}, so the quantity key is wrong",
-                pocket, item, quantity
+                pocket,
+                item,
+                quantity
             );
         }
 
@@ -1728,15 +1831,28 @@ mod tests {
     fn the_cap_itself_is_allowed() {
         let image = image_with(0, 1, &vec![0; FLAG_BYTES], &vec![0; VAR_COUNT], MAX_MONEY);
         let state = parse(&image).expect("should parse");
-        assert_eq!(state.impossible(), None, "the cap is reachable, not a cheat");
+        assert_eq!(
+            state.impossible(),
+            None,
+            "the cap is reachable, not a cheat"
+        );
     }
 
     /// Above the cap the game clamps to, which no amount of play can produce.
     #[test]
     fn money_above_the_cap_is_impossible() {
-        let image = image_with(0, 1, &vec![0; FLAG_BYTES], &vec![0; VAR_COUNT], MAX_MONEY + 1);
+        let image = image_with(
+            0,
+            1,
+            &vec![0; FLAG_BYTES],
+            &vec![0; VAR_COUNT],
+            MAX_MONEY + 1,
+        );
         let state = parse(&image).expect("should parse");
-        assert!(state.impossible().is_some(), "above the cap should be caught");
+        assert!(
+            state.impossible().is_some(),
+            "above the cap should be caught"
+        );
     }
 
     #[test]
@@ -1755,10 +1871,9 @@ mod tests {
         // Wipe one sector's signature.
         let footer = 5 * SECTOR_SIZE + SECTOR_DATA_SIZE + 116;
         broken[footer + 4..footer + 8].copy_from_slice(&0u32.to_le_bytes());
-        assert!(parse(&broken).is_none(), "an incomplete slot is not loadable");
+        assert!(
+            parse(&broken).is_none(),
+            "an incomplete slot is not loadable"
+        );
     }
 }
-
-
-
-

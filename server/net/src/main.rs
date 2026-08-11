@@ -69,11 +69,7 @@ async fn main() -> anyhow::Result<()> {
     let tokens = token::TokenStore::open(settings.token_path.clone());
     let (commands_tx, commands_rx) = mpsc::channel(256);
 
-    let session = Arc::new(session::Session::new(
-        settings,
-        link.clone(),
-        tokens,
-    ));
+    let session = Arc::new(session::Session::new(settings, link.clone(), tokens));
 
     tokio::spawn(session.run(commands_rx));
 

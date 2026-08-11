@@ -20,7 +20,9 @@ pub const PROTOCOL_VERSION: u16 = 1;
 pub const MAX_VISIBLE_PLAYERS: usize = 8;
 
 /// Identifies one map instance. Mirrors the game's `gSaveBlock1Ptr->location`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize,
+)]
 pub struct MapId {
     pub group: u8,
     pub num: u8,

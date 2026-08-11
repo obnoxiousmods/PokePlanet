@@ -29,7 +29,6 @@ pub struct Config {
     pub irc_port: u16,
     pub irc_channel: String,
     pub irc_enabled: bool,
-
 }
 
 fn var(key: &str) -> anyhow::Result<String> {
@@ -54,8 +53,11 @@ impl Config {
                 "/etc/letsencrypt/live/obby.ca/fullchain.pem",
             )
             .into(),
-            private_key: var_or("POKEPLANET_KEY", "/etc/letsencrypt/live/obby.ca/privkey.pem")
-                .into(),
+            private_key: var_or(
+                "POKEPLANET_KEY",
+                "/etc/letsencrypt/live/obby.ca/privkey.pem",
+            )
+            .into(),
             // Default to the local unix socket; '/' is percent-encoded in the host field.
             database_url: var_or(
                 "POKEPLANET_DB",

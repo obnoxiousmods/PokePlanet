@@ -16,7 +16,6 @@ use std::path::PathBuf;
 use std::process::Stdio;
 
 use tokio::io::AsyncWriteExt;
-use std::os::unix::fs::OpenOptionsExt;
 
 use tokio::process::{Child, Command};
 
@@ -58,9 +57,14 @@ pub struct Instances {
     running: HashMap<i64, Running>,
 }
 
+#[allow(dead_code)] // replay-validation API; call sites land as the loop is closed
 impl Instances {
     pub fn new(binary: impl Into<PathBuf>) -> Self {
-        Self { binary: binary.into(), max: DEFAULT_MAX, running: HashMap::new() }
+        Self {
+            binary: binary.into(),
+            max: DEFAULT_MAX,
+            running: HashMap::new(),
+        }
     }
 
     pub fn with_max(mut self, max: usize) -> Self {
@@ -148,7 +152,14 @@ impl Instances {
                 tracing::info!(character = character_id, "started a validation instance");
                 // The write end is opened lazily by drive(); opening it here would block until
                 // the instance opens its read end, which it does not do until it has booted.
-                self.running.insert(character_id, Running { child, input: None, pipe });
+                self.running.insert(
+                    character_id,
+                    Running {
+                        child,
+                        input: None,
+                        pipe,
+                    },
+                );
                 true
             }
             Err(e) => {
@@ -170,25 +181,26 @@ impl Instances {
             if running.input.is_some() {
                 continue;
             }
-            match tokio::fs::OpenOptions::new()
+            // ENXIO / a would-block simply means the instance has not opened its end yet;
+            // it is retried next tick, so only the success arm does anything.
+            if let Ok(file) = tokio::fs::OpenOptions::new()
                 .write(true)
                 .custom_flags(libc::O_NONBLOCK)
                 .open(&running.pipe)
                 .await
             {
-                Ok(file) => {
-                    tracing::info!(character = character, "driving a validation instance");
-                    running.input = Some(file);
-                }
-                // ENXIO simply means the instance has not opened its end yet.
-                Err(_) => {}
+                tracing::info!(character = character, "driving a validation instance");
+                running.input = Some(file);
             }
         }
     }
 
     /// Stop a character's instance. Safe to call when there is none.
     pub async fn stop(&mut self, character_id: i64) {
-        if let Some(Running { mut child, pipe, .. }) = self.running.remove(&character_id) {
+        if let Some(Running {
+            mut child, pipe, ..
+        }) = self.running.remove(&character_id)
+        {
             let _ = std::fs::remove_file(&pipe);
             // Ask, then insist. `kill_on_drop` would handle it eventually, but an instance that
             // outlives its player is exactly the leak the sidecar taught us to close deliberately
@@ -205,20 +217,25 @@ impl Instances {
     /// entry, `count()` keeps returning the cap, and every subsequent player is refused for a
     /// reason nobody can see.
     pub fn reap(&mut self) {
-        self.running.retain(|character, running| match running.child.try_wait() {
-            Ok(Some(status)) => {
-                let _ = std::fs::remove_file(&running.pipe);
-                tracing::warn!(character = character, ?status, "a validation instance exited");
-                false
-            }
-            Ok(None) => true,
-            Err(e) => {
-                let _ = std::fs::remove_file(&running.pipe);
-                tracing::warn!(character = character, error = %e,
+        self.running
+            .retain(|character, running| match running.child.try_wait() {
+                Ok(Some(status)) => {
+                    let _ = std::fs::remove_file(&running.pipe);
+                    tracing::warn!(
+                        character = character,
+                        ?status,
+                        "a validation instance exited"
+                    );
+                    false
+                }
+                Ok(None) => true,
+                Err(e) => {
+                    let _ = std::fs::remove_file(&running.pipe);
+                    tracing::warn!(character = character, error = %e,
                                "could not check a validation instance; dropping it");
-                false
-            }
-        });
+                    false
+                }
+            });
     }
 }
 
@@ -237,8 +254,15 @@ mod tests {
         assert!(instances.start(2), "the second should start");
         assert_eq!(instances.count(), 2);
 
-        assert!(!instances.start(3), "the third is over the cap and must be refused");
-        assert_eq!(instances.count(), 2, "a refusal must not be recorded as running");
+        assert!(
+            !instances.start(3),
+            "the third is over the cap and must be refused"
+        );
+        assert_eq!(
+            instances.count(),
+            2,
+            "a refusal must not be recorded as running"
+        );
 
         // Asking again for one already running is not a second instance.
         assert!(instances.start(1), "an existing instance counts as running");
@@ -283,7 +307,10 @@ mod tests {
             }
             tokio::time::sleep(std::time::Duration::from_millis(20)).await;
         }
-        assert!(instances.send_input(4242, 0x0403).await, "the pipe should accept input");
+        assert!(
+            instances.send_input(4242, 0x0403).await,
+            "the pipe should accept input"
+        );
 
         let got = tokio::time::timeout(std::time::Duration::from_secs(5), reader)
             .await
@@ -299,7 +326,10 @@ mod tests {
 
         // Negative control: input for a character with no instance is refused rather than
         // silently swallowed, or a supervisor that started nothing would look like it was working.
-        assert!(!instances.send_input(9999, 0x1234).await, "no instance means no delivery");
+        assert!(
+            !instances.send_input(9999, 0x1234).await,
+            "no instance means no delivery"
+        );
 
         instances.stop(4242).await;
         assert!(!pipe.exists(), "stopping must not leave the pipe behind");
@@ -323,7 +353,11 @@ mod tests {
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
         instances.reap();
 
-        assert_eq!(instances.count(), 0, "an exited instance must not hold a slot");
+        assert_eq!(
+            instances.count(),
+            0,
+            "an exited instance must not hold a slot"
+        );
         assert!(instances.start(2), "and its capacity must be reusable");
     }
 }

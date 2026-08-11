@@ -30,14 +30,26 @@ pub enum ClientControl {
     /// Ask the server to mint a login ticket so the sidecar can open the browser.
     BeginLogin,
     /// Poll whether the browser half of the Discord flow has completed.
-    PollLogin { ticket: String },
+    PollLogin {
+        ticket: String,
+    },
     /// The player walked onto a different map; the server rescopes their snapshot feed.
-    EnterMap { map: MapId },
-    Chat { target: ChatTarget, text: String },
+    EnterMap {
+        map: MapId,
+    },
+    Chat {
+        target: ChatTarget,
+        text: String,
+    },
     /// Ask another player for a battle. They answer with `RespondToBattle`.
-    RequestBattle { target: PlayerId },
+    RequestBattle {
+        target: PlayerId,
+    },
     /// Answer an outstanding invitation.
-    RespondToBattle { from: PlayerId, accepted: bool },
+    RespondToBattle {
+        from: PlayerId,
+        accepted: bool,
+    },
     Goodbye,
     /// One slice of this character's save. Sent in pieces for the same reason as over the
     /// IPC link: the whole image is 128KB and nothing should sit in a single huge write.
@@ -45,7 +57,11 @@ pub enum ClientControl {
     ///
     /// Appended after Goodbye rather than inserted next to the other gameplay messages so
     /// the existing variant numbering does not shift under a client that has not updated.
-    SaveUpload { offset: u32, total: u32, bytes: Vec<u8> },
+    SaveUpload {
+        offset: u32,
+        total: u32,
+        bytes: Vec<u8>,
+    },
     /// Send this character's profile and stored save again, as they are now.
     ///
     /// The sidecar outlives the game deliberately -- that is what lets a restart skip the
@@ -60,7 +76,9 @@ pub enum ClientControl {
     /// handshake -- and this carries them verbatim. The server does not interpret them
     /// here; it knows who is battling whom and forwards. `BLOCK_BUFFER_SIZE` in the game
     /// is 256 bytes, which is the ceiling this must respect.
-    LinkBlock { bytes: Vec<u8> },
+    LinkBlock {
+        bytes: Vec<u8>,
+    },
     /// This player's battle is over.
     ///
     /// Without it the server only ever unseats someone when they disconnect, so blocks from
@@ -71,27 +89,46 @@ pub enum ClientControl {
     /// Appended so the existing variant numbering does not shift: bincode discriminants are
     /// positional, so inserting one anywhere else silently changes what every older client's
     /// messages decode as.
-    MoneyChanged { amount: u32 },
+    MoneyChanged {
+        amount: u32,
+    },
     /// This character now holds `quantity` of `item`, in `pocket`.
     ///
     /// Appended so the existing variant numbering does not shift.
-    ItemChanged { pocket: u8, item: u16, quantity: u16 },
+    ItemChanged {
+        pocket: u8,
+        item: u16,
+        quantity: u16,
+    },
     /// The whole party, as the game's own bytes.
     ///
     /// Appended so the existing variant numbering does not shift.
-    PartyChanged { count: u8, mons: Vec<u8> },
+    PartyChanged {
+        count: u8,
+        mons: Vec<u8>,
+    },
     /// One allowlisted region of SaveBlock1.
     ///
     /// Appended so the existing variant numbering does not shift.
-    RegionChanged { offset: u32, bytes: Vec<u8> },
+    RegionChanged {
+        offset: u32,
+        bytes: Vec<u8>,
+    },
     /// One chunk of a whole save block.
     ///
     /// Appended so the existing variant numbering does not shift.
-    BlockChunk { block: u8, offset: u32, total: u32, bytes: Vec<u8> },
+    BlockChunk {
+        block: u8,
+        offset: u32,
+        total: u32,
+        bytes: Vec<u8>,
+    },
     /// Key state for a run of consecutive frames.
     ///
     /// Appended so the existing variant numbering does not shift.
-    Keys { frames: Vec<u16> },
+    Keys {
+        frames: Vec<u16>,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -137,29 +174,59 @@ pub enum ServerControl {
         token: String,
     },
     /// No usable token. The player must visit `login_url` to finish the Discord flow.
-    AuthRequired { ticket: String, login_url: String },
+    AuthRequired {
+        ticket: String,
+        login_url: String,
+    },
     /// Response to `PollLogin` while the browser flow is still outstanding.
     LoginPending,
-    PlayerJoined { player_id: PlayerId, name: String, graphics_id: u8 },
-    PlayerLeft { player_id: PlayerId },
-    Chat { from: String, target: ChatTarget, text: String },
+    PlayerJoined {
+        player_id: PlayerId,
+        name: String,
+        graphics_id: u8,
+    },
+    PlayerLeft {
+        player_id: PlayerId,
+    },
+    Chat {
+        from: String,
+        target: ChatTarget,
+        text: String,
+    },
     /// Someone wants to battle you. Answer with `ClientControl::RespondToBattle`.
-    BattleInvitation { from: PlayerId, from_name: String },
+    BattleInvitation {
+        from: PlayerId,
+        from_name: String,
+    },
     /// The outcome of an invitation you sent.
-    BattleInvitationAnswered { from: PlayerId, from_name: String, accepted: bool },
+    BattleInvitationAnswered {
+        from: PlayerId,
+        from_name: String,
+        accepted: bool,
+    },
     /// An invitation could not be delivered -- they left, or are already busy.
-    BattleInvitationFailed { reason: String },
+    BattleInvitationFailed {
+        reason: String,
+    },
     /// Terminal error; the sidecar drops to offline and reports `reason` to the game.
-    Rejected { reason: String },
+    Rejected {
+        reason: String,
+    },
     /// This character signed in somewhere else and that connection now owns it. Distinct
     /// from `Rejected` because retrying cannot help and the token is perfectly good: the
     /// only correct response is for this client to stop.
     ///
     /// Appended rather than inserted so the existing variant numbering does not shift.
-    Superseded { reason: String },
+    Superseded {
+        reason: String,
+    },
     /// One slice of the character's stored save, sent at sign-in so the client plays the
     /// server's copy rather than whatever is on this machine.
-    SaveImage { offset: u32, total: u32, bytes: Vec<u8> },
+    SaveImage {
+        offset: u32,
+        total: u32,
+        bytes: Vec<u8>,
+    },
     /// Both players agreed to battle. Sent to each of them.
     ///
     /// `link_id` is this player's slot in the battle, and it is the server's job to assign
@@ -167,17 +234,26 @@ pub enum ServerControl {
     /// GetMultiplayerId, which on this port reads a register nothing ever writes and so
     /// returns 0 on both machines -- leaving both convinced they are the master. An
     /// externally assigned id is what makes exactly one of them right.
-    BattleStarting { opponent: PlayerId, opponent_name: String, link_id: u8 },
+    BattleStarting {
+        opponent: PlayerId,
+        opponent_name: String,
+        link_id: u8,
+    },
     /// The client is somewhere the server does not agree with, and this is where it really
     /// is. Sent only when a reported step was refused, so an honest client never sees one.
     ///
     /// Appended, like every variant after Rejected, so numbering never shifts.
-    Correction { pose: Pose },
+    Correction {
+        pose: Pose,
+    },
     /// One block of link-battle traffic from the player this one is battling.
     ///
     /// `from_slot` is the sender's link id, which is the index the game files the block
     /// under in gBlockRecvBuffer.
-    LinkBlock { from_slot: u8, bytes: Vec<u8> },
+    LinkBlock {
+        from_slot: u8,
+        bytes: Vec<u8>,
+    },
     /// The gameplay rates this server runs, sent at sign-in.
     ///
     /// Multipliers on the original game: 1.0 is Emerald exactly. The client applies them so

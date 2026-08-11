@@ -134,9 +134,7 @@ impl GameLink {
         tokio::spawn(async move {
             tokio::time::sleep(EXIT_GRACE).await;
             // Still nobody, and nobody has been here since: the game is not coming back.
-            if !attached.load(Ordering::SeqCst)
-                && seen.load(Ordering::SeqCst) == generation
-            {
+            if !attached.load(Ordering::SeqCst) && seen.load(Ordering::SeqCst) == generation {
                 tracing::info!("the game has gone; shutting down");
                 std::process::exit(0);
             }

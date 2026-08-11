@@ -14,8 +14,8 @@ mod db;
 mod http;
 mod instances;
 mod irc;
-mod rates;
 mod quic;
+mod rates;
 mod save_parse;
 mod world;
 
@@ -40,11 +40,10 @@ async fn main() -> anyhow::Result<()> {
 
     // Read before anything can serve a player, and fatal if it will not parse: running with
     // rates nobody chose, while believing otherwise, is worse than not starting.
-    let rates_path = std::env::var("POKEPLANET_RATES_FILE")
-        .unwrap_or_else(|_| "rates.conf".to_string());
-    let rates = Arc::new(
-        rates::Rates::load(std::path::Path::new(&rates_path)).context("loading rates")?,
-    );
+    let rates_path =
+        std::env::var("POKEPLANET_RATES_FILE").unwrap_or_else(|_| "rates.conf".to_string());
+    let rates =
+        Arc::new(rates::Rates::load(std::path::Path::new(&rates_path)).context("loading rates")?);
     let db = db::connect(&cfg.database_url).await?;
     // A missing table is not fatal: the server still refuses teleports, it just cannot
     // tell a wall from a path. Say so loudly rather than silently allowing it.
@@ -89,7 +88,7 @@ async fn main() -> anyhow::Result<()> {
             .user_agent("PokePlanet/0.1 (+https://github.com/obnoxiousmods/PokePlanet)")
             .timeout(std::time::Duration::from_secs(15))
             .build()?,
-            instances,
+        instances,
     });
 
     let endpoint = quic::endpoint(&cfg).context("binding the QUIC endpoint")?;
