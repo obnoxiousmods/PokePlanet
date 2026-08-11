@@ -632,10 +632,18 @@ async fn control_loop(
                 if let Some(reason) = new
                     .impossible()
                     .or_else(|| crate::save_parse::regressed(&old, &new))
+                    .or_else(|| crate::quest_flags::badge_regressed(&old, &new))
                     .or_else(|| allowance.check(&old, &new, &server.rates))
                 {
                     tracing::warn!(player = player_id, %reason, "refusing a reported block");
                     continue;
+                }
+                if let Some(id) = crate::quest_flags::monotonic_cleared(&old, &new) {
+                    tracing::warn!(
+                        player = player_id,
+                        flag = id,
+                        "a monotonic story flag was cleared (advisory, not yet enforced)"
+                    );
                 }
 
                 db::store_save(&server.db, character_id, &candidate).await?;
@@ -678,10 +686,20 @@ async fn control_loop(
                 if let Some(reason) = new
                     .impossible()
                     .or_else(|| crate::save_parse::regressed(&old, &new))
+                    .or_else(|| crate::quest_flags::badge_regressed(&old, &new))
                     .or_else(|| allowance.check(&old, &new, &server.rates))
                 {
                     tracing::warn!(player = player_id, %reason, "refusing a reported region");
                     continue;
+                }
+                // Advisory for now: a monotonic story flag going backwards is logged, not
+                // refused, until the derived set is proven quiet against real play.
+                if let Some(id) = crate::quest_flags::monotonic_cleared(&old, &new) {
+                    tracing::warn!(
+                        player = player_id,
+                        flag = id,
+                        "a monotonic story flag was cleared (advisory, not yet enforced)"
+                    );
                 }
 
                 db::store_save(&server.db, character_id, &candidate).await?;

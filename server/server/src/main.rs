@@ -14,6 +14,7 @@ mod db;
 mod http;
 mod instances;
 mod irc;
+mod quest_flags;
 mod quic;
 mod rates;
 mod save_parse;
