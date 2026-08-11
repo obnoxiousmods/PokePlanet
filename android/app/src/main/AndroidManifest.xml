@@ -7,7 +7,7 @@
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher"
-        android:label="Pokemon Emerald"
+        android:label="PokePlanet"
         android:theme="@style/AppTheme"
         android:hardwareAccelerated="true">
         <activity

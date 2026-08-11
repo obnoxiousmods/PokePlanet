@@ -1,4 +1,4 @@
-package com.pokeemerald.experimental;
+package ca.obby.pokeplanet;
 
 import android.content.Context;
 import android.graphics.Canvas;

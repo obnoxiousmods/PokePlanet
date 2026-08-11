@@ -30,7 +30,13 @@ fn open_platform(url: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[cfg(not(windows))]
+#[cfg(target_os = "macos")]
+fn open_platform(url: &str) -> anyhow::Result<()> {
+    std::process::Command::new("open").arg(url).spawn()?;
+    Ok(())
+}
+
+#[cfg(all(not(windows), not(target_os = "macos")))]
 fn open_platform(url: &str) -> anyhow::Result<()> {
     std::process::Command::new("xdg-open").arg(url).spawn()?;
     Ok(())

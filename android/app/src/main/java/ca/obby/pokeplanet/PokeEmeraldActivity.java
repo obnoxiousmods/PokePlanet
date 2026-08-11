@@ -1,4 +1,4 @@
-package com.pokeemerald.experimental;
+package ca.obby.pokeplanet;
 
 import android.graphics.Rect;
 import android.os.Bundle;

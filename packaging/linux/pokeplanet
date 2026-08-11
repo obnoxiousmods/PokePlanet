@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+set -euo pipefail
+here=$(cd "$(dirname "$0")" && pwd)
+export PATH="$here:$PATH"
+export LD_LIBRARY_PATH="$here/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+cd "$here"
+exec "$here/pokeplanet-bin" "$@"
