@@ -1594,6 +1594,14 @@ void CB2_NewGame(void)
                            WARP_ID_NONE, MMO_SPAWN_X, MMO_SPAWN_Y);
         WarpIntoMap();
         gFieldCallback = NULL;
+
+        // Hide the moving trucks. They belong to the arrival cutscene, which is skipped here --
+        // and the scripts that would have hidden them (StepOffTruckMale/Female in Littleroot's
+        // scripts) are skipped with it, so without this both trucks sit in the town forever. A
+        // PokePlanet character did not just move to Hoenn, so neither truck should be there at
+        // all; set both, not just the player's, since the whole arrival is gone.
+        FlagSet(FLAG_HIDE_LITTLEROOT_TOWN_BRENDANS_HOUSE_TRUCK);
+        FlagSet(FLAG_HIDE_LITTLEROOT_TOWN_MAYS_HOUSE_TRUCK);
     }
     DoMapLoadLoop(&gMain.state);
     SetFieldVBlankCallback();

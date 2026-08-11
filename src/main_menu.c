@@ -819,6 +819,15 @@ static void Task_PokePlanetConnect(u8 taskId)
             ReloadSave();
             gSaveFileStatus = SAVE_STATUS_OK;
 
+            // Hide Littleroot's arrival trucks for a returning character too. The new-game
+            // path hides them when it skips the intro, but an existing save that predates
+            // that -- or was made before this fix -- still has the flags clear, so the
+            // trucks reappear every time it loads. These flags are monotonic (a truck is
+            // never un-hidden in normal play), so setting them on every continue is safe and
+            // heals an already-affected save the next time it signs in.
+            FlagSet(FLAG_HIDE_LITTLEROOT_TOWN_BRENDANS_HOUSE_TRUCK);
+            FlagSet(FLAG_HIDE_LITTLEROOT_TOWN_MAYS_HOUSE_TRUCK);
+
             // Take the position from the server rather than from inside the save image.
             // Both describe where this character stands and nothing keeps them in step, so
             // one of them has to win; the server is the one everyone else agrees with, and
