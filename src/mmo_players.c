@@ -14,6 +14,7 @@
 #include "mmo_colour.h"
 #include "mmo_battle.h"
 #include "mmo_chat.h"
+#include "mmo_nameplates.h"
 #include "mmo_players.h"
 #include "mmo_text.h"
 #include "link.h"
@@ -106,6 +107,8 @@ static void DespawnSlot(u8 slot)
     }
     sSlots[slot].playerId = 0;
     sSlots[slot].spawned = FALSE;
+    // The name tag followed this object; tear it down with the object, not after.
+    MmoNameplates_Clear(slot);
 }
 
 // Drop every remote player. Used on a map change, when the engine has already torn down
@@ -118,6 +121,9 @@ void MmoPlayers_Reset(void)
         sSlots[i].playerId = 0;
         sSlots[i].spawned = FALSE;
     }
+    // The name-tag sprites went with the map's object events; forget them without touching what
+    // replaced them.
+    MmoNameplates_Reset();
 }
 
 static void ReportSelf(void)
@@ -583,6 +589,17 @@ void MmoPlayers_Update(void)
         memcpy(sSlotNames[slot], remote->name, NET_NAME_LEN);
         sSlotNames[slot][NET_NAME_LEN - 1] = '\0';
         ApplyRemote(slot, remote);
+
+        // Keep this player's floating name tag on their sprite. ApplyRemote may not have a sprite
+        // yet (no free object-event slot this frame), in which case there is nothing to tag.
+        {
+            struct ObjectEvent *object = sSlots[slot].spawned ? FindSlotObject(slot) : NULL;
+
+            if (object != NULL)
+                MmoNameplates_Set(slot, (u8)(object - gObjectEvents), sSlotNames[slot]);
+            else
+                MmoNameplates_Clear(slot);
+        }
     }
 
     // Anyone absent from this snapshot has left the map or disconnected.
