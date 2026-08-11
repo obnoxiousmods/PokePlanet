@@ -7,6 +7,7 @@
 #include "battle_interface.h"
 #include "battle_main.h"
 #include "mmo_autosave.h"
+#include "mmo_chat.h"
 #include "battle_message.h"
 #include "battle_pyramid.h"
 #include "battle_scripts.h"
@@ -1868,6 +1869,15 @@ void BattleMainCB2(void)
     // field, and a quit from the summary screen threw the battle away. Reporting only reads
     // memory and enqueues; it writes no save, so it is safe here.
     MmoAutosave_Report();
+
+    // Chat, for the same reason and with the same fix.
+    //
+    // MmoChat_Update was reached only from OverworldBasic, so opening the composer, typing and
+    // sending all quietly stopped working the moment a battle started -- and a battle is exactly
+    // when players most want to talk, to the person they are fighting. It runs on the same
+    // once-per-frame footing here as it does in the field, so Enter opens it and Enter sends,
+    // identically in both places.
+    MmoChat_Update();
 
     AnimateSprites();
     BuildOamBuffer();
