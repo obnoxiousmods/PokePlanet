@@ -189,9 +189,40 @@ async fn run_login_flow(
     )
     .await?;
 
-    while let Some(frame) = read_frame(&mut recv).await? {
+    // Two bounds on an unauthenticated connection, so it cannot be used to hammer the database
+    // or to sit open forever. Neither touches an honest login: a real client polls every couple
+    // of seconds while the user finishes the browser step, which can legitimately take minutes.
+    //
+    //   - PollLogin hits the database (a claim_ticket UPDATE) only once a second at most; a poll
+    //     arriving sooner is answered "pending" without a query. Honest polling is slower than
+    //     this; wire-speed spam is absorbed for free.
+    //   - The whole pre-auth phase is given a generous deadline. A connection that has neither
+    //     authenticated nor said goodbye by then is dropped, so an abandoned or malicious one
+    //     does not linger.
+    let pre_auth_deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(600);
+    let mut last_poll: Option<tokio::time::Instant> = None;
+
+    loop {
+        let frame = match tokio::time::timeout_at(pre_auth_deadline, read_frame(&mut recv)).await {
+            Ok(f) => f?,
+            Err(_) => {
+                tracing::info!("dropping a connection that never signed in");
+                return Ok(());
+            }
+        };
+        let Some(frame) = frame else { break };
+
         match quic::decode::<ClientControl>(&frame)? {
             ClientControl::PollLogin { ticket } => {
+                let now = tokio::time::Instant::now();
+                if last_poll
+                    .is_some_and(|t| now.duration_since(t) < std::time::Duration::from_secs(1))
+                {
+                    // Too soon: answer without touching the database.
+                    write_frame(&mut send, &ServerControl::LoginPending).await?;
+                    continue;
+                }
+                last_poll = Some(now);
                 match db::claim_ticket(&server.db, &ticket).await? {
                     Some(token) => {
                         let Some(character) = db::character_for_token(&server.db, &token).await?
