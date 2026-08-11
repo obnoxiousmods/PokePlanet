@@ -1486,6 +1486,18 @@ void SetCloseLinkCallback(void)
     {
         Rfu_SetCloseLinkCallback();
     }
+    else if (!sLinkOpen)
+    {
+        // On this PC port the serial link is never opened, so LinkMain2 returns immediately and the
+        // machinery that pumps gLinkCallback (LinkCB_ReadyCloseLink -> LinkCB_WaitCloseLink ->
+        // CloseLink) never runs. CloseLink is what clears gReceivedRemoteLinkPlayers on hardware,
+        // and SetLinkBattleEndCallbacks busy-waits on that flag reaching 0 to end an (emulated) link
+        // battle -- so without this, every PvP battle ends with both clients frozen on a black
+        // screen. There is nothing asynchronous to drain here, so close synchronously: clear the
+        // flag the end-of-battle wait keys off and drop the callback the port never services.
+        gReceivedRemoteLinkPlayers = FALSE;
+        gLinkCallback = NULL;
+    }
     else
     {
         if (gLinkCallback != NULL)
