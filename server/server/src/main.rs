@@ -11,6 +11,7 @@ mod auth;
 mod collision;
 mod config;
 mod db;
+mod economy;
 mod http;
 mod instances;
 mod irc;
