@@ -1,5 +1,6 @@
 #include "global.h"
 #include "net_client.h"
+#include "mmo_deadman.h"
 #include "battle.h"
 #include "battle_message.h"
 #include "battle_anim.h"
@@ -3410,6 +3411,29 @@ static void Cmd_getexp(void)
                     else
                     {
                         i = STRINGID_EMPTYSTRING4;
+                    }
+
+                    // Deadman Mode: a party mon may not pass the badge level cap. Clamp the exp it
+                    // is about to gain so it stops exactly at the cap and never appears above it --
+                    // the server would refuse an over-cap party and the two would desync.
+                    if (MmoDeadman_IsActive())
+                    {
+                        struct Pokemon *expMon = &gPlayerParty[gBattleStruct->expGetterMonId];
+                        u8 cap = MmoDeadman_LevelCap();
+
+                        if (GetMonData(expMon, MON_DATA_LEVEL) >= cap)
+                        {
+                            gBattleMoveDamage = 0;
+                        }
+                        else
+                        {
+                            u16 species = GetMonData(expMon, MON_DATA_SPECIES);
+                            u32 currExp = GetMonData(expMon, MON_DATA_EXP);
+                            u32 capExp = gExperienceTables[gSpeciesInfo[species].growthRate][cap];
+
+                            if (currExp + gBattleMoveDamage > capExp)
+                                gBattleMoveDamage = capExp - currExp;
+                        }
                     }
 
                     // get exp getter battler
