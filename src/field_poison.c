@@ -7,6 +7,7 @@
 #include "field_poison.h"
 #include "fldeff_misc.h"
 #include "frontier_util.h"
+#include "mmo_deadman.h"
 #include "party_menu.h"
 #include "pokenav.h"
 #include "script.h"
@@ -86,6 +87,10 @@ static void Task_TryFieldPoisonWhiteOut(u8 taskId)
             tState--;
         break;
     case 2:
+        // Deadman Mode: a field-poison faint is a real death. Bury the dead (outside a Center)
+        // before deciding the whiteout, so a partial faint doesn't leave a corpse in the party to
+        // be revived at the next heal. Burial compacts the party, so AllMonsFainted() reads right.
+        MmoDeadman_OnBattleEnd();
         if (AllMonsFainted())
         {
             // Battle facilities have their own white out script to handle the challenge loss

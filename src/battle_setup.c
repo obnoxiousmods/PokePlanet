@@ -624,6 +624,10 @@ static void CB2_EndScriptedWildBattle(void)
     CpuFill16(0, (void *)(BG_PLTT), BG_PLTT_SIZE);
     ResetOamRange(0, 128);
 
+    // Deadman Mode: a scripted/legendary encounter is no less deadly than a wild one -- bury
+    // whatever fainted before any whiteout heal can revive it.
+    MmoDeadman_OnBattleEnd();
+
     if (IsPlayerDefeated(gBattleOutcome) == TRUE)
     {
         if (CurrentBattlePyramidLocation() != PYRAMID_LOCATION_NONE)
@@ -1357,6 +1361,9 @@ static void CB2_EndTrainerBattle(void)
 
 static void CB2_EndRematchBattle(void)
 {
+    // Deadman Mode: a rematch can kill just like any trainer battle -- bury the fallen first.
+    MmoDeadman_OnBattleEnd();
+
     if (gTrainerBattleOpponent_A == TRAINER_SECRET_BASE)
     {
         SetMainCallback2(CB2_ReturnToFieldContinueScriptPlayMapMusic);

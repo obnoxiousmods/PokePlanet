@@ -361,8 +361,13 @@ static void (*const sMovementStatusHandler[])(struct LinkPlayerObjectEvent *, st
 // code
 void DoWhiteOut(void)
 {
-    // Deadman Mode: if nothing is left alive anywhere, this is not a trip to the Pokemon Center --
-    // the run is over. The server wipes the character; restart the game to load the fresh one.
+    // Deadman Mode: bury anyone who died on the way here -- a field-poison faint outside a battle
+    // never went through a battle-end handler, so without this the HealPlayerParty below would
+    // revive a Pokemon that should be dead. Buries only outside a Center (guarded internally).
+    MmoDeadman_OnBattleEnd();
+
+    // If nothing is left alive anywhere, this is not a trip to the Pokemon Center -- the run is
+    // over. The server wipes the character; restart the game to load the fresh one.
     if (MmoDeadman_TryHardReset())
     {
         DoSoftReset();

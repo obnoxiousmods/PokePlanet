@@ -129,9 +129,21 @@ static void CB2_ReturnFromMmoBattle(void)
     // battle's result instead of restoring the snapshot, and bury the fallen. A Deadman battle inside
     // a Pokemon Center is safe and still costs nothing, and Normal-mode PvP is unchanged.
     if (MmoDeadman_IsActive() && !MmoDeadman_InSafezone())
+    {
         MmoDeadman_OnBattleEnd();
+        // Losing your last living Pokemon to another player is the end of the run just as surely as
+        // a whiteout is. The battle-return path never passes through DoWhiteOut, so check here:
+        // nothing alive anywhere means the server wipes the character and the game restarts fresh.
+        if (MmoDeadman_TryHardReset())
+        {
+            DoSoftReset();
+            return;
+        }
+    }
     else
+    {
         LoadPlayerParty();
+    }
     SavePlayerBag();
 
     // Return to the overworld through the local, non-link path -- not

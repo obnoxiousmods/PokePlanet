@@ -39,6 +39,7 @@
 #include "menu_helpers.h"
 #include "menu_specialized.h"
 #include "metatile_behavior.h"
+#include "mmo_deadman.h"
 #include "overworld.h"
 #include "palette.h"
 #include "party_menu.h"
@@ -4959,8 +4960,11 @@ void ItemUseCB_RareCandy(u8 taskId, TaskFunc task)
     s16 *arrayPtr = ptr->data;
     u16 *itemPtr = &gSpecialVar_ItemId;
     bool8 cannotUseEffect;
+    u8 level = GetMonData(mon, MON_DATA_LEVEL);
 
-    if (GetMonData(mon, MON_DATA_LEVEL) != MAX_LEVEL)
+    // Deadman Mode: Rare Candy cannot push a mon past the badge level cap. Without this the client
+    // would level a mon the server then refuses, dropping the whole party report and desyncing.
+    if (level != MAX_LEVEL && !(MmoDeadman_IsActive() && level >= MmoDeadman_LevelCap()))
     {
         BufferMonStatsToTaskData(mon, arrayPtr);
         cannotUseEffect = ExecuteTableBasedItemEffect_(gPartyMenu.slotId, *itemPtr, 0);
