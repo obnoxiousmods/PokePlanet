@@ -30,7 +30,7 @@ const MAX_LINK_BLOCK: usize = 256;
 pub struct Server {
     pub cfg: Arc<Config>,
     /// The gameplay rates this server publishes. See rates.rs.
-    pub rates: Arc<crate::rates::Rates>,
+    pub rates: Arc<crate::rates::ModeRates>,
     pub db: Db,
     pub world: SharedWorld,
     pub http: reqwest::Client,
@@ -344,15 +344,17 @@ async fn run_session(
     // a fraction of the slices reaching the game, so enabling it would trade a working
     // connection for a save that never arrives. Uploading is unaffected and stays on: the
     // server is already collecting saves, which is what the rest of this needs.
+    // The rates for this character's world (Deadman runs a harsher set than Normal).
+    let rates = server.rates.for_mode(&character.mode);
     write_frame(
         &mut send,
         &ServerControl::Rates {
-            experience: server.rates.experience,
-            encounter: server.rates.encounter,
-            money: server.rates.money,
-            items: server.rates.items,
-            catch: server.rates.catch,
-            shop_price: server.rates.shop_price,
+            experience: rates.experience,
+            encounter: rates.encounter,
+            money: rates.money,
+            items: rates.items,
+            catch: rates.catch,
+            shop_price: rates.shop_price,
         },
     )
     .await?;
@@ -436,6 +438,7 @@ async fn run_session(
         &name,
         &irc_handle,
         character.id,
+        &character.mode,
         &session_token,
     )
     .await;
@@ -535,6 +538,7 @@ async fn control_loop(
     name: &str,
     irc_handle: &str,
     character_id: i64,
+    mode: &str,
     session_token: &str,
 ) -> anyhow::Result<()> {
     // Save slices are reassembled here, per connection.
@@ -543,7 +547,7 @@ async fn control_loop(
     // Replaces a bare "time since the last report" timestamp. That granted a fresh minimum
     // allowance per report, so a client that reported ten times a second collected ten times the
     // headroom -- the ceiling measured how often the client spoke rather than how fast it gained.
-    let mut allowance = crate::rates::Allowance::new(&server.rates);
+    let mut allowance = crate::rates::Allowance::new(server.rates.for_mode(mode));
     // Paces the operations that each cost a full 128KB save load/rebuild/store or a fresh copy
     // handed back, so a client cannot amplify a tiny frame into thousands of save round-trips a
     // second. Cheap messages (keys, chat, battle) are not gated by it. See RequestBudget.
@@ -819,7 +823,7 @@ async fn control_loop(
                     .impossible()
                     .or_else(|| crate::save_parse::regressed(&old, &new))
                     .or_else(|| crate::quest_flags::badge_regressed(&old, &new))
-                    .or_else(|| allowance.check(&old, &new, &server.rates))
+                    .or_else(|| allowance.check(&old, &new, server.rates.for_mode(mode)))
                 {
                     tracing::warn!(player = player_id, %reason, "refusing a reported block");
                     continue;
@@ -873,7 +877,7 @@ async fn control_loop(
                     .impossible()
                     .or_else(|| crate::save_parse::regressed(&old, &new))
                     .or_else(|| crate::quest_flags::badge_regressed(&old, &new))
-                    .or_else(|| allowance.check(&old, &new, &server.rates))
+                    .or_else(|| allowance.check(&old, &new, server.rates.for_mode(mode)))
                 {
                     tracing::warn!(player = player_id, %reason, "refusing a reported region");
                     continue;
@@ -946,7 +950,7 @@ async fn control_loop(
                 if let Some(reason) = new
                     .impossible()
                     .or_else(|| crate::save_parse::regressed(&old, &new))
-                    .or_else(|| allowance.check(&old, &new, &server.rates))
+                    .or_else(|| allowance.check(&old, &new, server.rates.for_mode(mode)))
                 {
                     tracing::warn!(player = player_id, %reason, "refusing a reported party");
                     continue;
@@ -1089,7 +1093,7 @@ async fn control_loop(
                 if let Some(reason) = new
                     .impossible()
                     .or_else(|| crate::save_parse::regressed(&old, &new))
-                    .or_else(|| allowance.check(&old, &new, &server.rates))
+                    .or_else(|| allowance.check(&old, &new, server.rates.for_mode(mode)))
                 {
                     tracing::warn!(player = player_id, %reason, "refusing reported money");
                     continue;
@@ -1237,17 +1241,18 @@ async fn control_loop(
                 // cannot deliver -- so a game attaching later would play on the original
                 // game's rates while the server ran on different ones, and nothing would look
                 // wrong until somebody compared the numbers.
+                let rates = server.rates.for_mode(mode);
                 server
                     .world
                     .tell(
                         player_id,
                         ServerControl::Rates {
-                            experience: server.rates.experience,
-                            encounter: server.rates.encounter,
-                            money: server.rates.money,
-                            items: server.rates.items,
-                            catch: server.rates.catch,
-                            shop_price: server.rates.shop_price,
+                            experience: rates.experience,
+                            encounter: rates.encounter,
+                            money: rates.money,
+                            items: rates.items,
+                            catch: rates.catch,
+                            shop_price: rates.shop_price,
                         },
                     )
                     .await;

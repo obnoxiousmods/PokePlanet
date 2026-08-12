@@ -262,9 +262,7 @@ pub struct Character {
     pub id: i64,
     pub account_id: i64,
     /// Which world this character belongs to: "normal" or "deadman". An account holds at most one
-    /// of each; the mode is chosen at connect and decides which ruleset/economy applies.
-    #[allow(dead_code)]
-    // read once the connect-time mode-select and per-mode rates land (Phase A step 2)
+    /// of each; the mode is chosen at connect and decides which ruleset/economy (rates) applies.
     pub mode: String,
     pub name: String,
     pub graphics_id: u8,

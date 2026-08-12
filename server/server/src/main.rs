@@ -44,8 +44,17 @@ async fn main() -> anyhow::Result<()> {
     // rates nobody chose, while believing otherwise, is worse than not starting.
     let rates_path =
         std::env::var("POKEPLANET_RATES_FILE").unwrap_or_else(|_| "rates.conf".to_string());
-    let rates =
-        Arc::new(rates::Rates::load(std::path::Path::new(&rates_path)).context("loading rates")?);
+    let normal = rates::Rates::load(std::path::Path::new(&rates_path)).context("loading rates")?;
+    // The deadman world's rates. If no file is present the deadman world just runs the normal
+    // rates, so a server has to opt into the harsher economy rather than get it by surprise.
+    let deadman_path = std::env::var("POKEPLANET_RATES_DEADMAN_FILE")
+        .unwrap_or_else(|_| "rates.deadman.conf".to_string());
+    let deadman = if std::path::Path::new(&deadman_path).exists() {
+        rates::Rates::load(std::path::Path::new(&deadman_path)).context("loading deadman rates")?
+    } else {
+        normal.clone()
+    };
+    let rates = Arc::new(rates::ModeRates { normal, deadman });
     let db = db::connect(&cfg.database_url).await?;
     // A missing table is not fatal: the server still refuses teleports, it just cannot
     // tell a wall from a path. Say so loudly rather than silently allowing it.

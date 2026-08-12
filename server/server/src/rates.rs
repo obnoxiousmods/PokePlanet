@@ -158,6 +158,27 @@ impl Rates {
     }
 }
 
+/// The rate sets for each world.
+///
+/// Deadman runs a deliberately harsher economy than Normal -- lower experience, a low catch rate,
+/// scarce money -- so each mode gets its own `Rates`, and a character's mode picks which applies.
+/// A server that has not written a deadman config simply runs the normal rates in both worlds.
+pub struct ModeRates {
+    pub normal: Rates,
+    pub deadman: Rates,
+}
+
+impl ModeRates {
+    /// The rates for a character's mode. An unrecognised mode falls back to the normal set, so a
+    /// bad value can never hand out unbounded gains.
+    pub fn for_mode(&self, mode: &str) -> &Rates {
+        match mode {
+            "deadman" => &self.deadman,
+            _ => &self.normal,
+        }
+    }
+}
+
 /// The most money the game can hand a player in a second, before the server's rate.
 ///
 /// Deliberately far above anything real play produces. The job is catching a client that
