@@ -19,6 +19,7 @@
 #include "link.h"
 #include "load_save.h"
 #include "main.h"
+#include "money.h"
 #include "mmo_battle.h"
 #include "mmo_deadman.h"
 #include "mmo_link.h"
@@ -131,6 +132,11 @@ static void CB2_ReturnFromMmoBattle(void)
     if (MmoDeadman_IsActive() && !MmoDeadman_InSafezone())
     {
         MmoDeadman_OnBattleEnd();
+        // The loser of a Deadman PvP fight drops everything they were carrying: their pokedollars
+        // are forfeit. Money banked at a PC is untouched -- that is what the bank protects against.
+        // The server accepts money going down like any other spend; a win costs nothing.
+        if (gBattleOutcome == B_OUTCOME_LOST)
+            SetMoney(&gSaveBlock1Ptr->money, 0);
         // Losing your last living Pokemon to another player is the end of the run just as surely as
         // a whiteout is. The battle-return path never passes through DoWhiteOut, so check here:
         // nothing alive anywhere means the server wipes the character and the game restarts fresh.
