@@ -841,6 +841,19 @@ async fn control_loop(
                         tracing::warn!(player = player_id, %reason, "refusing a reported box");
                         continue;
                     }
+                    // Deadman Mode: the graveyard box is read-only. Refuse a storage report that has
+                    // removed any corpse -- a dead Pokemon cannot be brought back into play. Compared
+                    // against the block as it was stored (before this report's splice).
+                    if mode == "deadman" {
+                        if let Some(old_block) = crate::save_parse::read_block(&stored, sectors) {
+                            if let Some(reason) =
+                                crate::save_parse::graveyard_regressed(&old_block, &assembled)
+                            {
+                                tracing::warn!(player = player_id, %reason, "refusing a deadman box");
+                                continue;
+                            }
+                        }
+                    }
                 }
 
                 if let Some(reason) = new

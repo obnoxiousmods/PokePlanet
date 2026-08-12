@@ -378,6 +378,48 @@ pub fn boxes_impossible(storage_block: &[u8]) -> Option<String> {
     None
 }
 
+/// Slots per PC box.
+const IN_BOX_COUNT: usize = 30;
+/// The last box is the Deadman graveyard: the dead are laid here and never leave. Must match the
+/// client's MMO_GRAVEYARD_BOX (TOTAL_BOXES_COUNT - 1).
+const GRAVEYARD_BOX: usize = 13;
+
+/// The personalities of the Pokemon lying in the graveyard box. A corpse is any decodable slot
+/// there; a Pokemon's personality is immutable and effectively unique, so it identifies each one.
+fn graveyard_personalities(storage_block: &[u8]) -> std::collections::HashSet<u32> {
+    let mut set = std::collections::HashSet::new();
+    let first = GRAVEYARD_BOX * IN_BOX_COUNT;
+    for i in first..first + IN_BOX_COUNT {
+        let at = BOXES_OFFSET + i * BOX_MON_SIZE;
+        let Some(slot) = storage_block.get(at..at + BOX_MON_SIZE) else {
+            break;
+        };
+        // Occupied (decodable, species != 0) slots only; an empty slot has no corpse.
+        if read_box_mon(slot).is_some() {
+            if let Some(p) = slot
+                .get(0..4)
+                .and_then(|b| b.try_into().ok())
+                .map(u32::from_le_bytes)
+            {
+                set.insert(p);
+            }
+        }
+    }
+    set
+}
+
+/// Deadman Mode: the graveyard box is read-only. A Pokemon laid to rest there can never leave, so
+/// a storage report that has lost any corpse present before is a revived dead Pokemon and is
+/// refused. Only meaningful for a Deadman character; the caller gates it on the mode.
+pub fn graveyard_regressed(old_block: &[u8], new_block: &[u8]) -> Option<String> {
+    let before = graveyard_personalities(old_block);
+    let after = graveyard_personalities(new_block);
+    before
+        .iter()
+        .find(|p| !after.contains(p))
+        .map(|p| format!("a Pokemon left the graveyard (personality {p}); the dead do not return"))
+}
+
 /// What the server takes from a save image.
 ///
 /// Flags and vars are kept as the game's own bitfield and array rather than interpreted.
@@ -2158,6 +2200,62 @@ mod tests {
         assert!(
             boxes_impossible(&cheat_exp).is_some(),
             "experience over the maximum in a box must be refused"
+        );
+    }
+
+    /// The graveyard box is read-only: a corpse can be laid to rest but never taken out, and only
+    /// the graveyard box is protected -- an ordinary box moves freely.
+    #[test]
+    fn the_graveyard_box_is_read_only() {
+        fn put_corpse(block: &mut [u8], slot_index: usize, personality: u32) {
+            let ot_id: u32 = 0x9abc_def0;
+            let key = personality ^ ot_id;
+            let at = BOXES_OFFSET + slot_index * BOX_MON_SIZE;
+            let mon = &mut block[at..at + BOX_MON_SIZE];
+            mon[0..4].copy_from_slice(&personality.to_le_bytes());
+            mon[4..8].copy_from_slice(&ot_id.to_le_bytes());
+            let order = SUBSTRUCT_ORDER[(personality % 24) as usize];
+            let mut plain = [0u8; 48];
+            let growth = order[0] * 12;
+            plain[growth..growth + 2].copy_from_slice(&1u16.to_le_bytes()); // species != 0
+            let checksum: u16 = plain.chunks_exact(2).fold(0u16, |a, c| {
+                a.wrapping_add(u16::from_le_bytes([c[0], c[1]]))
+            });
+            mon[BOX_OFFSET_CHECKSUM..BOX_OFFSET_CHECKSUM + 2]
+                .copy_from_slice(&checksum.to_le_bytes());
+            for (i, chunk) in plain.chunks_exact(4).enumerate() {
+                let word = u32::from_le_bytes(chunk.try_into().unwrap()) ^ key;
+                mon[BOX_OFFSET_SECURE + i * 4..BOX_OFFSET_SECURE + i * 4 + 4]
+                    .copy_from_slice(&word.to_le_bytes());
+            }
+        }
+
+        let full = BOXES_OFFSET + BOX_MON_COUNT * BOX_MON_SIZE;
+        let grave_slot = GRAVEYARD_BOX * IN_BOX_COUNT; // the first slot of the graveyard box
+
+        let mut with_corpse = vec![0u8; full];
+        put_corpse(&mut with_corpse, grave_slot, 0xDEAD_0001);
+        let empty = vec![0u8; full];
+
+        assert!(
+            graveyard_regressed(&with_corpse, &empty).is_some(),
+            "a corpse leaving the graveyard is a revived dead Pokemon and must be refused"
+        );
+        assert!(
+            graveyard_regressed(&with_corpse, &with_corpse).is_none(),
+            "an unchanged graveyard is not a regression"
+        );
+        assert!(
+            graveyard_regressed(&empty, &with_corpse).is_none(),
+            "laying a new corpse to rest (append) is allowed"
+        );
+
+        // A mon leaving an ordinary box is none of the graveyard's business.
+        let mut normal_box = vec![0u8; full];
+        put_corpse(&mut normal_box, 0, 0xBEEF_0002);
+        assert!(
+            graveyard_regressed(&normal_box, &empty).is_none(),
+            "only the graveyard box is read-only"
         );
     }
 
