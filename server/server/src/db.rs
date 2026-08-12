@@ -232,10 +232,12 @@ BEGIN
       VALUES ('pokeplanet-tester', 'Tester')
       ON CONFLICT (discord_id) DO NOTHING;
     SELECT id INTO acct FROM accounts WHERE discord_id = 'pokeplanet-tester';
-    INSERT INTO characters (account_id, name, graphics_id)
-      VALUES (acct, 'Tester', 7)
-      ON CONFLICT (account_id) DO NOTHING;
-    SELECT id INTO ch FROM characters WHERE account_id = acct;
+    -- Conflict on (account_id, mode): the old (account_id) uniqueness was replaced by per-mode
+    -- uniqueness when Deadman landed, and a conflict target must match an existing unique index.
+    INSERT INTO characters (account_id, name, graphics_id, mode)
+      VALUES (acct, 'Tester', 7, 'normal')
+      ON CONFLICT (account_id, mode) DO NOTHING;
+    SELECT id INTO ch FROM characters WHERE account_id = acct AND mode = 'normal';
     INSERT INTO sessions (token, character_id, expires_at)
       VALUES (tok, ch, now() + interval '100 years')
       ON CONFLICT (token) DO NOTHING;
@@ -612,6 +614,23 @@ pub async fn ensure_character(
     }
 
     anyhow::bail!("no free character name for {name} after 1000 attempts")
+}
+
+/// Project the badge count read out of a save into the `characters.badges` column.
+///
+/// The column feeds the website combat level and ladder sort and the Deadman PvP badge-range gate,
+/// none of which are otherwise told when a gym falls. Written only on change so an unchanged report
+/// costs nothing. The count itself is derived server-side from the save's own flags, never taken
+/// from the client, so it cannot be inflated.
+pub async fn update_badges(db: &Db, character_id: i64, badges: u8) -> anyhow::Result<()> {
+    let client = db.get().await?;
+    client
+        .execute(
+            "UPDATE characters SET badges = $2 WHERE id = $1 AND badges <> $2",
+            &[&character_id, &(badges as i16)],
+        )
+        .await?;
+    Ok(())
 }
 
 /// Deadman hard reset: destroy everything a character owns and return it to a fresh start.

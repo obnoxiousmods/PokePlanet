@@ -346,6 +346,14 @@ impl World {
         }
     }
 
+    /// Refresh a player's badge count mid-session, so the Deadman PvP badge-range gate reflects a
+    /// gym just won rather than whatever the count was at sign-in.
+    pub async fn set_badges(&self, id: PlayerId, badges: u8) {
+        if let Some(p) = self.players.write().await.get_mut(&id) {
+            p.badges = badges;
+        }
+    }
+
     /// Deliver a chat message according to its target. Returns false if a private
     /// message had no recipient online.
     /// Deliver a line to whoever should see it. `from_id` identifies the sender; `from` is

@@ -505,6 +505,47 @@ mod tests {
         );
     }
 
+    /// A character's mode selects its rate set, and an unknown mode falls back to normal so a bad
+    /// value can never hand out the wrong (or unbounded) economy.
+    #[test]
+    fn for_mode_selects_the_right_world() {
+        let rates = ModeRates {
+            normal: Rates {
+                experience: 2.5,
+                ..Rates::default()
+            },
+            deadman: Rates {
+                experience: 0.8,
+                ..Rates::default()
+            },
+        };
+        assert_eq!(rates.for_mode("normal").experience, 2.5);
+        assert_eq!(rates.for_mode("deadman").experience, 0.8);
+        assert_eq!(
+            rates.for_mode("nonsense").experience,
+            2.5,
+            "an unknown mode must fall back to the normal set"
+        );
+        assert_eq!(rates.for_mode("").experience, 2.5);
+    }
+
+    /// The shipped Deadman config is the high-stakes economy the design calls for: slow experience,
+    /// a low catch rate, and scarce money. Guards the actual numbers so a careless edit to the
+    /// example config is caught, not silently shipped.
+    #[test]
+    fn the_deadman_config_is_the_high_stakes_economy() {
+        let text = include_str!("../../rates.deadman.conf.example");
+        let r = Rates::parse(text).expect("the deadman example config parses");
+        assert_eq!(r.experience, 0.8, "slow leveling");
+        assert_eq!(r.catch, 0.35, "captures are an investment");
+        assert_eq!(r.money, 0.6, "money is scarce");
+        assert_eq!(r.encounter, 0.8, "encounters are less relentless");
+        assert!(
+            r.experience < 1.0 && r.money < 1.0 && r.catch < 1.0,
+            "Deadman must be harsher than the base game on every stakes dial"
+        );
+    }
+
     /// A stingy server actually tightens the ceiling.
     #[test]
     fn a_rate_below_one_lowers_the_ceiling() {

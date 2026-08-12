@@ -556,6 +556,23 @@ fn is_heavy_control(control: &ClientControl) -> bool {
 }
 
 #[allow(clippy::too_many_arguments)]
+/// Persist the badge count a save implies into the `characters.badges` column and refresh the
+/// player's live presence. The count is derived from the save's own flags (server-side, never the
+/// client's word), so it drives the combat level, the ladder sort, and the Deadman PvP badge-range
+/// gate from the authoritative source. Called after any accepted report that could carry a gym win.
+async fn project_badges(
+    server: &Arc<Server>,
+    character_id: i64,
+    player_id: PlayerId,
+    state: &crate::save_parse::SaveState,
+) {
+    let badges = crate::quest_flags::badge_count(state);
+    if let Err(e) = db::update_badges(&server.db, character_id, badges).await {
+        tracing::warn!(error = %e, "could not project the badge count");
+    }
+    server.world.set_badges(player_id, badges).await;
+}
+
 async fn control_loop(
     server: &Arc<Server>,
     conn: &Connection,
@@ -878,6 +895,8 @@ async fn control_loop(
 
                 db::store_save(&server.db, character_id, &candidate).await?;
                 tracing::info!(player = player_id, block, "block set by report");
+                // A gym win is a flag in SaveBlock1, so a block report is where badges change.
+                project_badges(server, character_id, player_id, &new).await;
 
                 // Deadman Mode: after the storage block is accepted, record the graveyard so the
                 // website can show what this character has lost. The read-only check above
@@ -950,6 +969,7 @@ async fn control_loop(
                 {
                     tracing::warn!(error = %e, "could not store story state");
                 }
+                project_badges(server, character_id, player_id, &new).await;
                 tracing::debug!(player = player_id, offset, "region set by report");
             }
             ClientControl::PartyChanged { count, mons } => {
@@ -1052,6 +1072,7 @@ async fn control_loop(
                     .world
                     .set_party_count(player_id, new.party.len() as u8)
                     .await;
+                project_badges(server, character_id, player_id, &new).await;
                 tracing::info!(
                     player = player_id,
                     party = new.party.len(),
