@@ -191,6 +191,16 @@ WHERE token !~ '^[0-9a-f]{64}$';
 -- show it without decoding the 35KB storage block. A hard reset returns it to zero.
 ALTER TABLE characters ADD COLUMN IF NOT EXISTS graveyard_count SMALLINT NOT NULL DEFAULT 0;
 
+-- The PC bank: money a character has deposited, safe from a normal death (which only forfeits what
+-- is carried). A hard reset clears it along with everything else. One row per character, created
+-- lazily on first deposit. BIGINT so repeated deposits can accumulate past the in-game money cap;
+-- a withdrawal is clamped to what the carried wallet can still hold, leaving the rest banked.
+CREATE TABLE IF NOT EXISTS bank (
+    character_id BIGINT PRIMARY KEY REFERENCES characters(id) ON DELETE CASCADE,
+    money        BIGINT NOT NULL DEFAULT 0 CHECK (money >= 0),
+    updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
 -- Deadman Mode: the roll of the dead, one row per Pokemon a character has lost. Personality is the
 -- game's immutable per-Pokemon id, so (character, personality) dedupes: a corpse seen on many
 -- reports is recorded once. Feeds the website death feed and the graveyard count. Removed with the
@@ -616,6 +626,33 @@ pub async fn ensure_character(
     anyhow::bail!("no free character name for {name} after 1000 attempts")
 }
 
+/// A character's banked money (0 if they have never deposited).
+#[allow(dead_code)] // wired in with the PC bank UI
+pub async fn bank_balance(db: &Db, character_id: i64) -> anyhow::Result<u64> {
+    let client = db.get().await?;
+    let row = client
+        .query_opt(
+            "SELECT money FROM bank WHERE character_id = $1",
+            &[&character_id],
+        )
+        .await?;
+    Ok(row.map(|r| r.get::<_, i64>("money").max(0) as u64).unwrap_or(0))
+}
+
+/// Set a character's banked money, creating the row on first deposit.
+#[allow(dead_code)] // wired in with the PC bank UI
+pub async fn set_bank_balance(db: &Db, character_id: i64, money: u64) -> anyhow::Result<()> {
+    let client = db.get().await?;
+    client
+        .execute(
+            "INSERT INTO bank (character_id, money) VALUES ($1, $2)
+             ON CONFLICT (character_id) DO UPDATE SET money = EXCLUDED.money, updated_at = now()",
+            &[&character_id, &(money.min(i64::MAX as u64) as i64)],
+        )
+        .await?;
+    Ok(())
+}
+
 /// Project the badge count read out of a save into the `characters.badges` column.
 ///
 /// The column feeds the website combat level and ladder sort and the Deadman PvP badge-range gate,
@@ -672,6 +709,11 @@ pub async fn wipe_character(db: &Db, character_id: i64) -> anyhow::Result<()> {
             "DELETE FROM deaths WHERE character_id = $1",
             &[&character_id],
         )
+        .await?;
+    // The bank is safe from a normal death, but a hard reset wipes everything everywhere -- the
+    // banked money goes with it.
+    client
+        .execute("DELETE FROM bank WHERE character_id = $1", &[&character_id])
         .await?;
     client
         .execute(

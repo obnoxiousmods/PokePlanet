@@ -23,6 +23,23 @@ fn after_credit(current: u32, amount: u32) -> u32 {
     current.saturating_add(amount).min(MAX_MONEY)
 }
 
+/// Deposit the whole carried wallet into the bank: the new (carried, bank). Pure.
+///
+/// The bank is a `u64` so repeated deposits accumulate past the in-game money cap without loss.
+#[allow(dead_code)] // wired in with the PC bank UI
+pub fn deposit_all(carried: u32, bank: u64) -> (u32, u64) {
+    (0, bank + carried as u64)
+}
+
+/// Withdraw from the bank into the carried wallet, capped at the game's money limit: as much as the
+/// wallet can still hold moves out, the rest stays banked. Returns the new (carried, bank). Pure.
+#[allow(dead_code)] // wired in with the PC bank UI
+pub fn withdraw_all(carried: u32, bank: u64) -> (u32, u64) {
+    let room = (MAX_MONEY.saturating_sub(carried)) as u64;
+    let moved = room.min(bank);
+    (carried + moved as u32, bank - moved)
+}
+
 /// Rebuild `stored` with `new_money`. `None` if the image cannot be authored faithfully.
 fn image_with_money(stored: &[u8], new_money: u32) -> Option<Vec<u8>> {
     let old = save_parse::parse(stored)?;
@@ -96,6 +113,28 @@ mod tests {
             "a stake you can't cover takes nothing"
         );
         assert_eq!(after_deduct(0, 1), None);
+    }
+
+    /// Depositing empties the wallet into the bank; withdrawing fills the wallet to the cap and
+    /// leaves any surplus banked, so no money is ever lost across a deposit/withdraw round-trip.
+    #[test]
+    fn the_bank_never_loses_money() {
+        // Deposit all: wallet emptied, bank grows by exactly the wallet.
+        assert_eq!(deposit_all(5000, 0), (0, 5000));
+        assert_eq!(deposit_all(3000, 5000), (0, 8000));
+        assert_eq!(deposit_all(0, 8000), (0, 8000), "depositing nothing changes nothing");
+
+        // Withdraw all: fills the wallet, surplus over the cap stays in the bank.
+        assert_eq!(withdraw_all(0, 5000), (5000, 0));
+        let over_cap = MAX_MONEY as u64 + 12_345;
+        let (carried, bank) = withdraw_all(0, over_cap);
+        assert_eq!(carried, MAX_MONEY, "the wallet fills only to the money cap");
+        assert_eq!(bank, 12_345, "the surplus stays banked, not lost");
+
+        // A full round-trip conserves the total no matter the cap.
+        let (c1, b1) = deposit_all(MAX_MONEY, 900_000); // bank now well over the cap
+        let (c2, b2) = withdraw_all(c1, b1);
+        assert_eq!(c2 as u64 + b2, MAX_MONEY as u64 + 900_000, "no money created or destroyed");
     }
 
     /// A payout never pushes a balance past the cap, and never overflows.
