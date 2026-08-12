@@ -36,4 +36,10 @@ u8 MmoDeadman_PartyCap(void);
 // to catch another you must let the one you have die or release it.
 bool8 MmoDeadman_OwnsSpecies(u16 species);
 
+// If this is a Deadman world and the character has no living Pokemon left anywhere (party and every
+// box except the graveyard), tell the server to hard-reset the character and return TRUE, so the
+// caller can restart the game to load the wiped, fresh character. Otherwise FALSE. Checked where a
+// whiteout would happen -- the moment a Deadman player would otherwise be sent to a Pokemon Center.
+bool8 MmoDeadman_TryHardReset(void);
+
 #endif // GUARD_MMO_DEADMAN_H

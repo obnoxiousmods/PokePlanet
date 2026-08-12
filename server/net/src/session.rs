@@ -493,6 +493,9 @@ impl Session {
                         wire::GameMessage::BattleEnded => {
                             write_control(&mut send, &ClientControl::BattleEnded).await?;
                         }
+                        wire::GameMessage::HardReset => {
+                            write_control(&mut send, &ClientControl::HardReset).await?;
+                        }
                         wire::GameMessage::Hello { .. } => {
                             // Answered where the connection is accepted, since the point of
                             // it is deciding whether to serve this game at all. It never

@@ -62,6 +62,7 @@
 #define MSG_REGION          0x8F
 #define MSG_BLOCK           0x90
 #define MSG_KEYS            0x91
+#define MSG_HARD_RESET      0x92
 
 // Lives in the SDL backend, like the sidecar port beside it.
 extern const char *Platform_GetInstanceToken(void);
@@ -1321,6 +1322,17 @@ void Net_SendBattleEnded(void)
         return;
 
     body[0] = MSG_BATTLE_ENDED;
+    Enqueue(body, sizeof(body));
+}
+
+void Net_HardReset(void)
+{
+    u8 body[1];
+
+    if (!sInitialised)
+        return;
+
+    body[0] = MSG_HARD_RESET;
     Enqueue(body, sizeof(body));
 }
 

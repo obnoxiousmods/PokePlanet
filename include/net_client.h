@@ -212,6 +212,10 @@ bool8 Net_PopLinkBlock(struct NetLinkBlock *out);
 
 // Tell the server the battle is over, so it stops forwarding blocks to the opponent.
 void Net_SendBattleEnded(void);
+
+// Deadman Mode hard reset: the character has no living Pokemon left anywhere, so the server wipes
+// it to a fresh start. The client soft-resets afterwards to reload the wiped character.
+void Net_HardReset(void);
 void Net_SendMoney(u32 amount);
 void Net_SendItem(u8 pocket, u16 item, u16 quantity);
 // Return FALSE when the message could not be queued, so the caller can try again rather

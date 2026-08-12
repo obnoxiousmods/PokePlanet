@@ -12,6 +12,7 @@
 #include "pokemon_storage_system.h"
 #include "save_location.h"
 #include "platform.h"
+#include "net_client.h"
 #include "mmo_deadman.h"
 #include "constants/flags.h"
 #include "constants/species.h"
@@ -131,4 +132,31 @@ bool8 MmoDeadman_OwnsSpecies(u16 species)
         }
     }
     return FALSE;
+}
+
+bool8 MmoDeadman_TryHardReset(void)
+{
+    u8 i;
+
+    if (!MmoDeadman_IsActive())
+        return FALSE;
+
+    // A living party member keeps the run alive.
+    for (i = 0; i < PARTY_SIZE; i++)
+    {
+        if (GetMonData(&gPlayerParty[i], MON_DATA_SPECIES) != SPECIES_NONE
+         && !GetMonData(&gPlayerParty[i], MON_DATA_IS_EGG)
+         && GetMonData(&gPlayerParty[i], MON_DATA_HP) != 0)
+            return FALSE;
+    }
+    // A boxed mon (always alive) outside the graveyard keeps the run alive. The graveyard's corpses
+    // are non-egg mons too, so subtract them from the storage count rather than counting the living
+    // boxes one by one.
+    if (CountStorageNonEggMons() > CountMonsInBox(MMO_GRAVEYARD_BOX))
+        return FALSE;
+
+    // Nothing alive anywhere: the run is over. Tell the server to wipe the character; the caller
+    // restarts the game to load the fresh one.
+    Net_HardReset();
+    return TRUE;
 }

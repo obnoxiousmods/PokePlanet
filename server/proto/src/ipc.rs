@@ -85,6 +85,7 @@ pub const MSG_REGION: u8 = 0x8F;
 pub const MSG_BLOCK: u8 = 0x90;
 /// A run of per-frame key states, for replay validation.
 pub const MSG_KEYS: u8 = 0x91;
+pub const MSG_HARD_RESET: u8 = 0x92;
 
 /// Mirrors `enum NetAuthState` in the C header.
 pub const AUTH_OFFLINE: u8 = 0;
@@ -356,6 +357,8 @@ pub enum GameMessage {
     },
     /// The battle this player was in has finished.
     BattleEnded,
+    /// Deadman hard reset: no living Pokemon remain, so the character is wiped to a fresh start.
+    HardReset,
     /// This character's money is now this.
     ///
     /// The first field reported as itself instead of by uploading the entire save. The save
@@ -421,6 +424,7 @@ pub fn decode_game_message(body: &[u8]) -> anyhow::Result<GameMessage> {
         .ok_or_else(|| anyhow::anyhow!("empty IPC frame"))?;
     match kind {
         MSG_BATTLE_ENDED => Ok(GameMessage::BattleEnded),
+        MSG_HARD_RESET => Ok(GameMessage::HardReset),
         MSG_KEYS => {
             // Whole frames only. A trailing odd byte means the sender and this disagree about
             // the format, and guessing at the remainder would invent inputs nobody pressed.

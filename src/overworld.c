@@ -68,6 +68,7 @@
 #include "constants/weather.h"
 #include "mmo_autosave.h"
 #include "mmo_chat.h"
+#include "mmo_deadman.h"
 #include "mmo_players.h"
 
 struct CableClubPlayer
@@ -360,6 +361,14 @@ static void (*const sMovementStatusHandler[])(struct LinkPlayerObjectEvent *, st
 // code
 void DoWhiteOut(void)
 {
+    // Deadman Mode: if nothing is left alive anywhere, this is not a trip to the Pokemon Center --
+    // the run is over. The server wipes the character; restart the game to load the fresh one.
+    if (MmoDeadman_TryHardReset())
+    {
+        DoSoftReset();
+        return;
+    }
+
     RunScriptImmediately(EventScript_WhiteOut);
     SetMoney(&gSaveBlock1Ptr->money, GetMoney(&gSaveBlock1Ptr->money) / 2);
     HealPlayerParty();
