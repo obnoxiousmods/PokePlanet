@@ -15,6 +15,7 @@ pub fn router(server: Arc<Server>) -> Router {
     Router::new()
         .route("/", get(home))
         .route("/ladder/:mode", get(ladder))
+        .route("/u/:mode/:name", get(profile))
         .route("/login", get(login))
         .route("/auth/callback", get(callback))
         .route("/health", get(health))
@@ -77,8 +78,11 @@ async fn ladder(State(server): State<Arc<Server>>, Path(mode): Path<String>) -> 
     }
     for r in &rows {
         table.push_str(&format!(
-            "<tr><td class=\"rank\">{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+            "<tr><td class=\"rank\">{}</td><td><a href=\"/u/{}/{}\">{}</a></td>\
+             <td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
             r.rank,
+            mode,
+            urlencode(&r.name),
             html_escape(&r.name),
             r.combat_level,
             r.badges,
@@ -108,6 +112,99 @@ async fn ladder(State(server): State<Arc<Server>>, Path(mode): Path<String>) -> 
         },
     );
     page(title, &body, Some(deadman)).into_response()
+}
+
+/// A single player's public profile: progress, combat level, and — in Deadman — the size of their
+/// graveyard, the count of Pokemon this character has lost for good.
+async fn profile(
+    State(server): State<Arc<Server>>,
+    Path((mode, name)): Path<(String, String)>,
+) -> impl IntoResponse {
+    let mode = if mode == "deadman" {
+        "deadman"
+    } else {
+        "normal"
+    };
+    let p = match db::profile(&server.db, mode, &name).await {
+        Ok(Some(p)) => p,
+        Ok(None) => {
+            return (
+                StatusCode::NOT_FOUND,
+                page(
+                    "No such trainer",
+                    &format!(
+                        "<p>No trainer named <strong>{}</strong> walks this world. <a href=\"/ladder/{}\">Back to the ladder</a>.</p>",
+                        html_escape(&name),
+                        mode,
+                    ),
+                    Some(mode == "deadman"),
+                ),
+            )
+                .into_response();
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "profile query failed");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                page(
+                    "Profile",
+                    "<p>Could not load that trainer just now.</p>",
+                    None,
+                ),
+            )
+                .into_response();
+        }
+    };
+
+    let deadman = p.mode == "deadman";
+    let mut stats = vec![
+        ("Combat level", p.combat_level.to_string()),
+        ("Badges", format!("{} / 8", p.badges)),
+        ("Party", format!("{} carried", p.party_size)),
+        ("Top level", p.top_level.to_string()),
+        (
+            "Pokedex",
+            format!(
+                "{} caught &middot; {} seen",
+                p.pokedex_caught, p.pokedex_seen
+            ),
+        ),
+        ("Hours played", p.play_hours.to_string()),
+    ];
+    if deadman {
+        stats.insert(4, ("Graveyard", format!("{} lost forever", p.graveyard)));
+    }
+    let dl = stats
+        .iter()
+        .map(|(k, v)| format!("<div class=\"stat\"><dt>{k}</dt><dd>{v}</dd></div>"))
+        .collect::<String>();
+    let body = format!(
+        r#"<p class="nav"><a href="/ladder/{mode}">&larr; {world} ladder</a></p>
+<p class="lede">{tag}</p><dl class="stats">{dl}</dl>"#,
+        mode = mode,
+        world = if deadman { "Deadman" } else { "standard" },
+        tag = if deadman {
+            "A life still going. Every number here is one bad step from ending."
+        } else {
+            "A trainer of the open world."
+        },
+    );
+    page(&html_escape(&p.name), &body, Some(deadman)).into_response()
+}
+
+/// Percent-encode a string for use in a URL path segment. Player names are restricted to a safe
+/// character set at creation, but encode defensively so a name never breaks the link.
+fn urlencode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char)
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
 }
 
 #[derive(Deserialize)]
@@ -267,6 +364,11 @@ fn page(title: &str, body: &str, deadman: Option<bool>) -> Html<String> {
   table.ladder th {{ color:{accent2}; font-size:.8rem; text-transform:uppercase; letter-spacing:.04em; opacity:.8; }}
   table.ladder td.rank {{ color:{accent}; font-variant-numeric:tabular-nums; font-weight:600; }}
   table.ladder td.empty {{ text-align:center; opacity:.6; padding:2rem; }}
+  dl.stats {{ display:grid; gap:.75rem; grid-template-columns:1fr 1fr; margin-top:1.25rem; }}
+  @media (min-width:34rem) {{ dl.stats {{ grid-template-columns:1fr 1fr 1fr; }} }}
+  .stat {{ background:{panel}; border:1px solid #ffffff14; border-radius:.6rem; padding:.85rem 1rem; }}
+  .stat dt {{ font-size:.72rem; text-transform:uppercase; letter-spacing:.05em; opacity:.6; }}
+  .stat dd {{ margin:.2rem 0 0; font-size:1.15rem; color:{accent}; font-weight:600; }}
 </style></head>
 <body>
 <header><a class="brand" href="/">PokePlanet</a></header>

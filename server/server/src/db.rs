@@ -332,6 +332,67 @@ pub async fn leaderboard(db: &Db, mode: &str, limit: i64) -> anyhow::Result<Vec<
         .collect())
 }
 
+/// A public player profile for the website.
+pub struct ProfileRow {
+    pub name: String,
+    pub mode: String,
+    pub badges: u8,
+    pub combat_level: u16,
+    pub party_size: i64,
+    pub top_level: u8,
+    pub pokedex_caught: u16,
+    pub pokedex_seen: u16,
+    pub graveyard: i64,
+    pub play_hours: i64,
+}
+
+/// One character's public profile, looked up by world and (case-insensitive) name. Returns `None`
+/// if no such character exists or its account is banned. Party size / top level / graveyard size
+/// come from the projected `pokemon` table (party = box 0, graveyard = box 13).
+pub async fn profile(db: &Db, mode: &str, name: &str) -> anyhow::Result<Option<ProfileRow>> {
+    let client = db.get().await?;
+    let Some(r) = client
+        .query_opt(
+            "SELECT c.name, c.mode, c.badges, c.pokedex_caught, c.pokedex_seen, c.play_time_s,
+                    COALESCE(pt.n, 0)::bigint       AS party_size,
+                    COALESCE(pt.maxlvl, 0)::int     AS maxlvl,
+                    COALESCE(pt.avglvl, 0)::float8  AS avglvl,
+                    COALESCE(gv.n, 0)::bigint       AS graveyard
+               FROM characters c
+               JOIN accounts a ON a.id = c.account_id
+               LEFT JOIN (
+                    SELECT character_id, COUNT(*) AS n, MAX(level) AS maxlvl, AVG(level) AS avglvl
+                      FROM pokemon WHERE box_id = 0 AND NOT is_egg GROUP BY character_id
+               ) pt ON pt.character_id = c.id
+               LEFT JOIN (
+                    SELECT character_id, COUNT(*) AS n
+                      FROM pokemon WHERE box_id = 13 GROUP BY character_id
+               ) gv ON gv.character_id = c.id
+              WHERE c.mode = $1 AND lower(c.name) = lower($2) AND NOT a.banned
+              LIMIT 1",
+            &[&mode, &name],
+        )
+        .await?
+    else {
+        return Ok(None);
+    };
+    let badges = r.get::<_, i16>("badges") as u8;
+    let maxlvl = r.get::<_, i32>("maxlvl").clamp(0, 100) as u8;
+    let avglvl = r.get::<_, f64>("avglvl") as f32;
+    Ok(Some(ProfileRow {
+        name: r.get("name"),
+        mode: r.get("mode"),
+        badges,
+        combat_level: crate::deadman::combat_level_from(maxlvl, avglvl, badges),
+        party_size: r.get("party_size"),
+        top_level: maxlvl,
+        pokedex_caught: r.get::<_, i32>("pokedex_caught") as u16,
+        pokedex_seen: r.get::<_, i32>("pokedex_seen") as u16,
+        graveyard: r.get("graveyard"),
+        play_hours: r.get::<_, i64>("play_time_s") / 3600,
+    }))
+}
+
 impl Character {
     fn from_row(row: &Row) -> Self {
         Self {
