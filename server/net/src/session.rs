@@ -325,6 +325,12 @@ impl Session {
                             tracing::debug!(bank, carried, "bank state");
                             self.link.send(wire::encode_bank_state(bank, carried)).await;
                         }
+                        ServerControl::MapDrops { drops } => {
+                            self.link.send(wire::encode_map_drops(&drops)).await;
+                        }
+                        ServerControl::PickedUp { item, quantity } => {
+                            self.link.send(wire::encode_picked_up(item, quantity)).await;
+                        }
                         ServerControl::LinkBlock { from_slot, bytes } => {
                             self.link
                                 .send(wire::encode_link_block(from_slot, &bytes))
@@ -508,6 +514,12 @@ impl Session {
                         }
                         wire::GameMessage::BankWithdraw => {
                             write_control(&mut send, &ClientControl::BankWithdraw).await?;
+                        }
+                        wire::GameMessage::DropItem { item, quantity } => {
+                            write_control(&mut send, &ClientControl::DropItem { item, quantity }).await?;
+                        }
+                        wire::GameMessage::PickUpItem { id } => {
+                            write_control(&mut send, &ClientControl::PickUpItem { id }).await?;
                         }
                         wire::GameMessage::Hello { .. } => {
                             // Answered where the connection is accepted, since the point of

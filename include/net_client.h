@@ -274,6 +274,32 @@ void Net_BankWithdraw(void);
 // `carried` as the wallet (SetMoney) and shows `bank`. Cleared once taken.
 bool8 Net_PopBankState(struct NetBankState *out);
 
+// The most items that can lie on one map at once, as far as this client draws them.
+#define NET_MAX_DROPS 32
+
+// One item lying on the ground, as the server reported it.
+struct NetDrop
+{
+    u32 id; // low 32 bits of the server's drop id; enough to tell drops apart on one map
+    u16 item;
+    u16 quantity;
+    s16 x;
+    s16 y;
+};
+
+// Drop a stack of one item onto the ground, or pick up the drop with this id. The server records
+// the drop / hands the item over; the caller removes the item from the bag before dropping and adds
+// it when a pickup is confirmed (see Net_PopPickedUp).
+void Net_DropItem(u16 item, u16 quantity);
+void Net_PickUpItem(u32 id);
+
+// Copy the drops on the current map into `out` (up to `max`), returning how many. For rendering and
+// for finding the drop under the player.
+u8 Net_GetMapDrops(struct NetDrop *out, u8 max);
+
+// Take a confirmed pickup, TRUE if one was pending; the caller adds `item` x`quantity` to the bag.
+bool8 Net_PopPickedUp(u16 *item, u16 *quantity);
+
 // Has this session ever been signed in?
 //
 // Distinct from Net_GetAuthState, which is a live value and dips during a reconnect. For

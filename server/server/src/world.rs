@@ -466,6 +466,28 @@ impl World {
             .unwrap_or_default()
     }
 
+    /// Send the current drop set of a map to everyone standing on it, so their ground stays in sync
+    /// after a drop, a pickup, or a reap.
+    pub async fn broadcast_map_drops(&self, map: MapId) {
+        let wire: Vec<(u64, u16, u16, i16, i16)> = self
+            .drops_on_map(map)
+            .await
+            .into_iter()
+            .map(|d| (d.id, d.item, d.quantity, d.x, d.y))
+            .collect();
+        let watchers = self
+            .by_map
+            .read()
+            .await
+            .get(&map)
+            .cloned()
+            .unwrap_or_default();
+        for id in watchers {
+            self.tell(id, ServerControl::MapDrops { drops: wire.clone() })
+                .await;
+        }
+    }
+
     /// Remove drops past their lifetime so the ground does not fill with junk. Called periodically.
     #[allow(dead_code)] // wired into the periodic reaper next
     pub async fn reap_expired_drops(&self) {

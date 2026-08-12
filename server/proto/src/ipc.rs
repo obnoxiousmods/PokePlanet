@@ -90,8 +90,16 @@ pub const MSG_HARD_RESET: u8 = 0x92;
 pub const MSG_BANK_DEPOSIT: u8 = 0x93;
 /// Withdraw from the PC bank into the carried wallet (game -> sidecar).
 pub const MSG_BANK_WITHDRAW: u8 = 0x94;
+/// Drop a stack of one item onto the ground (game -> sidecar).
+pub const MSG_DROP_ITEM: u8 = 0x95;
+/// Pick up a world drop by id (game -> sidecar).
+pub const MSG_PICKUP_ITEM: u8 = 0x96;
 /// The bank balance and authoritative carried money (server -> game).
 pub const MSG_BANK_STATE: u8 = 0x0D;
+/// The items on the ground of the player's current map (server -> game).
+pub const MSG_MAP_DROPS: u8 = 0x0E;
+/// A pickup succeeded; add this item to the bag (server -> game).
+pub const MSG_PICKED_UP: u8 = 0x0F;
 
 /// Mirrors `enum NetAuthState` in the C header.
 pub const AUTH_OFFLINE: u8 = 0;
@@ -339,6 +347,30 @@ pub fn encode_bank_state(bank: u64, carried: u32) -> Vec<u8> {
     frame(b)
 }
 
+/// A successful pickup, for the game to add to the bag.
+pub fn encode_picked_up(item: u16, quantity: u16) -> Vec<u8> {
+    let mut b = vec![MSG_PICKED_UP];
+    b.extend_from_slice(&item.to_le_bytes());
+    b.extend_from_slice(&quantity.to_le_bytes());
+    frame(b)
+}
+
+/// The items lying on the ground of the player's current map. A count, then each drop as
+/// id(u64), item(u16), quantity(u16), x(i16), y(i16). Capped so the count fits two bytes.
+pub fn encode_map_drops(drops: &[(u64, u16, u16, i16, i16)]) -> Vec<u8> {
+    let mut b = vec![MSG_MAP_DROPS];
+    let capped: Vec<_> = drops.iter().take(u16::MAX as usize).collect();
+    b.extend_from_slice(&(capped.len() as u16).to_le_bytes());
+    for (id, item, quantity, x, y) in capped {
+        b.extend_from_slice(&id.to_le_bytes());
+        b.extend_from_slice(&item.to_le_bytes());
+        b.extend_from_slice(&quantity.to_le_bytes());
+        b.extend_from_slice(&x.to_le_bytes());
+        b.extend_from_slice(&y.to_le_bytes());
+    }
+    frame(b)
+}
+
 /// One block of battle traffic for the game, filed under the sender's link slot.
 pub fn encode_link_block(from_slot: u8, bytes: &[u8]) -> Vec<u8> {
     let mut b = vec![MSG_LINK_BLOCK, from_slot];
@@ -388,6 +420,15 @@ pub enum GameMessage {
     BankDeposit,
     /// Withdraw from the PC bank into the carried wallet.
     BankWithdraw,
+    /// Drop a stack of one item onto the ground.
+    DropItem {
+        item: u16,
+        quantity: u16,
+    },
+    /// Pick up the world drop with this id.
+    PickUpItem {
+        id: u64,
+    },
     /// This character's money is now this.
     ///
     /// The first field reported as itself instead of by uploading the entire save. The save
@@ -456,6 +497,23 @@ pub fn decode_game_message(body: &[u8]) -> anyhow::Result<GameMessage> {
         MSG_HARD_RESET => Ok(GameMessage::HardReset),
         MSG_BANK_DEPOSIT => Ok(GameMessage::BankDeposit),
         MSG_BANK_WITHDRAW => Ok(GameMessage::BankWithdraw),
+        MSG_DROP_ITEM => {
+            let b = rest
+                .get(..4)
+                .ok_or_else(|| anyhow::anyhow!("short drop message"))?;
+            Ok(GameMessage::DropItem {
+                item: u16::from_le_bytes([b[0], b[1]]),
+                quantity: u16::from_le_bytes([b[2], b[3]]),
+            })
+        }
+        MSG_PICKUP_ITEM => {
+            let b = rest
+                .get(..8)
+                .ok_or_else(|| anyhow::anyhow!("short pickup message"))?;
+            Ok(GameMessage::PickUpItem {
+                id: u64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]),
+            })
+        }
         MSG_KEYS => {
             // Whole frames only. A trailing odd byte means the sender and this disagree about
             // the format, and guessing at the remainder would invent inputs nobody pressed.

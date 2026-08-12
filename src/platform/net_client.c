@@ -45,6 +45,8 @@
 #define MSG_LINK_BLOCK      0x0B
 #define MSG_RATES           0x0C
 #define MSG_BANK_STATE      0x0D
+#define MSG_MAP_DROPS       0x0E
+#define MSG_PICKED_UP       0x0F
 // Game -> sidecar
 #define MSG_SELF_STATE   0x81
 #define MSG_BEGIN_LOGIN  0x82
@@ -66,6 +68,8 @@
 #define MSG_HARD_RESET      0x92
 #define MSG_BANK_DEPOSIT    0x93
 #define MSG_BANK_WITHDRAW   0x94
+#define MSG_DROP_ITEM       0x95
+#define MSG_PICKUP_ITEM     0x96
 
 // Lives in the SDL backend, like the sidecar port beside it.
 extern const char *Platform_GetInstanceToken(void);
@@ -166,6 +170,15 @@ struct NetState
     // game thread takes it (and adopts the wallet).
     struct NetBankState bankState;
     bool8 hasBankState;
+
+    // Items lying on the current map, from the server. The field renderer draws these and the
+    // player picks them up. Replaced wholesale by each MSG_MAP_DROPS.
+    struct NetDrop drops[NET_MAX_DROPS];
+    u8 dropCount;
+    // A pickup the server confirmed, waiting for the game thread to add it to the bag.
+    u16 pickedItem;
+    u16 pickedQuantity;
+    bool8 hasPicked;
 
     // Both sides agreed to battle, and this is the slot the server gave us.
     struct NetBattleStart battleStart;
@@ -622,6 +635,50 @@ static void HandleBankState(const u8 *payload, u32 len)
     SDL_UnlockMutex(sNet.lock);
 }
 
+static void HandleMapDrops(const u8 *payload, u32 len)
+{
+    u16 count;
+    u16 i;
+    u32 at;
+
+    if (len < 2)
+        return;
+    count = (u16)(payload[0] | (payload[1] << 8));
+
+    SDL_LockMutex(sNet.lock);
+    sNet.dropCount = 0;
+    at = 2;
+    for (i = 0; i < count; i++)
+    {
+        u64 id;
+        if (at + 16 > len || sNet.dropCount >= NET_MAX_DROPS)
+            break;
+        id = (u64)payload[at] | ((u64)payload[at + 1] << 8) | ((u64)payload[at + 2] << 16)
+           | ((u64)payload[at + 3] << 24) | ((u64)payload[at + 4] << 32) | ((u64)payload[at + 5] << 40)
+           | ((u64)payload[at + 6] << 48) | ((u64)payload[at + 7] << 56);
+        sNet.drops[sNet.dropCount].id = (u32)id;
+        sNet.drops[sNet.dropCount].item = (u16)(payload[at + 8] | (payload[at + 9] << 8));
+        sNet.drops[sNet.dropCount].quantity = (u16)(payload[at + 10] | (payload[at + 11] << 8));
+        sNet.drops[sNet.dropCount].x = (s16)(payload[at + 12] | (payload[at + 13] << 8));
+        sNet.drops[sNet.dropCount].y = (s16)(payload[at + 14] | (payload[at + 15] << 8));
+        sNet.dropCount++;
+        at += 16;
+    }
+    SDL_UnlockMutex(sNet.lock);
+}
+
+static void HandlePickedUp(const u8 *payload, u32 len)
+{
+    if (len < 4)
+        return;
+
+    SDL_LockMutex(sNet.lock);
+    sNet.pickedItem = (u16)(payload[0] | (payload[1] << 8));
+    sNet.pickedQuantity = (u16)(payload[2] | (payload[3] << 8));
+    sNet.hasPicked = TRUE;
+    SDL_UnlockMutex(sNet.lock);
+}
+
 static void HandleCorrection(const u8 *payload, u32 len)
 {
     if (len < 8)
@@ -680,6 +737,12 @@ static void DispatchFrame(const u8 *body, u32 len)
         break;
     case MSG_BANK_STATE:
         HandleBankState(body + 1, len - 1);
+        break;
+    case MSG_MAP_DROPS:
+        HandleMapDrops(body + 1, len - 1);
+        break;
+    case MSG_PICKED_UP:
+        HandlePickedUp(body + 1, len - 1);
         break;
     case MSG_CORRECTION:
         HandleCorrection(body + 1, len - 1);
@@ -1441,6 +1504,75 @@ bool8 Net_PopBankState(struct NetBankState *out)
     }
     *out = sNet.bankState;
     sNet.hasBankState = FALSE;
+    SDL_UnlockMutex(sNet.lock);
+    return TRUE;
+}
+
+void Net_DropItem(u16 item, u16 quantity)
+{
+    u8 body[5];
+
+    if (!sInitialised)
+        return;
+
+    body[0] = MSG_DROP_ITEM;
+    body[1] = (u8)(item & 0xFF);
+    body[2] = (u8)((item >> 8) & 0xFF);
+    body[3] = (u8)(quantity & 0xFF);
+    body[4] = (u8)((quantity >> 8) & 0xFF);
+    Enqueue(body, sizeof(body));
+}
+
+void Net_PickUpItem(u32 id)
+{
+    u8 body[9];
+
+    if (!sInitialised)
+        return;
+
+    // The wire id is 64-bit; this client tracks the low 32 (enough to tell drops on one map apart),
+    // so the high word goes out as zero. Ids start at zero and climb, so they stay in 32 bits.
+    body[0] = MSG_PICKUP_ITEM;
+    body[1] = (u8)(id & 0xFF);
+    body[2] = (u8)((id >> 8) & 0xFF);
+    body[3] = (u8)((id >> 16) & 0xFF);
+    body[4] = (u8)((id >> 24) & 0xFF);
+    body[5] = 0;
+    body[6] = 0;
+    body[7] = 0;
+    body[8] = 0;
+    Enqueue(body, sizeof(body));
+}
+
+u8 Net_GetMapDrops(struct NetDrop *out, u8 max)
+{
+    u8 n;
+
+    if (!sInitialised || out == NULL)
+        return 0;
+
+    SDL_LockMutex(sNet.lock);
+    n = (sNet.dropCount < max) ? sNet.dropCount : max;
+    if (n != 0)
+        memcpy(out, sNet.drops, (size_t)n * sizeof(struct NetDrop));
+    SDL_UnlockMutex(sNet.lock);
+    return n;
+}
+
+bool8 Net_PopPickedUp(u16 *item, u16 *quantity)
+{
+    if (!sInitialised || item == NULL || quantity == NULL)
+        return FALSE;
+
+    SDL_LockMutex(sNet.lock);
+    if (!sNet.hasPicked)
+    {
+        SDL_UnlockMutex(sNet.lock);
+        return FALSE;
+    }
+    *item = sNet.pickedItem;
+    *quantity = sNet.pickedQuantity;
+    sNet.hasPicked = FALSE;
     SDL_UnlockMutex(sNet.lock);
     return TRUE;
 }

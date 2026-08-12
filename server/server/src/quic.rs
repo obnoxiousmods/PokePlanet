@@ -678,6 +678,19 @@ async fn control_loop(
                     pose.map = map;
                     server.world.update_pose(player_id, session, pose).await;
                 }
+                // Hand the newcomer the items already lying on this map, so drops made before they
+                // arrived are visible to them too.
+                let drops: Vec<(u64, u16, u16, i16, i16)> = server
+                    .world
+                    .drops_on_map(map)
+                    .await
+                    .into_iter()
+                    .map(|d| (d.id, d.item, d.quantity, d.x, d.y))
+                    .collect();
+                server
+                    .world
+                    .tell(player_id, ServerControl::MapDrops { drops })
+                    .await;
             }
             ClientControl::RequestBattle { target } => {
                 if let Err(reason) = server.world.invite_to_battle(player_id, target).await {
@@ -1491,6 +1504,39 @@ async fn control_loop(
                     carried = new_carried,
                     "bank move"
                 );
+            }
+            ClientControl::DropItem { item, quantity } => {
+                // The client removed the item from its own bag before sending this (the same trust
+                // as every other bag report); the server records the drop and shows it to everyone
+                // on the map. The pickup side is where duplication is actually prevented -- a drop
+                // is handed to exactly one taker.
+                if quantity == 0 || item == 0 {
+                    continue;
+                }
+                if let Some(pose) = server.world.pose_of(player_id).await {
+                    server
+                        .world
+                        .drop_item(pose.map, pose.x, pose.y, item, quantity, None)
+                        .await;
+                    server.world.broadcast_map_drops(pose.map).await;
+                    tracing::info!(player = player_id, item, quantity, "item dropped");
+                }
+            }
+            ClientControl::PickUpItem { id } => {
+                // take_drop removes the drop atomically and only if the pickup rules allow, so two
+                // players cannot both receive it. Only then is the taker told to add it to their bag.
+                if let Some(pose) = server.world.pose_of(player_id).await {
+                    if let Some((item, quantity)) =
+                        server.world.take_drop(pose.map, id, player_id).await
+                    {
+                        server
+                            .world
+                            .tell(player_id, ServerControl::PickedUp { item, quantity })
+                            .await;
+                        server.world.broadcast_map_drops(pose.map).await;
+                        tracing::info!(player = player_id, item, quantity, "item picked up");
+                    }
+                }
             }
             ClientControl::Goodbye => break,
             ClientControl::Hello { .. }
