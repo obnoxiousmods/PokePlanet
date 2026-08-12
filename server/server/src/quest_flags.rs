@@ -29,6 +29,15 @@ fn flag_set(flags: &[u8], id: u16) -> bool {
         .unwrap_or(false)
 }
 
+/// How many of the eight gym badges the save records as earned. Used by Deadman Mode to derive the
+/// level and party-size caps and the PvP badge range.
+pub fn badge_count(state: &SaveState) -> u8 {
+    BADGE_FLAGS
+        .iter()
+        .filter(|&&id| flag_set(&state.flags, id))
+        .count() as u8
+}
+
 /// A badge held before but cleared now. Enforced: no honest game takes a badge back.
 pub fn badge_regressed(before: &SaveState, after: &SaveState) -> Option<String> {
     BADGE_FLAGS

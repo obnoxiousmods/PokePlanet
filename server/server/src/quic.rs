@@ -955,6 +955,41 @@ async fn control_loop(
                     tracing::warn!(player = player_id, %reason, "refusing a reported party");
                     continue;
                 }
+
+                // Deadman Mode caps progression to the next gym leader: no party mon may exceed the
+                // badge level cap, and the party cannot be larger than the badge party-size cap.
+                // Enforced server-side so a patched client cannot out-level or out-number the world.
+                if mode == "deadman" {
+                    let badges = crate::quest_flags::badge_count(&new);
+                    let level_cap = crate::deadman::level_cap(badges);
+                    if let Some(m) = new
+                        .party
+                        .iter()
+                        .find(|m| m.species != 0 && m.level > level_cap)
+                    {
+                        tracing::warn!(
+                            player = player_id,
+                            level = m.level,
+                            level_cap,
+                            badges,
+                            "refusing a deadman party above the level cap"
+                        );
+                        continue;
+                    }
+                    let living = new.party.iter().filter(|m| m.species != 0).count() as u8;
+                    let party_cap = crate::deadman::party_cap(badges);
+                    if living > party_cap {
+                        tracing::warn!(
+                            player = player_id,
+                            size = living,
+                            party_cap,
+                            badges,
+                            "refusing a deadman party above the size cap"
+                        );
+                        continue;
+                    }
+                }
+
                 db::store_save(&server.db, character_id, &candidate).await?;
                 if let Err(e) =
                     db::store_inventory_and_party(&server.db, character_id, &new.bag, &new.party)
