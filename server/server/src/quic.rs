@@ -555,7 +555,6 @@ fn is_heavy_control(control: &ClientControl) -> bool {
     )
 }
 
-#[allow(clippy::too_many_arguments)]
 /// Persist the badge count a save implies into the `characters.badges` column and refresh the
 /// player's live presence. The count is derived from the save's own flags (server-side, never the
 /// client's word), so it drives the combat level, the ladder sort, and the Deadman PvP badge-range
@@ -573,6 +572,7 @@ async fn project_badges(
     server.world.set_badges(player_id, badges).await;
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn control_loop(
     server: &Arc<Server>,
     conn: &Connection,
