@@ -9,14 +9,30 @@
 PokePlanet_EventScript_PlayerInteract::
 	lock
 	faceplayer
-	msgbox PokePlanet_Text_AskBattle, MSGBOX_YESNO
-	goto_if_eq VAR_RESULT, NO, PokePlanet_EventScript_DeclineBattle
+	multichoice 0, 0, MULTI_POKEPLANET_PLAYER, FALSE
+	switch VAR_RESULT
+	case POKEPLANET_PLAYER_BATTLE, PokePlanet_EventScript_MenuBattle
+	case POKEPLANET_PLAYER_TRADE, PokePlanet_EventScript_MenuTrade
+	case POKEPLANET_PLAYER_FOLLOW, PokePlanet_EventScript_MenuFollow
+	@ Exit (case 3) and a B press fall through to here.
+	release
+	end
+
+PokePlanet_EventScript_MenuBattle::
 	special PokePlanet_SendBattleRequest
 	msgbox PokePlanet_Text_RequestSent, MSGBOX_DEFAULT
 	release
 	end
 
-PokePlanet_EventScript_DeclineBattle::
+@ Trade and Follow are wired up in their own features; until then they announce themselves rather
+@ than silently doing nothing, so the menu never feels broken.
+PokePlanet_EventScript_MenuTrade::
+	msgbox PokePlanet_Text_ComingSoon, MSGBOX_DEFAULT
+	release
+	end
+
+PokePlanet_EventScript_MenuFollow::
+	msgbox PokePlanet_Text_ComingSoon, MSGBOX_DEFAULT
 	release
 	end
 
@@ -65,10 +81,9 @@ PokePlanet_EventScript_PlayerGone::
 	release
 	end
 
-PokePlanet_Text_AskBattle:
-	.string "{STR_VAR_1} is another TRAINER\n"
-	.string "here on POKéPLANET!\p"
-	.string "Do you want to battle them?$"
+PokePlanet_Text_ComingSoon:
+	.string "That's coming soon to\n"
+	.string "POKéPLANET!$"
 
 PokePlanet_Text_RequestSent:
 	.string "Battle request sent to {STR_VAR_1}!\p"

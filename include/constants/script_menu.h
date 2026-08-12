@@ -122,6 +122,13 @@
 #define MULTI_SLATEPORT_TENT_RULES         111
 #define MULTI_FALLARBOR_TENT_RULES         112
 #define MULTI_TAG_MATCH_TYPE               113
+#define MULTI_POKEPLANET_PLAYER            114
+
+// PokePlanet player interaction menu selections
+#define POKEPLANET_PLAYER_BATTLE           0
+#define POKEPLANET_PLAYER_TRADE            1
+#define POKEPLANET_PLAYER_FOLLOW           2
+#define POKEPLANET_PLAYER_EXIT             3
 
 // Lilycove SS Tidal Multichoice Selections
 #define SSTIDAL_SELECTION_SLATEPORT        0

@@ -13,6 +13,16 @@ static const struct MenuAction MultichoiceList_EnterInfo[] =
     {gText_Exit},
 };
 
+// The menu shown when the player interacts with another PokePlanet player. Order must match the
+// POKEPLANET_PLAYER_* constants in constants/script_menu.h and the cases in pokeplanet.inc.
+static const struct MenuAction MultichoiceList_PokePlanetPlayer[] =
+{
+    {gText_Battle},
+    {gText_Trade},
+    {gText_Follow},
+    {gText_Exit},
+};
+
 static const struct MenuAction MultichoiceList_ContestInfo[] =
 {
     {gText_WhatsAContest},
@@ -898,6 +908,7 @@ static const struct MultichoiceListStruct sMultichoiceLists[] =
     [MULTI_SLATEPORT_TENT_RULES]       = MULTICHOICE(MultichoiceList_SlateportTentRules),
     [MULTI_FALLARBOR_TENT_RULES]       = MULTICHOICE(MultichoiceList_FallarborTentRules),
     [MULTI_TAG_MATCH_TYPE]             = MULTICHOICE(MultichoiceList_TagMatchType),
+    [MULTI_POKEPLANET_PLAYER]          = MULTICHOICE(MultichoiceList_PokePlanetPlayer),
 };
 
 const u8 *const gStdStrings[] =

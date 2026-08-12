@@ -1272,6 +1272,7 @@ const u8 gText_Hello[] = _("HELLO");
 const u8 gText_Pokemon2[] = _("POKéMON");
 const u8 gText_Trade[] = _("TRADE");
 const u8 gText_Battle[] = _("BATTLE");
+const u8 gText_Follow[] = _("FOLLOW");
 const u8 gText_Lets[] = _("LET'S");
 const u8 gText_Ok[] = _("OK!");
 const u8 gText_Sorry[] = _("SORRY");

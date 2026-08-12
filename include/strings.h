@@ -2766,6 +2766,7 @@ extern const u8 gText_Hello[];
 extern const u8 gText_Pokemon2[];
 extern const u8 gText_Trade[];
 extern const u8 gText_Battle[];
+extern const u8 gText_Follow[];
 extern const u8 gText_Lets[];
 extern const u8 gText_Ok[];
 extern const u8 gText_Sorry[];
