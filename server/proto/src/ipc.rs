@@ -94,6 +94,8 @@ pub const MSG_BANK_WITHDRAW: u8 = 0x94;
 pub const MSG_DROP_ITEM: u8 = 0x95;
 /// Pick up a world drop by id (game -> sidecar).
 pub const MSG_PICKUP_ITEM: u8 = 0x96;
+/// A Deadman line-of-sight lock forces a battle with a player (game -> sidecar).
+pub const MSG_FORCE_BATTLE: u8 = 0x97;
 /// The bank balance and authoritative carried money (server -> game).
 pub const MSG_BANK_STATE: u8 = 0x0D;
 /// The items on the ground of the player's current map (server -> game).
@@ -429,6 +431,10 @@ pub enum GameMessage {
     PickUpItem {
         id: u64,
     },
+    /// A Deadman line-of-sight lock forces a battle with this player.
+    ForceBattle {
+        target: u32,
+    },
     /// This character's money is now this.
     ///
     /// The first field reported as itself instead of by uploading the entire save. The save
@@ -512,6 +518,14 @@ pub fn decode_game_message(body: &[u8]) -> anyhow::Result<GameMessage> {
                 .ok_or_else(|| anyhow::anyhow!("short pickup message"))?;
             Ok(GameMessage::PickUpItem {
                 id: u64::from_le_bytes([b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]]),
+            })
+        }
+        MSG_FORCE_BATTLE => {
+            let b = rest
+                .get(..4)
+                .ok_or_else(|| anyhow::anyhow!("short force-battle message"))?;
+            Ok(GameMessage::ForceBattle {
+                target: u32::from_le_bytes([b[0], b[1], b[2], b[3]]),
             })
         }
         MSG_KEYS => {

@@ -498,6 +498,68 @@ impl World {
         store.by_map.retain(|_, list| !list.is_empty());
     }
 
+    /// Force two Deadman players into a battle: a line-of-sight lock, where the spotter has no
+    /// choice and neither does the spotted. Gated to deadman-vs-deadman within badge range, on the
+    /// same map, with neither already fighting -- so it can neither farm a newcomer nor interrupt an
+    /// existing battle. The spotter takes slot 0 (runs the engine), mirroring an accepted invite.
+    pub async fn force_battle(&self, spotter: PlayerId, target: PlayerId) -> Result<(), String> {
+        if spotter == target {
+            return Err("You can't battle yourself.".into());
+        }
+
+        let (spotter_name, target_name) = {
+            let players = self.players.read().await;
+            let a = players.get(&spotter).ok_or("You are not online.")?;
+            let b = players.get(&target).ok_or("They are no longer online.")?;
+            if a.pose.map != b.pose.map {
+                return Err("They have left this area.".into());
+            }
+            if a.mode != "deadman" || b.mode != "deadman" {
+                return Err("Forced battles are a Deadman rule.".into());
+            }
+            if !crate::deadman::pvp_in_badge_range(a.badges, b.badges) {
+                return Err("They are too far from your badge rank to battle.".into());
+            }
+            if a.battle.is_some() || b.battle.is_some() {
+                return Err("Someone is already in a battle.".into());
+            }
+            (a.name.clone(), b.name.clone())
+        };
+
+        {
+            let players = self.players.read().await;
+            if let Some(a) = players.get(&spotter) {
+                let _ = a.control.try_send(ServerControl::BattleStarting {
+                    opponent: target,
+                    opponent_name: target_name.clone(),
+                    link_id: 0,
+                });
+            }
+            if let Some(b) = players.get(&target) {
+                let _ = b.control.try_send(ServerControl::BattleStarting {
+                    opponent: spotter,
+                    opponent_name: spotter_name.clone(),
+                    link_id: 1,
+                });
+            }
+        }
+
+        let mut players = self.players.write().await;
+        if let Some(p) = players.get_mut(&spotter) {
+            p.battle = Some(BattleSeat {
+                peer: target,
+                slot: 0,
+            });
+        }
+        if let Some(p) = players.get_mut(&target) {
+            p.battle = Some(BattleSeat {
+                peer: spotter,
+                slot: 1,
+            });
+        }
+        Ok(())
+    }
+
     /// Deliver a chat message according to its target. Returns false if a private
     /// message had no recipient online.
     /// Deliver a line to whoever should see it. `from_id` identifies the sender; `from` is

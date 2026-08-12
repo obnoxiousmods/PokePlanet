@@ -487,6 +487,80 @@ const u8 *MmoPlayers_GetInteractionScript(u8 objectEventId)
     return PokePlanet_EventScript_PlayerInteract;
 }
 
+// The player id of a spawned remote trainer standing on (x, y), or 0 if none is there.
+static u32 RemotePlayerAt(s16 x, s16 y)
+{
+    u8 slot;
+
+    for (slot = 0; slot < NET_MAX_REMOTE_PLAYERS; slot++)
+    {
+        struct ObjectEvent *object;
+
+        if (!sSlots[slot].spawned)
+            continue;
+        object = FindSlotObject(slot);
+        if (object != NULL && object->currentCoords.x == x && object->currentCoords.y == y)
+            return sSlots[slot].playerId;
+    }
+    return 0;
+}
+
+// Deadman line-of-sight: if the player is facing another Deadman trainer within a few clear tiles,
+// ask the server to force a battle -- like a trainer spotting you, you have to fight. The server
+// enforces the actual rules (badge range, same map, neither already fighting); a wall breaks the
+// sight line, and the request is sent once per lock (debounced) rather than every frame. A no-op
+// outside Deadman or inside a Pokemon Center.
+static void CheckForcedSightBattle(void)
+{
+    static u32 sLockedTarget;
+    struct ObjectEvent *player;
+    s16 x, y, dx = 0, dy = 0;
+    u8 step;
+
+    if (!MmoDeadman_IsActive() || MmoDeadman_InSafezone()
+     || gPlayerAvatar.objectEventId >= OBJECT_EVENTS_COUNT)
+    {
+        sLockedTarget = 0;
+        return;
+    }
+
+    player = &gObjectEvents[gPlayerAvatar.objectEventId];
+    switch (player->facingDirection)
+    {
+    case DIR_NORTH: dy = -1; break;
+    case DIR_SOUTH: dy = 1;  break;
+    case DIR_WEST:  dx = -1; break;
+    case DIR_EAST:  dx = 1;  break;
+    default:
+        sLockedTarget = 0;
+        return;
+    }
+
+    x = player->currentCoords.x;
+    y = player->currentCoords.y;
+    for (step = 0; step < 4; step++) // a trainer's sight range
+    {
+        u32 pid;
+
+        x += dx;
+        y += dy;
+        pid = RemotePlayerAt(x, y);
+        if (pid != 0)
+        {
+            if (pid != sLockedTarget)
+            {
+                sLockedTarget = pid;
+                Net_ForceBattle(pid);
+            }
+            return;
+        }
+        // A wall or other impassable tile breaks the line of sight.
+        if (MapGridGetCollisionAt(x, y) != 0)
+            break;
+    }
+    sLockedTarget = 0;
+}
+
 void MmoPlayers_Update(void)
 {
     // Remembers whether we were online last frame, so a drop can be noticed and cleaned up.
@@ -537,6 +611,7 @@ void MmoPlayers_Update(void)
     ApplyCorrection();
     MmoDeadman_PollBank();
     MmoWorldItems_Update();
+    CheckForcedSightBattle();
     CheckForBattleStart();
     ReportSelf();
 

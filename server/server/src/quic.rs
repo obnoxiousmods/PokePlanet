@@ -700,6 +700,14 @@ async fn control_loop(
                         .await;
                 }
             }
+            ClientControl::ForceBattle { target } => {
+                // A Deadman line-of-sight lock. The server validates the rules (deadman, badge
+                // range, same map, neither fighting) and forces both in; the client cannot force a
+                // battle the rules forbid. A rejection is silent -- the client just keeps walking.
+                if let Err(reason) = server.world.force_battle(player_id, target).await {
+                    tracing::debug!(player = player_id, target, %reason, "forced battle refused");
+                }
+            }
             ClientControl::RespondToBattle { from, accepted } => {
                 if let Err(reason) = server.world.answer_battle(player_id, from, accepted).await {
                     server

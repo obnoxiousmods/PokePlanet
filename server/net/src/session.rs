@@ -521,6 +521,9 @@ impl Session {
                         wire::GameMessage::PickUpItem { id } => {
                             write_control(&mut send, &ClientControl::PickUpItem { id }).await?;
                         }
+                        wire::GameMessage::ForceBattle { target } => {
+                            write_control(&mut send, &ClientControl::ForceBattle { target }).await?;
+                        }
                         wire::GameMessage::Hello { .. } => {
                             // Answered where the connection is accepted, since the point of
                             // it is deciding whether to serve this game at all. It never

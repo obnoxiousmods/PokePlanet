@@ -70,6 +70,7 @@
 #define MSG_BANK_WITHDRAW   0x94
 #define MSG_DROP_ITEM       0x95
 #define MSG_PICKUP_ITEM     0x96
+#define MSG_FORCE_BATTLE    0x97
 
 // Lives in the SDL backend, like the sidecar port beside it.
 extern const char *Platform_GetInstanceToken(void);
@@ -1298,6 +1299,20 @@ void Net_RequestBattle(u32 playerId)
     if (!sInitialised)
         return;
     body[0] = MSG_BATTLE_REQUEST;
+    body[1] = (u8)(playerId & 0xFF);
+    body[2] = (u8)((playerId >> 8) & 0xFF);
+    body[3] = (u8)((playerId >> 16) & 0xFF);
+    body[4] = (u8)((playerId >> 24) & 0xFF);
+    Enqueue(body, sizeof(body));
+}
+
+void Net_ForceBattle(u32 playerId)
+{
+    u8 body[5];
+
+    if (!sInitialised)
+        return;
+    body[0] = MSG_FORCE_BATTLE;
     body[1] = (u8)(playerId & 0xFF);
     body[2] = (u8)((playerId >> 8) & 0xFF);
     body[3] = (u8)((playerId >> 16) & 0xFF);

@@ -168,6 +168,13 @@ pub enum ClientControl {
     PickUpItem {
         id: u64,
     },
+    /// A Deadman line-of-sight lock: this player's sight-line caught `target`, so the server forces
+    /// both into a battle if the Deadman PvP rules allow (same map, badge range, neither fighting).
+    ///
+    /// Appended so the existing variant numbering does not shift.
+    ForceBattle {
+        target: PlayerId,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

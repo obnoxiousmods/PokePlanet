@@ -130,6 +130,10 @@ struct NetBattleInvite
 // Challenge another player to a battle. The server refuses the request if they are
 // offline, on another map, or already holding an invitation.
 void Net_RequestBattle(u32 playerId);
+
+// A Deadman line-of-sight lock: ask the server to force a battle with this player. The server
+// enforces the rules (deadman, badge range, same map, neither fighting) and ignores it otherwise.
+void Net_ForceBattle(u32 playerId);
 // Answer a challenge someone sent us.
 void Net_RespondToBattle(u32 playerId, bool8 accepted);
 
