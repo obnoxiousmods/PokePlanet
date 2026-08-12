@@ -7,11 +7,13 @@
 // but never bring the corpse back into a battle the server would accept.
 
 #include "global.h"
+#include "event_data.h"
 #include "pokemon.h"
 #include "pokemon_storage_system.h"
 #include "save_location.h"
 #include "platform.h"
 #include "mmo_deadman.h"
+#include "constants/flags.h"
 #include "constants/species.h"
 
 // The last PC box is the graveyard: a reserved box the dead are laid in and never leave. Reusing an
@@ -70,4 +72,35 @@ void MmoDeadman_OnBattleEnd(void)
     if (MmoDeadman_InSafezone())
         return;
     BuryFaintedParty();
+}
+
+// Progression caps by badge count. Mirror server/src/deadman.rs -- the client stops the player at
+// the same wall the server would refuse to cross, so a cap is felt as a limit rather than as a
+// rejected report after the fact.
+static const u8 sLevelCapByBadges[9] = { 15, 19, 24, 29, 31, 33, 42, 46, 58 };
+static const u8 sPartyCapByBadges[9] = { 2, 2, 3, 3, 4, 4, 5, 5, 6 };
+
+u8 MmoDeadman_BadgeCount(void)
+{
+    u8 count = 0;
+    u16 flag;
+
+    for (flag = FLAG_BADGE01_GET; flag < FLAG_BADGE01_GET + NUM_BADGES; flag++)
+    {
+        if (FlagGet(flag))
+            count++;
+    }
+    return count;
+}
+
+u8 MmoDeadman_LevelCap(void)
+{
+    u8 badges = MmoDeadman_BadgeCount();
+    return sLevelCapByBadges[badges > 8 ? 8 : badges];
+}
+
+u8 MmoDeadman_PartyCap(void)
+{
+    u8 badges = MmoDeadman_BadgeCount();
+    return sPartyCapByBadges[badges > 8 ? 8 : badges];
 }

@@ -18,4 +18,16 @@ bool8 MmoDeadman_InSafezone(void);
 // from the party -- it can never be used again. A no-op outside Deadman or inside a safezone.
 void MmoDeadman_OnBattleEnd(void);
 
+// How many gym badges the player has earned (0..8).
+u8 MmoDeadman_BadgeCount(void);
+
+// The Deadman level cap for the current badge count: no party mon may exceed the next gym leader's
+// level. Mirrors the server's deadman::level_cap so the client stops levelling at the same wall the
+// server would refuse to cross.
+u8 MmoDeadman_LevelCap(void);
+
+// The Deadman party-size cap for the current badge count (2..6), so a young character cannot field
+// a deep bench. Mirrors the server's deadman::party_cap.
+u8 MmoDeadman_PartyCap(void);
+
 #endif // GUARD_MMO_DEADMAN_H

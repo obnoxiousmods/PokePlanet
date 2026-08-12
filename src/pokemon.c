@@ -23,6 +23,7 @@
 #include "pokeblock.h"
 #include "pokemon.h"
 #include "mmo_autosave.h"
+#include "mmo_deadman.h"
 #include "pokemon_animation.h"
 #include "pokemon_summary_screen.h"
 #include "pokemon_storage_system.h"
@@ -4416,14 +4417,20 @@ u8 GiveMonToPlayer(struct Pokemon *mon)
     SetMonData(mon, MON_DATA_OT_GENDER, &gSaveBlock2Ptr->playerGender);
     SetMonData(mon, MON_DATA_OT_ID, gSaveBlock2Ptr->playerTrainerId);
 
-    for (i = 0; i < PARTY_SIZE; i++)
+    // Deadman Mode caps the party below six by badge count, so a young character cannot field a
+    // deep bench; a mon that would overflow the cap goes to the PC like it would a full party.
     {
-        if (GetMonData(&gPlayerParty[i], MON_DATA_SPECIES, NULL) == SPECIES_NONE)
-            break;
-    }
+        s32 cap = MmoDeadman_IsActive() ? MmoDeadman_PartyCap() : PARTY_SIZE;
 
-    if (i >= PARTY_SIZE)
-        return CopyMonToPC(mon);
+        for (i = 0; i < cap; i++)
+        {
+            if (GetMonData(&gPlayerParty[i], MON_DATA_SPECIES, NULL) == SPECIES_NONE)
+                break;
+        }
+
+        if (i >= cap)
+            return CopyMonToPC(mon);
+    }
 
     CopyMon(&gPlayerParty[i], mon, sizeof(*mon));
     gPlayerPartyCount = i + 1;
