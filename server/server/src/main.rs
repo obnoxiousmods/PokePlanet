@@ -21,6 +21,7 @@ mod quic;
 mod rates;
 mod save_parse;
 mod world;
+mod world_items;
 
 use anyhow::Context;
 use std::sync::Arc;
