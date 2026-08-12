@@ -361,11 +361,17 @@ fn page(title: &str, body: &str, deadman: Option<bool>) -> Html<String> {
         Some(true) => ("#160a0a", "#20100f", "#ef5350", "#ff8a80"),
         Some(false) | None => ("#101a14", "#132018", "#6ee7a8", "#34d399"),
     };
+    // The landing page's title is already the site name; everything else is "Thing · PokePlanet".
+    let head_title = if title == "PokePlanet" {
+        title.to_string()
+    } else {
+        format!("{title} &middot; PokePlanet")
+    };
     Html(format!(
         r#"<!doctype html>
 <html lang="en"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{title} &middot; PokePlanet</title>
+<title>{head_title}</title>
 <style>
   :root {{ color-scheme: dark; }}
   * {{ box-sizing:border-box; }}
