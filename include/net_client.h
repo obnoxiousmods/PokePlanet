@@ -229,6 +229,10 @@ bool8 Net_SendBlockChunk(u8 block, u32 offset, u32 total, const void *bytes, u32
 //
 // Held as hundredths rather than a fraction because the game has no floating point worth
 // using and every rate is applied to an integer amount anyway. See MmoRates_Apply.
+// The most per-species encounter overrides a server can send at once. A server tunes a handful of
+// species (suppress the commons, make a prize find rare), not the whole dex, so this is generous.
+#define NET_MAX_SPECIES_RATES 64
+
 struct NetRates
 {
     u16 experience;
@@ -239,11 +243,20 @@ struct NetRates
     // What a shop charges. Applied to the asking price, so the shown and charged price
     // cannot disagree.
     u16 shopPrice;
+    // Per-species encounter multipliers (hundredths), applied on top of `encounter`. Parallel
+    // arrays: speciesRate[i] is the multiplier for speciesId[i]. A species not listed uses 100.
+    u8 speciesCount;
+    u16 speciesId[NET_MAX_SPECIES_RATES];
+    u16 speciesRate[NET_MAX_SPECIES_RATES];
 };
 
 // The rates this server runs. Returns the original game's rates until the server has said
 // otherwise, so nothing has to wait for them or check whether they arrived.
 void Net_GetRates(struct NetRates *out);
+
+// The per-species encounter multiplier for `species`, in hundredths (100 = unchanged). Returns 100
+// if the server sent no override for it. Used to make a Deadman find genuinely rare.
+u16 Net_GetSpeciesEncounter(u16 species);
 
 // Has this session ever been signed in?
 //

@@ -302,6 +302,7 @@ pub fn encode_rates(
     items: f32,
     catch: f32,
     shop_price: f32,
+    species_encounter: &[(u16, f32)],
 ) -> Vec<u8> {
     fn hundredths(rate: f32) -> u16 {
         (rate * 100.0).round().clamp(0.0, u16::MAX as f32) as u16
@@ -310,6 +311,16 @@ pub fn encode_rates(
     let mut b = vec![MSG_RATES];
     for rate in [experience, encounter, money, items, catch, shop_price] {
         b.extend_from_slice(&hundredths(rate).to_le_bytes());
+    }
+    // Appended after the six scalars: a count byte, then (species u16, multiplier hundredths u16)
+    // pairs. A client reading only the first twelve bytes (the six scalars) is unaffected; a client
+    // that knows about per-species rates reads the count and the pairs that follow. Capped at 255
+    // so the count fits one byte -- a server tunes a handful of species, not the whole dex.
+    let pairs: Vec<&(u16, f32)> = species_encounter.iter().take(255).collect();
+    b.push(pairs.len() as u8);
+    for (species, mult) in pairs {
+        b.extend_from_slice(&species.to_le_bytes());
+        b.extend_from_slice(&hundredths(*mult).to_le_bytes());
     }
     frame(b)
 }

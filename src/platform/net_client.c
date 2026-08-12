@@ -377,6 +377,23 @@ static void HandleRates(const u8 *payload, u32 len)
     sNet.rates.items      = (u16)(payload[6] | (payload[7] << 8));
     sNet.rates.catch      = (u16)(payload[8] | (payload[9] << 8));
     sNet.rates.shopPrice  = (u16)(payload[10] | (payload[11] << 8));
+    // Appended after the six scalars: a count byte then (species u16, multiplier u16) pairs. Older
+    // servers send only the twelve scalar bytes, so a missing table just means no overrides.
+    sNet.rates.speciesCount = 0;
+    if (len >= 13)
+    {
+        u8 count = payload[12];
+        u32 i;
+        for (i = 0; i < count && i < NET_MAX_SPECIES_RATES; i++)
+        {
+            u32 at = 13 + i * 4;
+            if (at + 4 > len)
+                break;
+            sNet.rates.speciesId[i]   = (u16)(payload[at] | (payload[at + 1] << 8));
+            sNet.rates.speciesRate[i] = (u16)(payload[at + 2] | (payload[at + 3] << 8));
+            sNet.rates.speciesCount++;
+        }
+    }
     sNet.hasRates = TRUE;
     SDL_UnlockMutex(sNet.lock);
     SDL_Log("net: rates x%u.%02u exp, x%u.%02u encounter, x%u.%02u money",
@@ -407,6 +424,30 @@ void Net_GetRates(struct NetRates *out)
     if (sNet.hasRates)
         *out = sNet.rates;
     SDL_UnlockMutex(sNet.lock);
+}
+
+u16 Net_GetSpeciesEncounter(u16 species)
+{
+    u16 mult = 100; // unchanged unless the server sent an override for this species
+    u8 i;
+
+    if (!sInitialised)
+        return mult;
+
+    SDL_LockMutex(sNet.lock);
+    if (sNet.hasRates)
+    {
+        for (i = 0; i < sNet.rates.speciesCount; i++)
+        {
+            if (sNet.rates.speciesId[i] == species)
+            {
+                mult = sNet.rates.speciesRate[i];
+                break;
+            }
+        }
+    }
+    SDL_UnlockMutex(sNet.lock);
+    return mult;
 }
 
 static void HandleLinkBlock(const u8 *payload, u32 len)

@@ -285,6 +285,13 @@ pub enum ServerControl {
         items: f32,
         catch: f32,
         shop_price: f32,
+        /// Per-species encounter multipliers, `(species, multiplier)`, applied on top of the
+        /// global `encounter` rate. Only the species a server actually tunes are sent -- a handful,
+        /// not the whole dex -- so a rare Deadman find can be made genuinely rare. Appended to the
+        /// struct so an older sidecar's decode of the six scalars is unaffected; server and sidecar
+        /// deploy together, so the field is always present in practice.
+        #[serde(default)]
+        species_encounter: Vec<(u16, f32)>,
     },
 }
 

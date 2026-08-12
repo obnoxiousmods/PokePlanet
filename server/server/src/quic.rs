@@ -379,6 +379,7 @@ async fn run_session(
             items: rates.items,
             catch: rates.catch,
             shop_price: rates.shop_price,
+            species_encounter: rates.species_encounter.iter().map(|(&s, &m)| (s, m)).collect(),
         },
     )
     .await?;
@@ -1372,6 +1373,11 @@ async fn control_loop(
                             items: rates.items,
                             catch: rates.catch,
                             shop_price: rates.shop_price,
+                            species_encounter: rates
+                                .species_encounter
+                                .iter()
+                                .map(|(&s, &m)| (s, m))
+                                .collect(),
                         },
                     )
                     .await;

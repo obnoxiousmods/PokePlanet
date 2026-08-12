@@ -458,6 +458,15 @@ static bool8 TryGenerateWildMon(const struct WildPokemonInfo *wildMonInfo, u8 ar
     if (MmoDeadman_IsActive() && MmoDeadman_OwnsSpecies(wildMonInfo->wildPokemon[wildMonIndex].species))
         return FALSE;
 
+    // Per-species encounter rate: the server can suppress a species so a prize find is genuinely
+    // rare. A multiplier under 100 (hundredths) declines this encounter with the matching odds; the
+    // slot is spent, so the species simply shows up less. 100 (the default) always passes.
+    {
+        u16 rate = Net_GetSpeciesEncounter(wildMonInfo->wildPokemon[wildMonIndex].species);
+        if (rate < 100 && (Random() % 100) >= rate)
+            return FALSE;
+    }
+
     CreateWildMon(wildMonInfo->wildPokemon[wildMonIndex].species, level);
     return TRUE;
 }
