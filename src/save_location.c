@@ -60,7 +60,8 @@ static const u16 sSaveLocationPokeCenterList[] =
     LIST_END,
 };
 
-static bool32 IsCurMapPokeCenter(void)
+// Exposed for Deadman Mode: a Pokemon Center is the one safezone where battles do not kill.
+bool32 IsCurMapPokeCenter(void)
 {
     return IsCurMapInLocationList(sSaveLocationPokeCenterList);
 }

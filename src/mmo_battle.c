@@ -20,6 +20,7 @@
 #include "load_save.h"
 #include "main.h"
 #include "mmo_battle.h"
+#include "mmo_deadman.h"
 #include "mmo_link.h"
 #include "mmo_text.h"
 #include "net_client.h"
@@ -123,8 +124,14 @@ static void CB2_ReturnFromMmoBattle(void)
     Link_ClearAssignedMultiplayerId();
     gBattleTypeFlags = 0;
 
-    // Give back what the battle borrowed.
-    LoadPlayerParty();
+    // Give back what the battle borrowed -- unless this is a real Deadman fight. In a Deadman world
+    // outside a safezone a PvP battle is not free: a mon that faints dies like any other, so keep the
+    // battle's result instead of restoring the snapshot, and bury the fallen. A Deadman battle inside
+    // a Pokemon Center is safe and still costs nothing, and Normal-mode PvP is unchanged.
+    if (MmoDeadman_IsActive() && !MmoDeadman_InSafezone())
+        MmoDeadman_OnBattleEnd();
+    else
+        LoadPlayerParty();
     SavePlayerBag();
 
     // Return to the overworld through the local, non-link path -- not

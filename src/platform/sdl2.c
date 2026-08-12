@@ -107,10 +107,21 @@ static char sProfile[64] = "";
 static char sServerHost[128] = DEFAULT_SERVER_HOST;
 static unsigned int sServerPort = DEFAULT_SERVER_PORT;
 static unsigned int sSidecarPort = DEFAULT_SIDECAR_PORT;
+// Which world this launch plays. Read from the same pokeemerald.cfg the sidecar reads, so the game
+// and the sidecar agree on the mode, and the server (told by the sidecar's Hello) agrees too.
+static char sMode[16] = "normal";
 
 u16 Platform_GetSidecarPort(void)
 {
     return (u16)sSidecarPort;
+}
+
+// TRUE when this launch is a Deadman world: the game branches its permadeath, cap and safezone
+// rules on this. The server independently enforces the same rules from the character's mode, so a
+// tampered flag only changes what this client shows itself, never what the world allows.
+bool8 Platform_IsDeadman(void)
+{
+    return SDL_strcmp(sMode, "deadman") == 0;
 }
 
 // Names this launch, so a game and the sidecar it starts can only pair with each other.
@@ -880,6 +891,8 @@ static void ReadConfigFile(void)
             sServerPort = value;
         else if (sscanf(line, "sidecarPort=%u", &value) == 1 && value > 0 && value < 65536)
             sSidecarPort = value;
+        else if (sscanf(line, "mode=%15s", sMode) == 1)
+            ; // handled by the scanf itself
     }
     fclose(configFile);
 }
@@ -902,6 +915,8 @@ static void StoreConfigFile(void)
     fprintf(configFile, "server=%s\n", sServerHost);
     fprintf(configFile, "serverPort=%u\n", sServerPort);
     fprintf(configFile, "sidecarPort=%u\n", sSidecarPort);
+    // Preserved across a display-setting write so the chosen world survives an options change.
+    fprintf(configFile, "mode=%s\n", sMode);
     fclose(configFile);
 }
 

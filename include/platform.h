@@ -10,6 +10,12 @@ void Platform_RequestQuit(void);
 // IPC port taken and exits, leaving the existing one serving.
 void Platform_LaunchSidecar(void);
 
+// TRUE when this launch is a Deadman world (permadeath, badge caps, safezones, forced PvP). Read
+// from pokeemerald.cfg (mode=deadman), the same value the sidecar reads and the server enforces.
+// Game code branches its Deadman rules on this; the server independently enforces them, so this
+// only decides what the client shows itself.
+bool8 Platform_IsDeadman(void);
+
 // Typing with the real keyboard, for chat. While active the button mapping is suppressed,
 // so the game sees no input at all until the player finishes.
 void Platform_BeginTextInput(void);

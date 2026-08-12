@@ -1,6 +1,7 @@
 #include "global.h"
 #include "battle.h"
 #include "battle_setup.h"
+#include "mmo_deadman.h"
 #include "battle_transition.h"
 #include "main.h"
 #include "task.h"
@@ -603,6 +604,9 @@ static void CB2_EndWildBattle(void)
 {
     CpuFill16(0, (void *)(BG_PLTT), BG_PLTT_SIZE);
     ResetOamRange(0, 128);
+
+    // Deadman Mode: bury whatever fainted before the whiteout heal below can revive it.
+    MmoDeadman_OnBattleEnd();
 
     if (IsPlayerDefeated(gBattleOutcome) == TRUE && CurrentBattlePyramidLocation() == PYRAMID_LOCATION_NONE && !InBattlePike())
     {
@@ -1326,6 +1330,9 @@ void BattleSetup_StartTrainerBattle(void)
 
 static void CB2_EndTrainerBattle(void)
 {
+    // Deadman Mode: bury whatever fainted before any whiteout heal can revive it.
+    MmoDeadman_OnBattleEnd();
+
     if (gTrainerBattleOpponent_A == TRAINER_SECRET_BASE)
     {
         SetMainCallback2(CB2_ReturnToFieldContinueScriptPlayMapMusic);

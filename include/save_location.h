@@ -14,5 +14,8 @@
 
 void TrySetMapSaveWarpStatus(void);
 void SetChampionSaveWarp(void);
+// TRUE when the player is currently inside a Pokemon Center. Deadman Mode's safezone: battles
+// fought here do not permakill.
+bool32 IsCurMapPokeCenter(void);
 
 #endif // GUARD_SAVE_LOCATION_H
