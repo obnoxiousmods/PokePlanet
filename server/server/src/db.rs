@@ -419,6 +419,50 @@ pub async fn ensure_character(
     anyhow::bail!("no free character name for {name} after 1000 attempts")
 }
 
+/// Deadman hard reset: destroy everything a character owns and return it to a fresh start.
+///
+/// Deletes the save image and the projected inventory, party/boxes and story, and resets the
+/// character's own columns to a new character's defaults. On the next load the character has no
+/// save, so the client starts a new game -- which is exactly what a hard reset is. The name and
+/// account stay, so it is the same player beginning again, not a new identity.
+pub async fn wipe_character(db: &Db, character_id: i64) -> anyhow::Result<()> {
+    let client = db.get().await?;
+    client
+        .execute(
+            "DELETE FROM saves WHERE character_id = $1",
+            &[&character_id],
+        )
+        .await?;
+    client
+        .execute(
+            "DELETE FROM inventory WHERE character_id = $1",
+            &[&character_id],
+        )
+        .await?;
+    client
+        .execute(
+            "DELETE FROM pokemon WHERE character_id = $1",
+            &[&character_id],
+        )
+        .await?;
+    client
+        .execute(
+            "DELETE FROM story_state WHERE character_id = $1",
+            &[&character_id],
+        )
+        .await?;
+    client
+        .execute(
+            "UPDATE characters SET money = 3000, badges = 0, pokedex_caught = 0, pokedex_seen = 0,
+                 map_group = 0, map_num = 9, pos_x = 17, pos_y = 18, facing = 1, elevation = 3,
+                 play_time_s = 0
+             WHERE id = $1",
+            &[&character_id],
+        )
+        .await?;
+    Ok(())
+}
+
 /// Record the story state read out of a character's save.
 ///
 /// Kept as the game's own flag bitfield and var array rather than interpreted: the useful

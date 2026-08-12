@@ -549,6 +549,7 @@ fn is_heavy_control(control: &ClientControl) -> bool {
             | ClientControl::PartyChanged { .. }
             | ClientControl::RegionChanged { .. }
             | ClientControl::BlockChunk { .. }
+            | ClientControl::HardReset
     )
 }
 
@@ -1359,6 +1360,21 @@ async fn control_loop(
             }
             ClientControl::BattleEnded => {
                 server.world.clear_battle(player_id).await;
+            }
+            ClientControl::HardReset => {
+                // Only a Deadman character hard-resets; a normal client never sends this, and if one
+                // did there is nothing to gain -- a wipe destroys everything and grants nothing.
+                if mode != "deadman" {
+                    continue;
+                }
+                // The save lock is already held (HardReset is a heavy op). Destroy everything this
+                // character owns and reset it to a fresh start; the client resets itself to match.
+                db::wipe_character(&server.db, character_id).await?;
+                server.world.set_party_count(player_id, 0).await;
+                tracing::info!(
+                    player = player_id,
+                    "deadman hard reset: character wiped to a fresh start"
+                );
             }
             ClientControl::Goodbye => break,
             ClientControl::Hello { .. }

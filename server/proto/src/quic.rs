@@ -134,6 +134,15 @@ pub enum ClientControl {
     Keys {
         frames: Vec<u16>,
     },
+    /// Deadman hard reset: the character has no living Pokemon left anywhere, so it loses
+    /// everything and starts over. The server wipes the character's save, boxes, bank and progress.
+    ///
+    /// Trusted without verification because it can only hurt the sender -- a hard reset destroys
+    /// everything the character owns and gains nothing, so no honest or dishonest client benefits
+    /// from sending it spuriously.
+    ///
+    /// Appended so the existing variant numbering does not shift.
+    HardReset,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
