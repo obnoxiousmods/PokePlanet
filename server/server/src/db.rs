@@ -284,18 +284,29 @@ pub struct LeaderRow {
     pub rank: usize,
     pub name: String,
     pub badges: u8,
+    pub combat_level: u16,
     pub pokedex_caught: u16,
     pub play_hours: i64,
 }
 
 /// The top characters in a world, ranked by progress: badges, then Pokedex, then time played.
-/// Banned accounts are excluded. Used by the website.
+/// Banned accounts are excluded. Combat level is derived from the living party (box 0). Used by
+/// the website.
 pub async fn leaderboard(db: &Db, mode: &str, limit: i64) -> anyhow::Result<Vec<LeaderRow>> {
     let client = db.get().await?;
     let rows = client
         .query(
-            "SELECT c.name, c.badges, c.pokedex_caught, c.play_time_s
-               FROM characters c JOIN accounts a ON a.id = c.account_id
+            "SELECT c.name, c.badges, c.pokedex_caught, c.play_time_s,
+                    COALESCE(p.maxlvl, 0)::int  AS maxlvl,
+                    COALESCE(p.avglvl, 0)::float8 AS avglvl
+               FROM characters c
+               JOIN accounts a ON a.id = c.account_id
+               LEFT JOIN (
+                    SELECT character_id, MAX(level) AS maxlvl, AVG(level) AS avglvl
+                      FROM pokemon
+                     WHERE box_id = 0 AND NOT is_egg
+                     GROUP BY character_id
+               ) p ON p.character_id = c.id
               WHERE c.mode = $1 AND NOT a.banned
               ORDER BY c.badges DESC, c.pokedex_caught DESC, c.play_time_s DESC
               LIMIT $2",
@@ -305,12 +316,18 @@ pub async fn leaderboard(db: &Db, mode: &str, limit: i64) -> anyhow::Result<Vec<
     Ok(rows
         .iter()
         .enumerate()
-        .map(|(i, r)| LeaderRow {
-            rank: i + 1,
-            name: r.get("name"),
-            badges: r.get::<_, i16>("badges") as u8,
-            pokedex_caught: r.get::<_, i32>("pokedex_caught") as u16,
-            play_hours: r.get::<_, i64>("play_time_s") / 3600,
+        .map(|(i, r)| {
+            let badges = r.get::<_, i16>("badges") as u8;
+            let maxlvl = r.get::<_, i32>("maxlvl").clamp(0, 100) as u8;
+            let avglvl = r.get::<_, f64>("avglvl") as f32;
+            LeaderRow {
+                rank: i + 1,
+                name: r.get("name"),
+                badges,
+                combat_level: crate::deadman::combat_level_from(maxlvl, avglvl, badges),
+                pokedex_caught: r.get::<_, i32>("pokedex_caught") as u16,
+                play_hours: r.get::<_, i64>("play_time_s") / 3600,
+            }
         })
         .collect())
 }

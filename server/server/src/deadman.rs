@@ -33,17 +33,15 @@ pub fn party_cap(badges: u8) -> u8 {
 
 /// The combat level (3..=126) shown next to a Deadman character and used to rank the ladder.
 ///
-/// OSRS-style: a single number summarising how dangerous an account is, from its party's levels and
-/// its badges. Not a gate on its own -- PvP eligibility is the badge range below -- but the headline
-/// figure players compare. Empty party (a fresh or wiped character) is the floor, 3.
-#[allow(dead_code)] // wired into the ladder + profile display in Phase F
-pub fn combat_level(party_levels: &[u8], badges: u8) -> u16 {
-    if party_levels.is_empty() {
+/// OSRS-style: a single number summarising how dangerous an account is, from its party's highest and
+/// average level and its badges. Not a gate on its own -- PvP eligibility is the badge range below --
+/// but the headline figure players compare. A character with no living party (fresh or wiped) is the
+/// floor, 3. The ladder passes `max`/`avg` straight from a SQL aggregate over the party box.
+pub fn combat_level_from(max_level: u8, avg_level: f32, badges: u8) -> u16 {
+    if max_level == 0 {
         return 3;
     }
-    let max = *party_levels.iter().max().unwrap() as f32;
-    let avg = party_levels.iter().map(|&l| l as f32).sum::<f32>() / party_levels.len() as f32;
-    let raw = (max * 0.9 + avg * 0.4 + badges as f32 * 4.0).round() as i32;
+    let raw = (max_level as f32 * 0.9 + avg_level * 0.4 + badges as f32 * 4.0).round() as i32;
     raw.clamp(3, 126) as u16
 }
 
@@ -97,13 +95,17 @@ mod tests {
 
     #[test]
     fn combat_level_is_bounded_and_ordered() {
-        assert_eq!(combat_level(&[], 0), 3, "no party is the floor");
-        let low = combat_level(&[5, 5], 0);
-        let high = combat_level(&[50, 48, 45], 6);
+        assert_eq!(
+            combat_level_from(0, 0.0, 0),
+            3,
+            "no living party is the floor"
+        );
+        let low = combat_level_from(5, 5.0, 0);
+        let high = combat_level_from(50, 47.7, 6);
         assert!((3..=126).contains(&low) && (3..=126).contains(&high));
         assert!(high > low, "a stronger, further-along team ranks higher");
         // Never exceeds the ceiling even at an absurd input.
-        assert_eq!(combat_level(&[100, 100, 100, 100, 100, 100], 8), 126);
+        assert_eq!(combat_level_from(100, 100.0, 8), 126);
     }
 
     #[test]

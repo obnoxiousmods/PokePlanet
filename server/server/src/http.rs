@@ -69,17 +69,18 @@ async fn ladder(State(server): State<Arc<Server>>, Path(mode): Path<String>) -> 
     };
 
     let mut table = String::from(
-        "<table class=\"ladder\"><thead><tr><th>#</th><th>Trainer</th><th>Badges</th>\
-         <th>Pokedex</th><th>Hours</th></tr></thead><tbody>",
+        "<table class=\"ladder\"><thead><tr><th>#</th><th>Trainer</th><th>Combat</th>\
+         <th>Badges</th><th>Pokedex</th><th>Hours</th></tr></thead><tbody>",
     );
     if rows.is_empty() {
-        table.push_str("<tr><td colspan=\"5\" class=\"empty\">No one has set out in this world yet. Be the first.</td></tr>");
+        table.push_str("<tr><td colspan=\"6\" class=\"empty\">No one has set out in this world yet. Be the first.</td></tr>");
     }
     for r in &rows {
         table.push_str(&format!(
-            "<tr><td class=\"rank\">{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
+            "<tr><td class=\"rank\">{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td><td>{}</td></tr>",
             r.rank,
             html_escape(&r.name),
+            r.combat_level,
             r.badges,
             r.pokedex_caught,
             r.play_hours,
