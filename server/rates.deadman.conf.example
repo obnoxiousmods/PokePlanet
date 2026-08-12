@@ -1,0 +1,39 @@
+# PokePlanet gameplay rates for the DEADMAN world.
+#
+# Same format as rates.conf (every value is a multiplier on the original game; see
+# rates.conf.example for the full explanation). Copy this to `rates.deadman.conf` (or set
+# POKEPLANET_RATES_DEADMAN_FILE) and restart. If there is no deadman file the deadman world
+# simply runs the normal rates -- a server opts into this harsher economy rather than getting
+# it by surprise.
+#
+# Deadman is meant to feel expensive and high-stakes: you invest real time, you plan ahead,
+# and a careless death costs you. These dials make progress slow, captures precious, and money
+# scarce. Tune to taste; the anti-cheat ceilings scale with them automatically.
+
+# Slow experience: levelling is a grind, and combined with the badge level cap it keeps every
+# gym a real wall rather than something you out-grind in an afternoon.
+experience = 0.8
+
+# Captures are an investment. A low catch rate means balls matter, you weaken and plan an
+# encounter rather than spamming, and a caught mon is something you fought for.
+catch = 0.35
+
+# Money is scarce, so every purchase is a decision and the economy has weight. Prize money and
+# sales are the only income (RemoveMoney is untouched, so shops charge full price).
+money = 0.6
+
+# Encounters are a little rarer, so wandering into wild fights -- each of which can kill in
+# Deadman -- is less relentless and more deliberate.
+encounter = 0.8
+
+# Shops charge full price; scarcity comes from the low `money` income, not inflated prices.
+shop_price = 1.0
+
+# Items found/given/dropped, at the original rate.
+items = 1.0
+
+# Per-species encounter tuning (once the species_encounter wire lands): suppress the commons and
+# make the desirables genuinely rare, so a good find is an event.
+#
+# species.129 = 0.1    # Magikarp: still everywhere, just less so
+# species.263 = 0.05   # a desirable early mon, made rare
