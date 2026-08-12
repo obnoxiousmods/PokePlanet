@@ -17,6 +17,7 @@
 #include "battle_setup.h"
 #include "field_screen_effect.h"
 #include "link.h"
+#include "item.h"
 #include "load_save.h"
 #include "main.h"
 #include "money.h"
@@ -132,11 +133,33 @@ static void CB2_ReturnFromMmoBattle(void)
     if (MmoDeadman_IsActive() && !MmoDeadman_InSafezone())
     {
         MmoDeadman_OnBattleEnd();
-        // The loser of a Deadman PvP fight drops everything they were carrying: their pokedollars
-        // are forfeit. Money banked at a PC is untouched -- that is what the bank protects against.
-        // The server accepts money going down like any other spend; a win costs nothing.
+        // The loser of a Deadman PvP fight drops everything they were carrying: pokedollars forfeit,
+        // and the carried items (the Items pocket -- not key items, balls or TMs) fall to the ground
+        // where anyone can pick them up. Money banked at a PC is untouched; that is the bank's point.
         if (gBattleOutcome == B_OUTCOME_LOST)
+        {
+            u32 i;
+            u16 items[BAG_ITEMS_COUNT];
+            u32 count = 0;
+
             SetMoney(&gSaveBlock1Ptr->money, 0);
+
+            // Snapshot the item ids first: removing an item compacts the pocket underneath us.
+            for (i = 0; i < BAG_ITEMS_COUNT; i++)
+            {
+                u16 id = gSaveBlock1Ptr->bagPocket_Items[i].itemId;
+                if (id != ITEM_NONE)
+                    items[count++] = id;
+            }
+            for (i = 0; i < count; i++)
+            {
+                u16 quantity = CountTotalItemQuantityInBag(items[i]);
+                if (quantity == 0)
+                    continue;
+                Net_DropItem(items[i], quantity);
+                RemoveBagItem(items[i], quantity);
+            }
+        }
         // Losing your last living Pokemon to another player is the end of the run just as surely as
         // a whiteout is. The battle-return path never passes through DoWhiteOut, so check here:
         // nothing alive anywhere means the server wipes the character and the game restarts fresh.

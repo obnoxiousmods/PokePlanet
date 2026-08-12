@@ -18,6 +18,7 @@
 #include "mmo_nameplates.h"
 #include "mmo_players.h"
 #include "mmo_text.h"
+#include "mmo_worlditems.h"
 #include "link.h"
 #include "net_client.h"
 #include "constants/maps.h"
@@ -521,6 +522,8 @@ void MmoPlayers_Update(void)
      || gSaveBlock1Ptr->location.mapNum != sCurrentMapNum)
     {
         MmoPlayers_Reset();
+        // The dropped-item objects went with the old map too; forget them so they respawn fresh.
+        MmoWorldItems_Reset();
         // Every window went with the old map, including chat's.
         MmoChat_Reset();
         // Do not sit on unsaved progress across a door. The next thing to happen is a whole
@@ -533,6 +536,7 @@ void MmoPlayers_Update(void)
 
     ApplyCorrection();
     MmoDeadman_PollBank();
+    MmoWorldItems_Update();
     CheckForBattleStart();
     ReportSelf();
 
