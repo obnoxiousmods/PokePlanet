@@ -417,6 +417,41 @@ fn graveyard_personalities(storage_block: &[u8]) -> std::collections::HashSet<u3
         .collect()
 }
 
+/// Deadman Mode: the first species held more than once alive across the party and the PC boxes
+/// (everything except the graveyard), or `None` if every living species is unique.
+///
+/// The one-living-per-species rule forbids holding two live copies of a species -- to catch another
+/// you must let the one you have die or release it. The client enforces this at the encounter; this
+/// is the server's cross-check that a patched client did not farm duplicates. Eggs are NOT
+/// distinguished from live Pokemon here (the stored species field is the same), so a species held as
+/// both a live mon and its egg reads as a duplicate. Because breeding can produce exactly that
+/// legitimately, the caller treats a hit as advisory -- logged, not refused -- until egg detection
+/// is added.
+pub fn living_species_duplicated(party: &[PartyMon], storage_block: &[u8]) -> Option<u16> {
+    let mut seen = std::collections::HashSet::new();
+
+    for mon in party {
+        if mon.species != 0 && !seen.insert(mon.species) {
+            return Some(mon.species);
+        }
+    }
+
+    // PC boxes, excluding the graveyard: a boxed mon is alive, a corpse is not.
+    for i in 0..GRAVEYARD_BOX * IN_BOX_COUNT {
+        let at = BOXES_OFFSET + i * BOX_MON_SIZE;
+        let Some(slot) = storage_block.get(at..at + BOX_MON_SIZE) else {
+            break;
+        };
+        if let Some(mon) = read_box_mon(slot) {
+            if mon.species != 0 && !seen.insert(mon.species) {
+                return Some(mon.species);
+            }
+        }
+    }
+
+    None
+}
+
 /// Deadman Mode: the graveyard box is read-only. A Pokemon laid to rest there can never leave, so
 /// a storage report that has lost any corpse present before is a revived dead Pokemon and is
 /// refused. Only meaningful for a Deadman character; the caller gates it on the mode.
@@ -2265,6 +2300,81 @@ mod tests {
         assert!(
             graveyard_regressed(&normal_box, &empty).is_none(),
             "only the graveyard box is read-only"
+        );
+    }
+
+    /// Two living copies of one species are detected across party and boxes; a corpse of that
+    /// species in the graveyard does not count, and unique species pass.
+    #[test]
+    fn duplicate_living_species_is_detected() {
+        // A boxed mon of `species` at box slot `slot_index` (encrypted, checksummed like the game).
+        fn put_species(block: &mut [u8], slot_index: usize, personality: u32, species: u16) {
+            let ot_id: u32 = 0x9abc_def0;
+            let key = personality ^ ot_id;
+            let at = BOXES_OFFSET + slot_index * BOX_MON_SIZE;
+            let mon = &mut block[at..at + BOX_MON_SIZE];
+            mon[0..4].copy_from_slice(&personality.to_le_bytes());
+            mon[4..8].copy_from_slice(&ot_id.to_le_bytes());
+            let order = SUBSTRUCT_ORDER[(personality % 24) as usize];
+            let mut plain = [0u8; 48];
+            let growth = order[0] * 12;
+            plain[growth..growth + 2].copy_from_slice(&species.to_le_bytes());
+            let checksum: u16 = plain
+                .chunks_exact(2)
+                .fold(0u16, |a, c| a.wrapping_add(u16::from_le_bytes([c[0], c[1]])));
+            mon[BOX_OFFSET_CHECKSUM..BOX_OFFSET_CHECKSUM + 2]
+                .copy_from_slice(&checksum.to_le_bytes());
+            for (i, chunk) in plain.chunks_exact(4).enumerate() {
+                let word = u32::from_le_bytes(chunk.try_into().unwrap()) ^ key;
+                mon[BOX_OFFSET_SECURE + i * 4..BOX_OFFSET_SECURE + i * 4 + 4]
+                    .copy_from_slice(&word.to_le_bytes());
+            }
+        }
+        fn mon(species: u16) -> PartyMon {
+            PartyMon {
+                personality: species as u32 + 1,
+                ot_id: 7,
+                species,
+                level: 5,
+                experience: 0,
+                held_item: 0,
+                moves: [0; 4],
+                evs: [0; 6],
+                checksum_ok: true,
+            }
+        }
+
+        let full = BOXES_OFFSET + BOX_MON_COUNT * BOX_MON_SIZE;
+        let empty = vec![0u8; full];
+
+        // Distinct species in the party: fine.
+        assert_eq!(living_species_duplicated(&[mon(1), mon(4)], &empty), None);
+        // Two of the same in the party: caught.
+        assert_eq!(
+            living_species_duplicated(&[mon(1), mon(1)], &empty),
+            Some(1)
+        );
+        // Empty party slots (species 0) never count.
+        assert_eq!(living_species_duplicated(&[mon(0), mon(0)], &empty), None);
+
+        // One in the party, the same species boxed: caught across the two.
+        let mut with_box = vec![0u8; full];
+        put_species(&mut with_box, 0, 0xAAAA_0001, 25);
+        assert_eq!(
+            living_species_duplicated(&[mon(25)], &with_box),
+            Some(25),
+            "a live party mon and a boxed one of the same species is a duplicate"
+        );
+        // A different boxed species is fine.
+        assert_eq!(living_species_duplicated(&[mon(4)], &with_box), None);
+
+        // The same species lying in the GRAVEYARD is a corpse, not a living duplicate.
+        let mut with_grave = vec![0u8; full];
+        put_species(&mut with_grave, GRAVEYARD_BOX * IN_BOX_COUNT, 0xBBBB_0002, 25);
+        assert_eq!(
+            living_species_duplicated(&[mon(25)], &with_grave),
+            None,
+            "a graveyard corpse does not lock its species"
         );
     }
 

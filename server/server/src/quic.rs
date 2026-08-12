@@ -907,6 +907,18 @@ async fn control_loop(
                     if let Err(e) = db::record_deaths(&server.db, character_id, &corpses).await {
                         tracing::warn!(player = player_id, error = %e, "could not record deadman deaths");
                     }
+                    // One-living-per-species cross-check. Advisory until eggs are told apart from
+                    // live mons (a live mon plus its egg is a legitimate duplicate here); logged so
+                    // a client farming duplicates is visible, and ready to flip to enforcing.
+                    if let Some(species) =
+                        crate::save_parse::living_species_duplicated(&new.party, &assembled)
+                    {
+                        tracing::warn!(
+                            player = player_id,
+                            species,
+                            "deadman holds two living of one species (advisory, not enforced)"
+                        );
+                    }
                 }
             }
             ClientControl::RegionChanged { offset, bytes } => {
