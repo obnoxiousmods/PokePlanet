@@ -106,6 +106,47 @@ u8 MmoDeadman_PartyCap(void)
     return sPartyCapByBadges[badges > 8 ? 8 : badges];
 }
 
+// The OSRS-style combat level (3..126), from the living party's levels and the badge count.
+//
+// Mirrors server deadman::combat_level_from so the number the player sees matches the one the
+// server ranks them by. A character with no living, non-egg party member is the floor, 3.
+u16 MmoDeadman_CombatLevel(void)
+{
+    u8 i;
+    u8 count = 0;
+    u8 maxLevel = 0;
+    u32 sum = 0;
+    u8 badges = MmoDeadman_BadgeCount();
+    s32 raw;
+    float avg;
+
+    for (i = 0; i < PARTY_SIZE; i++)
+    {
+        u16 species = GetMonData(&gPlayerParty[i], MON_DATA_SPECIES);
+        u8 level;
+
+        if (species == SPECIES_NONE || GetMonData(&gPlayerParty[i], MON_DATA_IS_EGG))
+            continue;
+
+        level = GetMonData(&gPlayerParty[i], MON_DATA_LEVEL);
+        if (level > maxLevel)
+            maxLevel = level;
+        sum += level;
+        count++;
+    }
+
+    if (count == 0 || maxLevel == 0)
+        return 3;
+
+    avg = (float)sum / (float)count;
+    raw = (s32)(maxLevel * 0.9f + avg * 0.4f + badges * 4.0f + 0.5f);
+    if (raw < 3)
+        raw = 3;
+    if (raw > 126)
+        raw = 126;
+    return (u16)raw;
+}
+
 bool8 MmoDeadman_OwnsSpecies(u16 species)
 {
     u8 i;

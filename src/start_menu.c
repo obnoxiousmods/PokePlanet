@@ -22,6 +22,7 @@
 #include "load_save.h"
 #include "main.h"
 #include "menu.h"
+#include "mmo_deadman.h"
 #include "new_game.h"
 #include "option_menu.h"
 #include "overworld.h"
@@ -80,6 +81,7 @@ COMMON_DATA bool8 (*gMenuCallback)(void) = NULL;
 
 // EWRAM
 EWRAM_DATA static u8 sSafariBallsWindowId = 0;
+EWRAM_DATA static u8 sDeadmanWindowId = 0;
 EWRAM_DATA static u8 sBattlePyramidFloorWindowId = 0;
 EWRAM_DATA static u8 sStartMenuCursorPos = 0;
 EWRAM_DATA static u8 sNumStartMenuActions = 0;
@@ -147,6 +149,19 @@ static const struct WindowTemplate sWindowTemplate_SafariBalls = {
     .paletteNum = 15,
     .baseBlock = 0x8
 };
+
+// Deadman status readout shown alongside the start menu: combat level and the current level cap.
+static const struct WindowTemplate sWindowTemplate_Deadman = {
+    .bg = 0,
+    .tilemapLeft = 1,
+    .tilemapTop = 1,
+    .width = 11,
+    .height = 4,
+    .paletteNum = 15,
+    .baseBlock = 0x8
+};
+
+static const u8 sText_DeadmanStatus[] = _("Combat Lv.{STR_VAR_1}\nCap Lv.{STR_VAR_2}");
 
 static const u8 *const sPyramidFloorNames[FRONTIER_STAGES_PER_CHALLENGE + 1] =
 {
@@ -245,6 +260,7 @@ static void BuildBattlePikeStartMenu(void);
 static void BuildBattlePyramidStartMenu(void);
 static void BuildMultiPartnerRoomStartMenu(void);
 static void ShowSafariBallsWindow(void);
+static void ShowDeadmanWindow(void);
 static void ShowPyramidFloorWindow(void);
 static void RemoveExtraStartMenuWindows(void);
 static bool32 PrintStartMenuActions(s8 *pIndex, u32 count);
@@ -429,6 +445,18 @@ static void ShowSafariBallsWindow(void)
     CopyWindowToVram(sSafariBallsWindowId, COPYWIN_GFX);
 }
 
+static void ShowDeadmanWindow(void)
+{
+    sDeadmanWindowId = AddWindow(&sWindowTemplate_Deadman);
+    PutWindowTilemap(sDeadmanWindowId);
+    DrawStdWindowFrame(sDeadmanWindowId, FALSE);
+    ConvertIntToDecimalStringN(gStringVar1, MmoDeadman_CombatLevel(), STR_CONV_MODE_LEFT_ALIGN, 3);
+    ConvertIntToDecimalStringN(gStringVar2, MmoDeadman_LevelCap(), STR_CONV_MODE_LEFT_ALIGN, 3);
+    StringExpandPlaceholders(gStringVar4, sText_DeadmanStatus);
+    AddTextPrinterParameterized(sDeadmanWindowId, FONT_NORMAL, gStringVar4, 0, 1, TEXT_SKIP_DRAW, NULL);
+    CopyWindowToVram(sDeadmanWindowId, COPYWIN_GFX);
+}
+
 static void ShowPyramidFloorWindow(void)
 {
     if (gSaveBlock2Ptr->frontier.curChallengeBattleNum == FRONTIER_STAGES_PER_CHALLENGE)
@@ -451,6 +479,12 @@ static void RemoveExtraStartMenuWindows(void)
         ClearStdWindowAndFrameToTransparent(sSafariBallsWindowId, FALSE);
         CopyWindowToVram(sSafariBallsWindowId, COPYWIN_GFX);
         RemoveWindow(sSafariBallsWindowId);
+    }
+    else if (MmoDeadman_IsActive())
+    {
+        ClearStdWindowAndFrameToTransparent(sDeadmanWindowId, FALSE);
+        CopyWindowToVram(sDeadmanWindowId, COPYWIN_GFX);
+        RemoveWindow(sDeadmanWindowId);
     }
     if (CurrentBattlePyramidLocation() != PYRAMID_LOCATION_NONE)
     {
@@ -512,6 +546,8 @@ static bool32 InitStartMenuStep(void)
     case 3:
         if (GetSafariZoneFlag())
             ShowSafariBallsWindow();
+        else if (MmoDeadman_IsActive())
+            ShowDeadmanWindow();
         if (CurrentBattlePyramidLocation() != PYRAMID_LOCATION_NONE)
             ShowPyramidFloorWindow();
         sInitStartMenuData[0]++;

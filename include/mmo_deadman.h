@@ -30,6 +30,10 @@ u8 MmoDeadman_LevelCap(void);
 // a deep bench. Mirrors the server's deadman::party_cap.
 u8 MmoDeadman_PartyCap(void);
 
+// The OSRS-style combat level (3..126) from the living party's levels and badge count, shown in the
+// start menu. Mirrors the server's deadman::combat_level_from so the shown number matches the rank.
+u16 MmoDeadman_CombatLevel(void);
+
 // TRUE when the player already owns a LIVING copy of `species`: one in the party with HP left, or
 // any in the PC boxes except the graveyard (a boxed mon is always alive; a graveyard corpse is
 // not). Deadman forbids encountering a species you already hold, so a capture is a commitment --
