@@ -210,8 +210,16 @@ pub async fn finish_login(
         anyhow::bail!("account is banned");
     }
 
-    let character =
-        db::ensure_character(db, account_id, &user.display_name(), random_sprite()).await?;
+    // The browser login anchors the account to its "normal" character. The mode-select at connect
+    // decides which world to actually play; a "deadman" character is created there on first entry.
+    let character = db::ensure_character(
+        db,
+        account_id,
+        "normal",
+        &user.display_name(),
+        random_sprite(),
+    )
+    .await?;
     let token = random_token();
     db::issue_session(db, character.id, &token).await?;
 

@@ -146,6 +146,14 @@ ALTER TABLE characters ADD COLUMN IF NOT EXISTS badges         SMALLINT NOT NULL
 ALTER TABLE characters ADD COLUMN IF NOT EXISTS pokedex_caught INTEGER  NOT NULL DEFAULT 0;
 ALTER TABLE characters ADD COLUMN IF NOT EXISTS pokedex_seen   INTEGER  NOT NULL DEFAULT 0;
 
+-- Deadman Mode: an account holds up to one character per mode ('normal' | 'deadman'), each with
+-- its own save/party/boxes/money. Existing characters are 'normal'. mode must exist before the
+-- name/account uniqueness below reference it. The old single-character-per-account uniqueness
+-- (characters_account_id_key) is replaced by uniqueness per (account, mode).
+ALTER TABLE characters ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'normal';
+ALTER TABLE characters DROP CONSTRAINT IF EXISTS characters_account_id_key;
+CREATE UNIQUE INDEX IF NOT EXISTS characters_account_mode_idx ON characters (account_id, mode);
+
 -- A character name is how other players address someone in a whisper, so two players
 -- cannot share one: a private message would otherwise be delivered to both, and neither
 -- sender nor recipient would have any way to tell. Case-insensitively unique, so that
@@ -154,11 +162,15 @@ ALTER TABLE characters ADD COLUMN IF NOT EXISTS pokedex_seen   INTEGER  NOT NULL
 -- Deployments predating this may already hold duplicates, and creating the index while
 -- they exist would fail and take the server down on startup. The earliest holder keeps the
 -- name and later ones are suffixed with their id, which is unique by construction.
+-- Uniqueness is per mode: the same display name may exist once in the normal world and once in
+-- the deadman world (they are different characters/accounts-of-record), but not twice in one mode.
 UPDATE characters c SET name = c.name || '#' || c.id
 WHERE EXISTS (
-    SELECT 1 FROM characters o WHERE lower(o.name) = lower(c.name) AND o.id < c.id
+    SELECT 1 FROM characters o
+     WHERE lower(o.name) = lower(c.name) AND o.mode = c.mode AND o.id < c.id
 );
-CREATE UNIQUE INDEX IF NOT EXISTS characters_name_key ON characters (lower(name));
+DROP INDEX IF EXISTS characters_name_key;
+CREATE UNIQUE INDEX IF NOT EXISTS characters_name_mode_idx ON characters (lower(name), mode);
 
 -- Existing deployments were created before Littleroot became the default spawn.
 ALTER TABLE characters ALTER COLUMN map_group SET DEFAULT 0;
@@ -249,6 +261,11 @@ pub async fn connect(url: &str) -> anyhow::Result<Db> {
 pub struct Character {
     pub id: i64,
     pub account_id: i64,
+    /// Which world this character belongs to: "normal" or "deadman". An account holds at most one
+    /// of each; the mode is chosen at connect and decides which ruleset/economy applies.
+    #[allow(dead_code)]
+    // read once the connect-time mode-select and per-mode rates land (Phase A step 2)
+    pub mode: String,
     pub name: String,
     pub graphics_id: u8,
     pub map_group: u8,
@@ -269,6 +286,7 @@ impl Character {
         Self {
             id: row.get("id"),
             account_id: row.get("account_id"),
+            mode: row.get("mode"),
             name: row.get("name"),
             graphics_id: row.get::<_, i16>("graphics_id") as u8,
             map_group: row.get::<_, i16>("map_group") as u8,
@@ -349,6 +367,7 @@ fn is_unique_violation(e: &tokio_postgres::Error) -> bool {
 pub async fn ensure_character(
     db: &Db,
     account_id: i64,
+    mode: &str,
     name: &str,
     graphics_id: u8,
 ) -> anyhow::Result<Character> {
@@ -356,8 +375,8 @@ pub async fn ensure_character(
 
     if let Some(row) = client
         .query_opt(
-            "SELECT * FROM characters WHERE account_id = $1",
-            &[&account_id],
+            "SELECT * FROM characters WHERE account_id = $1 AND mode = $2",
+            &[&account_id, &mode],
         )
         .await?
     {
@@ -372,10 +391,10 @@ pub async fn ensure_character(
         };
         let result = client
             .query_one(
-                "INSERT INTO characters (account_id, name, graphics_id)
-                 VALUES ($1, $2, $3)
+                "INSERT INTO characters (account_id, mode, name, graphics_id)
+                 VALUES ($1, $2, $3, $4)
                  RETURNING *",
-                &[&account_id, &candidate, &(graphics_id as i16)],
+                &[&account_id, &mode, &candidate, &(graphics_id as i16)],
             )
             .await;
 
@@ -387,8 +406,8 @@ pub async fn ensure_character(
                 // simultaneous sign-ins would spend a thousand attempts renaming nobody.
                 if let Some(row) = client
                     .query_opt(
-                        "SELECT * FROM characters WHERE account_id = $1",
-                        &[&account_id],
+                        "SELECT * FROM characters WHERE account_id = $1 AND mode = $2",
+                        &[&account_id, &mode],
                     )
                     .await?
                 {
@@ -700,7 +719,7 @@ mod integration {
         let (account_id, _) = upsert_account(&db, &tag, "IntegrationTester")
             .await
             .expect("upsert account");
-        let character = ensure_character(&db, account_id, "ITester", 7)
+        let character = ensure_character(&db, account_id, "normal", "ITester", 7)
             .await
             .expect("ensure character");
 
