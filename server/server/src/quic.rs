@@ -170,13 +170,21 @@ async fn handle_connection(server: Arc<Server>, conn: Connection) -> anyhow::Res
         .ok_or_else(|| anyhow::anyhow!("closed before Hello"))?;
     let hello: ClientControl = quic::decode(&first)?;
 
-    let (token, protocol_version) = match hello {
+    let (token, protocol_version, mode) = match hello {
         ClientControl::Hello {
             protocol_version,
             token,
+            mode,
             ..
-        } => (token, protocol_version),
+        } => (token, protocol_version, mode),
         other => anyhow::bail!("expected Hello, got {other:?}"),
+    };
+    // Only two worlds exist; anything else is treated as normal so a bad value cannot conjure a
+    // third ruleset.
+    let mode = if mode == "deadman" {
+        "deadman"
+    } else {
+        "normal"
     };
 
     if !quic::version_is_compatible(protocol_version) {
@@ -200,6 +208,22 @@ async fn handle_connection(server: Arc<Server>, conn: Connection) -> anyhow::Res
     };
     let Some(character) = character else {
         return run_login_flow(server, conn, send, recv).await;
+    };
+
+    // The session token anchors to the account's 'normal' character (that is what login created).
+    // Resolve to the character for the selected world; a deadman character is created here the first
+    // time an account enters that world, with the same name and look as the anchor.
+    let character = if character.mode == mode {
+        character
+    } else {
+        db::ensure_character(
+            &server.db,
+            character.account_id,
+            mode,
+            &character.name,
+            character.graphics_id,
+        )
+        .await?
     };
 
     run_session(server, conn, send, recv, character).await

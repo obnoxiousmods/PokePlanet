@@ -22,10 +22,15 @@ pub enum AuthState {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ClientControl {
     /// First message on the control stream. `token` is a previously issued session token.
+    ///
+    /// `mode` selects which world this connection plays: "normal" or "deadman". An account holds a
+    /// separate character per mode, so the same token can enter either; the server resolves the
+    /// character for (account, mode). An unknown value is treated as "normal".
     Hello {
         protocol_version: u16,
         token: Option<String>,
         client_version: String,
+        mode: String,
     },
     /// Ask the server to mint a login ticket so the sidecar can open the browser.
     BeginLogin,

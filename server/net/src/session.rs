@@ -133,6 +133,7 @@ impl Session {
                 protocol_version: PROTOCOL_VERSION,
                 token: self.tokens.load(),
                 client_version: env!("CARGO_PKG_VERSION").to_string(),
+                mode: self.settings.mode.clone(),
             },
         )
         .await?;

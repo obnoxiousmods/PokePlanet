@@ -37,6 +37,10 @@ pub struct Settings {
     /// console, so without this its log goes nowhere and a multiplayer fault leaves no
     /// trace to look at afterwards.
     pub log_path: Option<PathBuf>,
+    /// Which world to play: "normal" or "deadman". An account holds a separate character per
+    /// mode, so the same token enters either. Read from `pokeemerald.cfg` (`mode=deadman`), which
+    /// is how the in-game mode-select persists the choice, so the sidecar picks it up on connect.
+    pub mode: String,
 }
 
 impl Default for Settings {
@@ -50,6 +54,7 @@ impl Default for Settings {
             insecure: false,
             fixed_token: false,
             log_path: None,
+            mode: "normal".to_string(),
         }
     }
 }
@@ -87,6 +92,7 @@ impl Settings {
                         self.ipc_addr.set_port(p);
                     }
                 }
+                "mode" if !value.is_empty() => self.mode = value.to_string(),
                 _ => {}
             }
         }
@@ -135,6 +141,11 @@ impl Settings {
                 }
                 "--insecure" => self.insecure = true,
                 "--fixed-token" => self.fixed_token = true,
+                "--mode" => {
+                    self.mode = args
+                        .next()
+                        .ok_or_else(|| anyhow::anyhow!("--mode needs 'normal' or 'deadman'"))?;
+                }
                 "--log" => {
                     self.log_path = Some(
                         args.next()

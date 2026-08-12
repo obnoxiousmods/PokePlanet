@@ -127,6 +127,7 @@ async fn main() -> anyhow::Result<()> {
         protocol_version: PROTOCOL_VERSION,
         token: Some(opts.token.clone()),
         client_version: format!("ghost/{}", env!("CARGO_PKG_VERSION")),
+        mode: "normal".to_string(),
     })?;
     send.write_all(&(hello.len() as u32).to_le_bytes()).await?;
     send.write_all(&hello).await?;
