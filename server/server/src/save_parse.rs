@@ -384,10 +384,11 @@ const IN_BOX_COUNT: usize = 30;
 /// client's MMO_GRAVEYARD_BOX (TOTAL_BOXES_COUNT - 1).
 const GRAVEYARD_BOX: usize = 13;
 
-/// The personalities of the Pokemon lying in the graveyard box. A corpse is any decodable slot
-/// there; a Pokemon's personality is immutable and effectively unique, so it identifies each one.
-fn graveyard_personalities(storage_block: &[u8]) -> std::collections::HashSet<u32> {
-    let mut set = std::collections::HashSet::new();
+/// The Pokemon lying in the graveyard box, each as (personality, species). A corpse is any
+/// decodable slot there; a Pokemon's personality is immutable and effectively unique, so it
+/// identifies each one, and the species lets the death feed name what was lost.
+pub fn graveyard_corpses(storage_block: &[u8]) -> Vec<(u32, u16)> {
+    let mut out = Vec::new();
     let first = GRAVEYARD_BOX * IN_BOX_COUNT;
     for i in first..first + IN_BOX_COUNT {
         let at = BOXES_OFFSET + i * BOX_MON_SIZE;
@@ -395,17 +396,25 @@ fn graveyard_personalities(storage_block: &[u8]) -> std::collections::HashSet<u3
             break;
         };
         // Occupied (decodable, species != 0) slots only; an empty slot has no corpse.
-        if read_box_mon(slot).is_some() {
+        if let Some(mon) = read_box_mon(slot) {
             if let Some(p) = slot
                 .get(0..4)
                 .and_then(|b| b.try_into().ok())
                 .map(u32::from_le_bytes)
             {
-                set.insert(p);
+                out.push((p, mon.species));
             }
         }
     }
-    set
+    out
+}
+
+/// The personalities of the Pokemon lying in the graveyard box.
+fn graveyard_personalities(storage_block: &[u8]) -> std::collections::HashSet<u32> {
+    graveyard_corpses(storage_block)
+        .into_iter()
+        .map(|(p, _)| p)
+        .collect()
 }
 
 /// Deadman Mode: the graveyard box is read-only. A Pokemon laid to rest there can never leave, so

@@ -26,9 +26,31 @@ async fn health(State(server): State<Arc<Server>>) -> impl IntoResponse {
     format!("ok, {} online\n", server.world.online_count().await)
 }
 
-/// The landing page: what PokePlanet is, who's online, and the way into each world's ladder.
+/// The landing page: what PokePlanet is, who's online, the way into each world's ladder, and the
+/// most recent Deadman deaths.
 async fn home(State(server): State<Arc<Server>>) -> impl IntoResponse {
     let online = server.world.online_count().await;
+    let feed = match db::recent_deaths(&server.db, "deadman", 12).await {
+        Ok(deaths) if !deaths.is_empty() => {
+            let items = deaths
+                .iter()
+                .map(|d| {
+                    format!(
+                        "<li><span class=\"who\">{}</span> lost {} <span class=\"when\">{}</span></li>",
+                        html_escape(&d.name),
+                        species_name(d.species),
+                        html_escape(&d.died_on),
+                    )
+                })
+                .collect::<String>();
+            format!("<h2 class=\"feed-h\">The recently fallen</h2><ul class=\"feed\">{items}</ul>")
+        }
+        Ok(_) => String::new(),
+        Err(e) => {
+            tracing::warn!(error = %e, "death feed query failed");
+            String::new()
+        }
+    };
     let body = format!(
         r#"<p class="lede">A server-authoritative Pokemon MMO. Explore one world together --
 or step into <strong>Deadman</strong>, where a fainted Pokemon dies forever, progress is capped to
@@ -39,10 +61,18 @@ your next gym, and everything you carry is on the line.</p>
 they have pushed a life they can lose in an instant.</p></a>
   <a class="card normal" href="/ladder/normal"><h2>Standard ladder</h2><p>The trainers of the open
 world, ranked by badges and Pokedex.</p></a>
-</div>"#,
+</div>{feed}"#,
         s = if online == 1 { "" } else { "s" },
     );
     page("PokePlanet", &body, None).into_response()
+}
+
+/// A displayable name for a species id in the death feed. The server does not carry the game's
+/// 400-entry species-name table, so a corpse is named generically -- enough for the feed to read
+/// as loss ("Ash lost a Pokemon") without shipping that data. `0` is the empty-slot sentinel and
+/// should never reach here.
+fn species_name(_species: u16) -> &'static str {
+    "a Pokemon"
 }
 
 /// A world's ladder: the top trainers by badges, Pokedex and time played.
@@ -369,6 +399,12 @@ fn page(title: &str, body: &str, deadman: Option<bool>) -> Html<String> {
   .stat {{ background:{panel}; border:1px solid #ffffff14; border-radius:.6rem; padding:.85rem 1rem; }}
   .stat dt {{ font-size:.72rem; text-transform:uppercase; letter-spacing:.05em; opacity:.6; }}
   .stat dd {{ margin:.2rem 0 0; font-size:1.15rem; color:{accent}; font-weight:600; }}
+  .feed-h {{ margin:2rem 0 .5rem; color:#ff8a80; }}
+  ul.feed {{ list-style:none; margin:0; padding:0; }}
+  ul.feed li {{ padding:.5rem .75rem; border-left:2px solid #ef535066; background:#ffffff08;
+                margin-bottom:.35rem; border-radius:0 .4rem .4rem 0; font-size:.95rem; }}
+  ul.feed .who {{ color:#ff8a80; font-weight:600; }}
+  ul.feed .when {{ opacity:.5; font-size:.82rem; }}
 </style></head>
 <body>
 <header><a class="brand" href="/">PokePlanet</a></header>

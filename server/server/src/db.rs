@@ -185,6 +185,26 @@ ALTER TABLE characters ALTER COLUMN pos_y     SET DEFAULT 18;
 -- once rewritten a token matches the 64-hex pattern and is skipped on every later startup.
 UPDATE sessions SET token = encode(sha256(token::bytea), 'hex')
 WHERE token !~ '^[0-9a-f]{64}$';
+
+-- Deadman Mode: how many Pokemon this character has lost for good. Denormalised from the graveyard
+-- box on each storage report (the box itself is not projected to `pokemon`), so the website can
+-- show it without decoding the 35KB storage block. A hard reset returns it to zero.
+ALTER TABLE characters ADD COLUMN IF NOT EXISTS graveyard_count SMALLINT NOT NULL DEFAULT 0;
+
+-- Deadman Mode: the roll of the dead, one row per Pokemon a character has lost. Personality is the
+-- game's immutable per-Pokemon id, so (character, personality) dedupes: a corpse seen on many
+-- reports is recorded once. Feeds the website death feed and the graveyard count. Removed with the
+-- character (and re-seeded from zero after a hard reset, which deletes and recreates nothing but
+-- clears these rows explicitly).
+CREATE TABLE IF NOT EXISTS deaths (
+    id           BIGSERIAL PRIMARY KEY,
+    character_id BIGINT NOT NULL REFERENCES characters(id) ON DELETE CASCADE,
+    personality  BIGINT NOT NULL,
+    species      INTEGER NOT NULL,
+    died_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (character_id, personality)
+);
+CREATE INDEX IF NOT EXISTS deaths_recent_idx ON deaths (died_at DESC);
 "#;
 
 /// A shared test account so pokeplanet_tester.exe signs in with no Discord login, using the fixed
@@ -354,20 +374,16 @@ pub async fn profile(db: &Db, mode: &str, name: &str) -> anyhow::Result<Option<P
     let Some(r) = client
         .query_opt(
             "SELECT c.name, c.mode, c.badges, c.pokedex_caught, c.pokedex_seen, c.play_time_s,
+                    c.graveyard_count::bigint       AS graveyard,
                     COALESCE(pt.n, 0)::bigint       AS party_size,
                     COALESCE(pt.maxlvl, 0)::int     AS maxlvl,
-                    COALESCE(pt.avglvl, 0)::float8  AS avglvl,
-                    COALESCE(gv.n, 0)::bigint       AS graveyard
+                    COALESCE(pt.avglvl, 0)::float8  AS avglvl
                FROM characters c
                JOIN accounts a ON a.id = c.account_id
                LEFT JOIN (
                     SELECT character_id, COUNT(*) AS n, MAX(level) AS maxlvl, AVG(level) AS avglvl
                       FROM pokemon WHERE box_id = 0 AND NOT is_egg GROUP BY character_id
                ) pt ON pt.character_id = c.id
-               LEFT JOIN (
-                    SELECT character_id, COUNT(*) AS n
-                      FROM pokemon WHERE box_id = 13 GROUP BY character_id
-               ) gv ON gv.character_id = c.id
               WHERE c.mode = $1 AND lower(c.name) = lower($2) AND NOT a.banned
               LIMIT 1",
             &[&mode, &name],
@@ -391,6 +407,71 @@ pub async fn profile(db: &Db, mode: &str, name: &str) -> anyhow::Result<Option<P
         graveyard: r.get("graveyard"),
         play_hours: r.get::<_, i64>("play_time_s") / 3600,
     }))
+}
+
+/// One entry in the site-wide death feed.
+pub struct DeathRow {
+    pub name: String,
+    pub species: u16,
+    pub died_on: String,
+}
+
+/// Record the corpses now in a Deadman character's graveyard. `corpses` is the full graveyard as
+/// (personality, species); each is upserted so a corpse seen on many reports is stored once, and
+/// `graveyard_count` is set to the total. Idempotent: replaying the same graveyard changes nothing.
+/// Only called for Deadman characters, after a storage report has been accepted.
+pub async fn record_deaths(
+    db: &Db,
+    character_id: i64,
+    corpses: &[(u32, u16)],
+) -> anyhow::Result<()> {
+    let mut client = db.get().await?;
+    let tx = client.transaction().await?;
+    for (personality, species) in corpses {
+        tx.execute(
+            "INSERT INTO deaths (character_id, personality, species)
+             VALUES ($1, $2, $3)
+             ON CONFLICT (character_id, personality) DO NOTHING",
+            &[&character_id, &(*personality as i64), &(*species as i32)],
+        )
+        .await?;
+    }
+    tx.execute(
+        "UPDATE characters SET graveyard_count = $2 WHERE id = $1",
+        &[
+            &character_id,
+            &(corpses.len().min(i16::MAX as usize) as i16),
+        ],
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+/// The most recent deaths across a world, newest first, for the website death feed. Banned
+/// accounts are excluded so a banned cheater's losses do not haunt the feed.
+pub async fn recent_deaths(db: &Db, mode: &str, limit: i64) -> anyhow::Result<Vec<DeathRow>> {
+    let client = db.get().await?;
+    let rows = client
+        .query(
+            "SELECT c.name, d.species, to_char(d.died_at, 'YYYY-MM-DD') AS died_on
+               FROM deaths d
+               JOIN characters c ON c.id = d.character_id
+               JOIN accounts a ON a.id = c.account_id
+              WHERE c.mode = $1 AND NOT a.banned
+              ORDER BY d.died_at DESC
+              LIMIT $2",
+            &[&mode, &limit],
+        )
+        .await?;
+    Ok(rows
+        .iter()
+        .map(|r| DeathRow {
+            name: r.get("name"),
+            species: r.get::<_, i32>("species").clamp(0, u16::MAX as i32) as u16,
+            died_on: r.get("died_on"),
+        })
+        .collect())
 }
 
 impl Character {
@@ -565,11 +646,19 @@ pub async fn wipe_character(db: &Db, character_id: i64) -> anyhow::Result<()> {
             &[&character_id],
         )
         .await?;
+    // The character row survives a hard reset, so the graveyard roll does not cascade -- clear it
+    // by hand. A reset is a true fresh start: nothing this life lost carries into the next.
+    client
+        .execute(
+            "DELETE FROM deaths WHERE character_id = $1",
+            &[&character_id],
+        )
+        .await?;
     client
         .execute(
             "UPDATE characters SET money = 3000, badges = 0, pokedex_caught = 0, pokedex_seen = 0,
-                 map_group = 0, map_num = 9, pos_x = 17, pos_y = 18, facing = 1, elevation = 3,
-                 play_time_s = 0
+                 graveyard_count = 0, map_group = 0, map_num = 9, pos_x = 17, pos_y = 18,
+                 facing = 1, elevation = 3, play_time_s = 0
              WHERE id = $1",
             &[&character_id],
         )

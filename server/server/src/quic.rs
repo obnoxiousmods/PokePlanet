@@ -878,6 +878,17 @@ async fn control_loop(
 
                 db::store_save(&server.db, character_id, &candidate).await?;
                 tracing::info!(player = player_id, block, "block set by report");
+
+                // Deadman Mode: after the storage block is accepted, record the graveyard so the
+                // website can show what this character has lost. The read-only check above
+                // guarantees corpses only ever accrue, so this count never falls except on a
+                // hard reset (which clears it).
+                if mode == "deadman" && block == STORAGE_BLOCK {
+                    let corpses = crate::save_parse::graveyard_corpses(&assembled);
+                    if let Err(e) = db::record_deaths(&server.db, character_id, &corpses).await {
+                        tracing::warn!(player = player_id, error = %e, "could not record deadman deaths");
+                    }
+                }
             }
             ClientControl::RegionChanged { offset, bytes } => {
                 // Bounded before it is used for anything: the allowlist inside with_region is
