@@ -71,6 +71,42 @@ pub struct BattleSeat {
     pub slot: u8,
 }
 
+/// One item stack lying on the ground of a map, waiting to be picked up.
+struct Drop {
+    id: u64,
+    item: u16,
+    quantity: u16,
+    x: i16,
+    y: i16,
+    /// The player with first claim (a PvP killer), or `None` for a freely-dropped item.
+    owner: Option<PlayerId>,
+    created: std::time::Instant,
+}
+
+impl Drop {
+    fn age_s(&self) -> u64 {
+        self.created.elapsed().as_secs()
+    }
+}
+
+/// All dropped items, grouped by the map they lie on, plus the counter that names the next one.
+#[derive(Default)]
+struct DropStore {
+    by_map: HashMap<MapId, Vec<Drop>>,
+    next_id: u64,
+}
+
+/// A dropped item as seen by clients: enough to draw it and ask to pick it up.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code)] // read by the drop broadcast, wired next
+pub struct DropView {
+    pub id: u64,
+    pub item: u16,
+    pub quantity: u16,
+    pub x: i16,
+    pub y: i16,
+}
+
 #[derive(Default)]
 pub struct World {
     players: RwLock<HashMap<PlayerId, Presence>>,
@@ -85,6 +121,10 @@ pub struct World {
     /// Where players may stand. Empty when the table could not be loaded, in which case
     /// steps are still checked for being single steps, just not for hitting walls.
     collision: crate::collision::Collision,
+    /// Items dropped on the ground, by map. The server owns every drop; the item is debited from
+    /// the dropper's save before the drop exists and credited to the taker when it is removed, so a
+    /// drop can never duplicate an item.
+    drops: RwLock<DropStore>,
 }
 
 pub type SharedWorld = Arc<World>;
@@ -352,6 +392,88 @@ impl World {
         if let Some(p) = self.players.write().await.get_mut(&id) {
             p.badges = badges;
         }
+    }
+
+    /// Record a freshly dropped item stack and return its id. `owner`, if set, gets first claim for
+    /// the owner window (a PvP killer over a death-drop); a freely dropped item has no owner.
+    #[allow(dead_code)] // wired into the drop/pickup handlers next
+    pub async fn drop_item(
+        &self,
+        map: MapId,
+        x: i16,
+        y: i16,
+        item: u16,
+        quantity: u16,
+        owner: Option<PlayerId>,
+    ) -> u64 {
+        let mut store = self.drops.write().await;
+        let id = store.next_id;
+        store.next_id += 1;
+        store.by_map.entry(map).or_default().push(Drop {
+            id,
+            item,
+            quantity,
+            x,
+            y,
+            owner,
+            created: std::time::Instant::now(),
+        });
+        id
+    }
+
+    /// Take a drop if the taker may have it right now, returning its (item, quantity) and removing
+    /// it. `None` if it is gone, reserved for its owner's window, or expired. Expired drops are
+    /// reaped even on a failed take.
+    #[allow(dead_code)] // wired into the drop/pickup handlers next
+    pub async fn take_drop(&self, map: MapId, id: u64, taker: PlayerId) -> Option<(u16, u16)> {
+        let mut store = self.drops.write().await;
+        let list = store.by_map.get_mut(&map)?;
+        let pos = list.iter().position(|d| d.id == id)?;
+        let age = list[pos].age_s();
+        match crate::world_items::can_pick_up(age, list[pos].owner.map(|o| o as u64), taker as u64)
+        {
+            crate::world_items::Pickup::Allowed => {
+                let d = list.remove(pos);
+                Some((d.item, d.quantity))
+            }
+            crate::world_items::Pickup::Expired => {
+                list.remove(pos);
+                None
+            }
+            crate::world_items::Pickup::Reserved => None,
+        }
+    }
+
+    /// The (non-expired) drops on a map, for the snapshot the client draws.
+    #[allow(dead_code)] // wired into the drop broadcast next
+    pub async fn drops_on_map(&self, map: MapId) -> Vec<DropView> {
+        let store = self.drops.read().await;
+        store
+            .by_map
+            .get(&map)
+            .map(|list| {
+                list.iter()
+                    .filter(|d| !crate::world_items::is_expired(d.age_s()))
+                    .map(|d| DropView {
+                        id: d.id,
+                        item: d.item,
+                        quantity: d.quantity,
+                        x: d.x,
+                        y: d.y,
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Remove drops past their lifetime so the ground does not fill with junk. Called periodically.
+    #[allow(dead_code)] // wired into the periodic reaper next
+    pub async fn reap_expired_drops(&self) {
+        let mut store = self.drops.write().await;
+        for list in store.by_map.values_mut() {
+            list.retain(|d| !crate::world_items::is_expired(d.age_s()));
+        }
+        store.by_map.retain(|_, list| !list.is_empty());
     }
 
     /// Deliver a chat message according to its target. Returns false if a private
@@ -624,6 +746,36 @@ impl World {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A drop is server-owned: taken once it is gone (no duplication), and a death-drop is the
+    /// killer's alone during the owner window before anyone else may have it.
+    #[tokio::test]
+    async fn drops_are_server_owned_and_dupe_proof() {
+        let world = World::default();
+        let map = MapId::new(1, 4);
+
+        // A free drop (no owner) is takeable by anyone at once.
+        let id = world.drop_item(map, 5, 6, 13, 2, None).await;
+        assert_eq!(world.drops_on_map(map).await.len(), 1);
+        assert_eq!(world.take_drop(map, id, 99).await, Some((13, 2)));
+        // Taken once, it is gone -- a second take finds nothing.
+        assert_eq!(world.take_drop(map, id, 99).await, None);
+        assert!(world.drops_on_map(map).await.is_empty());
+
+        // A death-drop is reserved for its owner during the owner window.
+        let (owner, stranger) = (1u32, 2u32);
+        let id2 = world.drop_item(map, 1, 1, 4, 1, Some(owner)).await;
+        assert_eq!(
+            world.take_drop(map, id2, stranger).await,
+            None,
+            "a death-drop is the killer's first"
+        );
+        assert_eq!(
+            world.take_drop(map, id2, owner).await,
+            Some((4, 1)),
+            "the killer may take their own drop"
+        );
+    }
 
     fn presence(
         character_id: i64,

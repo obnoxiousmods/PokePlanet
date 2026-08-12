@@ -1,7 +1,3 @@
-// The drop layer's world state and wire are built on this pure ruleset; the model and rules land
-// first, tested, then the store and handlers that use them.
-#![allow(dead_code)]
-
 //! Items dropped on the ground for other players to pick up.
 //!
 //! A drop is a stack of one item sitting on a tile of a map. Any player can drop from their bag, and
@@ -9,22 +5,6 @@
 //! gets first. The rules here are pure and unit-tested; the server owns every drop and moves the
 //! item between bags itself, so a drop can never duplicate an item (the dropper's bag is debited
 //! server-side before the drop exists, and the taker's is credited when it is removed).
-
-/// One dropped stack sitting in the world.
-#[derive(Debug, Clone)]
-pub struct WorldItem {
-    pub id: u64,
-    pub map_group: u8,
-    pub map_num: u8,
-    pub x: i16,
-    pub y: i16,
-    pub item: u16,
-    pub quantity: u16,
-    /// The player who gets first claim (a PvP killer), or `None` for a freely-dropped item.
-    pub owner: Option<u64>,
-    /// Seconds since the drop was created, stamped by the world tick (not wall-clock here).
-    pub age_s: u64,
-}
 
 /// How long the killer of a Deadman player has the exclusive right to their death-drop.
 pub const OWNER_WINDOW_S: u64 = 60;
