@@ -14,8 +14,8 @@ use std::sync::Arc;
 pub fn router(server: Arc<Server>) -> Router {
     Router::new()
         .route("/", get(home))
-        .route("/ladder/:mode", get(ladder))
-        .route("/u/:mode/:name", get(profile))
+        .route("/ladder/{mode}", get(ladder))
+        .route("/u/{mode}/{name}", get(profile))
         .route("/login", get(login))
         .route("/auth/callback", get(callback))
         .route("/health", get(health))
