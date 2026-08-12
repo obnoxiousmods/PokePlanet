@@ -279,6 +279,42 @@ pub struct Character {
     pub pokedex_seen: u16,
 }
 
+/// One row of the website leaderboard.
+pub struct LeaderRow {
+    pub rank: usize,
+    pub name: String,
+    pub badges: u8,
+    pub pokedex_caught: u16,
+    pub play_hours: i64,
+}
+
+/// The top characters in a world, ranked by progress: badges, then Pokedex, then time played.
+/// Banned accounts are excluded. Used by the website.
+pub async fn leaderboard(db: &Db, mode: &str, limit: i64) -> anyhow::Result<Vec<LeaderRow>> {
+    let client = db.get().await?;
+    let rows = client
+        .query(
+            "SELECT c.name, c.badges, c.pokedex_caught, c.play_time_s
+               FROM characters c JOIN accounts a ON a.id = c.account_id
+              WHERE c.mode = $1 AND NOT a.banned
+              ORDER BY c.badges DESC, c.pokedex_caught DESC, c.play_time_s DESC
+              LIMIT $2",
+            &[&mode, &limit],
+        )
+        .await?;
+    Ok(rows
+        .iter()
+        .enumerate()
+        .map(|(i, r)| LeaderRow {
+            rank: i + 1,
+            name: r.get("name"),
+            badges: r.get::<_, i16>("badges") as u8,
+            pokedex_caught: r.get::<_, i32>("pokedex_caught") as u16,
+            play_hours: r.get::<_, i64>("play_time_s") / 3600,
+        })
+        .collect())
+}
+
 impl Character {
     fn from_row(row: &Row) -> Self {
         Self {
