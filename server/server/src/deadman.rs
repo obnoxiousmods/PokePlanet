@@ -51,7 +51,6 @@ pub fn combat_level(party_levels: &[u8], badges: u8) -> u16 {
 ///
 /// The wilderness-style gate that stops an eight-badge veteran from farming a one-badge newcomer,
 /// while still leaving a real spread of opponents in range.
-#[allow(dead_code)] // wired into battle-invite / LOS gating in Phase C
 pub fn pvp_in_badge_range(a: u8, b: u8) -> bool {
     a.abs_diff(b) <= 2
 }

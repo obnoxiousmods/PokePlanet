@@ -31,6 +31,13 @@ pub struct Presence {
     /// How many Pokémon this player carries, shown on their name tag. Seeded from the save at
     /// join and kept current by party reports.
     pub party_count: u8,
+    /// How many gym badges this character has, seeded at join. Deadman PvP is gated to within two
+    /// badges of each other; slightly stale (a badge earned mid-session is not reflected until the
+    /// next connect) but only ever an approximate matchmaking bound, never a correctness rule.
+    pub badges: u8,
+    /// Which world this character plays: "normal" or "deadman". PvP badge gating only applies
+    /// between two deadman characters.
+    pub mode: String,
     /// Control-stream sink for this connection.
     pub control: mpsc::Sender<ServerControl>,
     /// Who has challenged this player and is awaiting an answer.
@@ -424,6 +431,14 @@ impl World {
         if inviter.pose.map != invitee.pose.map {
             return Err("They have left this area.".into());
         }
+        // Deadman PvP is gated to within two badges of each other, so a veteran cannot farm a
+        // newcomer. Only applies when both are in the deadman world; normal-mode battles are open.
+        if inviter.mode == "deadman"
+            && invitee.mode == "deadman"
+            && !crate::deadman::pvp_in_badge_range(inviter.badges, invitee.badges)
+        {
+            return Err("They are too far from your badge rank to battle.".into());
+        }
         if invitee.pending_invite.is_some() {
             return Err("They are already being challenged.".into());
         }
@@ -622,6 +637,8 @@ mod tests {
                     ..Default::default()
                 },
                 party_count: 0,
+                badges: 0,
+                mode: "normal".to_string(),
                 control: tx,
                 pending_invite: None,
                 battle: None,

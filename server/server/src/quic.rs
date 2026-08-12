@@ -421,6 +421,8 @@ async fn run_session(
                 graphics_id: character.graphics_id,
                 pose: start_pose,
                 party_count,
+                badges: character.badges,
+                mode: character.mode.clone(),
                 control: control_tx,
             },
         )
