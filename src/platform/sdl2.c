@@ -110,6 +110,10 @@ static unsigned int sSidecarPort = DEFAULT_SIDECAR_PORT;
 // Which world this launch plays. Read from the same pokeemerald.cfg the sidecar reads, so the game
 // and the sidecar agree on the mode, and the server (told by the sidecar's Hello) agrees too.
 static char sMode[16] = "normal";
+// TRUE when the mode was fixed by the executable's own name (pokeplanet-deadmon.exe), not the
+// config. A dedicated Deadman binary IS the mode: the config cannot talk it back into the normal
+// world, so double-clicking the Deadman icon can only ever enter Deadman.
+static bool8 sModeForced = FALSE;
 
 u16 Platform_GetSidecarPort(void)
 {
@@ -215,9 +219,14 @@ const char *Platform_GetInstanceToken(void)
 
 // Work out which instance we are from argv[0], and give it its own files.
 //
-// The name is everything after the first underscore in the executable's basename, so
-// pokeplanet.exe is the default profile and pokeplanet_tester.exe is "tester". Naming the
-// copy is the whole configuration step; there is nothing else to set up.
+// The name is everything after the first separator (underscore or hyphen) in the executable's
+// basename, so pokeplanet.exe is the default profile, pokeplanet_tester.exe is "tester", and
+// pokeplanet-deadmon.exe is "deadmon". Naming the copy is the whole configuration step; there is
+// nothing else to set up.
+//
+// A profile named for a world (deadmon/deadman) also fixes the mode, so the Deadman binary enters
+// the Deadman world by itself, no config editing and no way for a config edit to send it to the
+// normal world instead.
 //
 // A named profile also moves off the default sidecar port so two clients do not try to
 // share one sidecar, which would sign them both in as the same account. Beyond a second
@@ -226,7 +235,7 @@ static void DeriveProfile(const char *argv0)
 {
     const char *base;
     const char *slash;
-    const char *underscore;
+    const char *sep;
 
     if (argv0 == NULL || *argv0 == '\0')
         return;
@@ -238,12 +247,20 @@ static void DeriveProfile(const char *argv0)
             base = slash + 1;
     }
 
-    underscore = SDL_strchr(base, '_');
-    if (underscore == NULL || underscore[1] == '\0')
+    sep = NULL;
+    for (slash = base; *slash != '\0'; slash++)
+    {
+        if (*slash == '_' || *slash == '-')
+        {
+            sep = slash;
+            break;
+        }
+    }
+    if (sep == NULL || sep[1] == '\0')
         return;
 
     // Truncates safely if someone names a copy something absurd.
-    SDL_strlcpy(sProfile, underscore + 1, sizeof(sProfile));
+    SDL_strlcpy(sProfile, sep + 1, sizeof(sProfile));
 
     // Drop the extension, so "pokeplanet_tester.exe" yields "tester" rather than
     // "tester.exe" and the files it opens are not named after one.
@@ -255,12 +272,32 @@ static void DeriveProfile(const char *argv0)
     if (sProfile[0] == '\0')
         return;
 
+    // A profile named for the Deadman world fixes the mode from the binary itself. The config's
+    // mode= is then ignored (see ReadConfigFile), so this icon can only ever enter Deadman.
+    if (SDL_strcasecmp(sProfile, "deadmon") == 0 || SDL_strcasecmp(sProfile, "deadman") == 0)
+    {
+        SDL_strlcpy(sMode, "deadman", sizeof(sMode));
+        sModeForced = TRUE;
+    }
+
     SDL_snprintf(sSavePath, sizeof(sSavePath), "pokeemerald-%s.sav", sProfile);
     SDL_snprintf(sConfigPath, sizeof(sConfigPath), "pokeemerald-%s.cfg", sProfile);
     SDL_snprintf(sLogPath, sizeof(sLogPath), "pokeplanet-%s.log", sProfile);
     SDL_snprintf(sTokenPath, sizeof(sTokenPath), "pokeplanet-auth-%s.json", sProfile);
     SDL_snprintf(sSidecarLogPath, sizeof(sSidecarLogPath), "pokeplanet-net-%s.log", sProfile);
-    sSidecarPort = DEFAULT_SIDECAR_PORT + 1;
+
+    // Each named profile needs its OWN default sidecar port, or two of them (the Deadman client
+    // and the tester) would both land on the old fixed +1 and fight over one sidecar when run
+    // together. Derive a stable per-name port from an FNV-1a hash of the profile, kept clear of
+    // the default (38400) and its +1 so it never collides with the base client. A profile's own
+    // config file may still pin an explicit sidecarPort; this is only the default.
+    {
+        unsigned int hash = 2166136261u;
+        const char *p;
+        for (p = sProfile; *p != '\0'; p++)
+            hash = (hash ^ (unsigned char)*p) * 16777619u;
+        sSidecarPort = DEFAULT_SIDECAR_PORT + 2 + (hash % 200);
+    }
 }
 
 // Game-side multiplayer diagnostics land in pokeplanet.log alongside the platform's own.
@@ -328,11 +365,15 @@ void Platform_LaunchSidecar(void)
     // browser login. Otherwise signing in would resolve to whoever is at the keyboard --
     // the same person already playing the main client -- and the two would fight over one
     // identity rather than being two players who can see each other.
+    // --mode is passed from the game rather than left to the sidecar's own config read: the
+    // sidecar always reads pokeemerald.cfg, but a named profile (pokeplanet-deadmon.exe) plays
+    // from pokeemerald-deadmon.cfg, so only the game knows the true mode. Passing it keeps the
+    // two -- and the server they tell -- in agreement.
     snprintf(commandLine, sizeof(commandLine),
              "pokeplanet-net.exe --server %s --port %u --ipc-port %u --token %s --log %s"
-             " --instance %s%s",
+             " --instance %s --mode %s%s",
              sServerHost, sServerPort, sSidecarPort, sTokenPath, sSidecarLogPath,
-             Platform_GetInstanceToken(),
+             Platform_GetInstanceToken(), sMode,
              sProfile[0] != '\0' ? " --fixed-token" : "");
 
     memset(&startup, 0, sizeof(startup));
@@ -381,6 +422,7 @@ void Platform_LaunchSidecar(void)
                        "--ipc-port", ipcPort, "--token", sTokenPath,
                        "--log", sSidecarLogPath,
                        "--instance", Platform_GetInstanceToken(),
+                       "--mode", sMode,
                        "--fixed-token", (char *)NULL);
             }
             else
@@ -389,7 +431,8 @@ void Platform_LaunchSidecar(void)
                        "--server", sServerHost, "--port", serverPort,
                        "--ipc-port", ipcPort, "--token", sTokenPath,
                        "--log", sSidecarLogPath,
-                       "--instance", Platform_GetInstanceToken(), (char *)NULL);
+                       "--instance", Platform_GetInstanceToken(),
+                       "--mode", sMode, (char *)NULL);
             }
 
             // Only reached if exec failed. _exit rather than exit: this is a forked copy of a
@@ -891,8 +934,8 @@ static void ReadConfigFile(void)
             sServerPort = value;
         else if (sscanf(line, "sidecarPort=%u", &value) == 1 && value > 0 && value < 65536)
             sSidecarPort = value;
-        else if (sscanf(line, "mode=%15s", sMode) == 1)
-            ; // handled by the scanf itself
+        else if (!sModeForced && sscanf(line, "mode=%15s", sMode) == 1)
+            ; // handled by the scanf itself; a binary-fixed mode ignores the config
     }
     fclose(configFile);
 }

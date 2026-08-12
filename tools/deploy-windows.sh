@@ -38,12 +38,15 @@ copy_or_explain() {
     fi
 }
 
-# The same binary ships twice under two names. The game reads its profile from argv[0], so
-# pokeplanet.exe runs the normal account and pokeplanet_tester.exe gets its own save, config,
-# log, token cache and sidecar port -- which is what makes it possible to run both at once
-# and actually test multiplayer on one machine.
+# The same binary ships under several names. The game reads its profile from argv[0], so each
+# copy gets its own save, config, log, token cache and sidecar port -- which is what makes it
+# possible to run more than one at once and actually test multiplayer on one machine:
+#   pokeplanet.exe          the normal world
+#   pokeplanet-deadmon.exe  the Deadman world (the name fixes the mode; no config editing)
+#   pokeplanet_tester.exe   a second normal account for local multiplayer testing
 failed=0
 copy_or_explain "$SRC/pokeemerald.exe" "$DEST/pokeplanet.exe" || failed=1
+copy_or_explain "$SRC/pokeemerald.exe" "$DEST/pokeplanet-deadmon.exe" || failed=1
 copy_or_explain "$SRC/pokeemerald.exe" "$DEST/pokeplanet_tester.exe" || failed=1
 copy_or_explain "$SRC/server/target/x86_64-pc-windows-gnu/release/pokeplanet-net.exe" "$DEST/" || failed=1
 # These were plain `cp -v`, which under `set -e` aborted the whole script the instant a file
@@ -66,5 +69,5 @@ fi
 [ "$failed" -eq 0 ] || exit 1
 
 echo "== deployed =="
-ls -la --time-style=+%H:%M "$DEST"/pokeplanet.exe "$DEST"/pokeplanet_tester.exe \
-    "$DEST"/pokeplanet-net.exe
+ls -la --time-style=+%H:%M "$DEST"/pokeplanet.exe "$DEST"/pokeplanet-deadmon.exe \
+    "$DEST"/pokeplanet_tester.exe "$DEST"/pokeplanet-net.exe

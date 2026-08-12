@@ -52,19 +52,30 @@ async fn home(State(server): State<Arc<Server>>) -> impl IntoResponse {
         }
     };
     let body = format!(
-        r#"<p class="lede">A server-authoritative Pokemon MMO. Explore one world together --
-or step into <strong>Deadman</strong>, where a fainted Pokemon dies forever, progress is capped to
-your next gym, and everything you carry is on the line.</p>
-<p class="online">{online} trainer{s} online right now.</p>
-<div class="cards">
-  <a class="card deadman" href="/ladder/deadman"><h2>Deadman ladder</h2><p>The survivors, by how far
-they have pushed a life they can lose in an instant.</p></a>
-  <a class="card normal" href="/ladder/normal"><h2>Standard ladder</h2><p>The trainers of the open
-world, ranked by badges and Pokedex.</p></a>
-</div>{feed}"#,
+        r#"<section class="hero">
+  <p class="kicker">Pokemon Emerald, made deadly</p>
+  <h2 class="tagline">A fainted Pokemon dies <em>forever</em>.</h2>
+  <p class="lede">PokePlanet Deadman is a server-authoritative MMO where every choice is final.
+Progress is capped to your next gym, captures are scarce and hard-won, and a single loss outside a
+Pokemon Center can end a run you have poured hours into. No local saves, nothing to undo -- the
+server is the only authority, so no death can be cheated away.</p>
+  <p class="online">{online} trainer{s} online right now.</p>
+  <a class="cta" href="/ladder/deadman">Enter the Deadman ladder &rarr;</a>
+</section>
+{feed}
+<section class="pillars">
+  <div class="pillar"><h3>Permadeath</h3><p>Faint outside a Center and that Pokemon is gone to a
+read-only graveyard. It never battles again.</p></div>
+  <div class="pillar"><h3>Capped to the gym</h3><p>Party levels and size are gated to your next
+badge, so every gym is a real wall -- no out-grinding it.</p></div>
+  <div class="pillar"><h3>Everything on the line</h3><p>Lose a fight and you drop what you carry.
+Run out of Pokemon entirely and the run resets to nothing.</p></div>
+</section>
+<p class="secondary">Prefer the classic game? There is a standard world too &mdash;
+<a href="/ladder/normal">the open-world ladder</a>.</p>"#,
         s = if online == 1 { "" } else { "s" },
     );
-    page("PokePlanet", &body, None).into_response()
+    page("PokePlanet", &body, Some(true)).into_response()
 }
 
 /// A displayable name for a species id in the death feed. The server does not carry the game's
@@ -411,6 +422,21 @@ fn page(title: &str, body: &str, deadman: Option<bool>) -> Html<String> {
                 margin-bottom:.35rem; border-radius:0 .4rem .4rem 0; font-size:.95rem; }}
   ul.feed .who {{ color:#ff8a80; font-weight:600; }}
   ul.feed .when {{ opacity:.5; font-size:.82rem; }}
+  .hero {{ text-align:center; padding:1rem 0 1.5rem; }}
+  .hero .kicker {{ text-transform:uppercase; letter-spacing:.18em; font-size:.75rem;
+                   color:{accent}; opacity:.85; margin:0; }}
+  .hero .tagline {{ font-size:2rem; line-height:1.15; margin:.5rem 0 1rem; color:#f6e9e9; }}
+  .hero .tagline em {{ color:{accent}; font-style:normal; }}
+  .hero .lede {{ max-width:34rem; margin:0 auto 1.25rem; }}
+  .cta {{ display:inline-block; margin-top:.5rem; padding:.7rem 1.5rem; border-radius:.6rem;
+          background:{accent}; color:#160a0a; font-weight:700; text-decoration:none; }}
+  .cta:hover {{ filter:brightness(1.1); }}
+  .pillars {{ display:grid; gap:1rem; grid-template-columns:1fr; margin:2rem 0; }}
+  @media (min-width:34rem) {{ .pillars {{ grid-template-columns:1fr 1fr 1fr; }} }}
+  .pillar {{ background:{panel}; border:1px solid #ffffff14; border-radius:.7rem; padding:1.1rem; }}
+  .pillar h3 {{ margin:0 0 .35rem; color:{accent2}; font-size:1rem; }}
+  .pillar p {{ margin:0; opacity:.8; font-size:.9rem; }}
+  .secondary {{ text-align:center; opacity:.7; font-size:.92rem; margin-top:1.5rem; }}
 </style></head>
 <body>
 <header><a class="brand" href="/">PokePlanet</a></header>
