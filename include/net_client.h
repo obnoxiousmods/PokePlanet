@@ -258,6 +258,22 @@ void Net_GetRates(struct NetRates *out);
 // if the server sent no override for it. Used to make a Deadman find genuinely rare.
 u16 Net_GetSpeciesEncounter(u16 species);
 
+// The PC bank balance and the authoritative carried money the server last reported.
+struct NetBankState
+{
+    u32 bank;
+    u32 carried;
+};
+
+// Ask the server to move the whole carried wallet into the PC bank, or the bank back into the
+// wallet (up to the money cap). The server answers with a bank-state update the game applies.
+void Net_BankDeposit(void);
+void Net_BankWithdraw(void);
+
+// Take a pending bank-state update from the server, TRUE if there was one. The caller adopts
+// `carried` as the wallet (SetMoney) and shows `bank`. Cleared once taken.
+bool8 Net_PopBankState(struct NetBankState *out);
+
 // Has this session ever been signed in?
 //
 // Distinct from Net_GetAuthState, which is a live value and dips during a reconnect. For

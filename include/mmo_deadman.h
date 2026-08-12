@@ -34,6 +34,13 @@ u8 MmoDeadman_PartyCap(void);
 // start menu. Mirrors the server's deadman::combat_level_from so the shown number matches the rank.
 u16 MmoDeadman_CombatLevel(void);
 
+// The PC bank balance (pokedollars) the server last reported, for the bank menu to display.
+u32 MmoDeadman_BankBalance(void);
+
+// Apply any pending server bank update to the wallet. Call every field frame; a no-op outside
+// Deadman or when nothing is pending.
+void MmoDeadman_PollBank(void);
+
 // TRUE when the player already owns a LIVING copy of `species`: one in the party with HP left, or
 // any in the PC boxes except the graveyard (a boxed mon is always alive; a graveyard corpse is
 // not). Deadman forbids encountering a species you already hold, so a capture is a commitment --

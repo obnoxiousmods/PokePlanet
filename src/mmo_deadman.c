@@ -8,6 +8,7 @@
 
 #include "global.h"
 #include "event_data.h"
+#include "money.h"
 #include "pokemon.h"
 #include "pokemon_storage_system.h"
 #include "save_location.h"
@@ -145,6 +146,33 @@ u16 MmoDeadman_CombatLevel(void)
     if (raw > 126)
         raw = 126;
     return (u16)raw;
+}
+
+// The PC bank balance the server last reported. The bank protects money from a normal death; the
+// server owns the number, so the client only mirrors what it is told.
+static u32 sBankBalance;
+
+u32 MmoDeadman_BankBalance(void)
+{
+    return sBankBalance;
+}
+
+// Adopt any bank update the server has pushed: the server authors the money move (deposit/withdraw)
+// and reports the new bank balance and the authoritative carried wallet, which is set here. Called
+// every frame in the field; at sign-in the reported wallet equals the loaded save, so it is a no-op
+// then, and after a deposit/withdraw it is how the change reaches the wallet. A no-op outside Deadman.
+void MmoDeadman_PollBank(void)
+{
+    struct NetBankState state;
+
+    if (!MmoDeadman_IsActive())
+        return;
+
+    if (Net_PopBankState(&state))
+    {
+        SetMoney(&gSaveBlock1Ptr->money, state.carried);
+        sBankBalance = state.bank;
+    }
 }
 
 bool8 MmoDeadman_OwnsSpecies(u16 species)

@@ -13,6 +13,7 @@
 #include "mmo_autosave.h"
 #include "mmo_colour.h"
 #include "mmo_battle.h"
+#include "mmo_deadman.h"
 #include "mmo_chat.h"
 #include "mmo_nameplates.h"
 #include "mmo_players.h"
@@ -531,6 +532,7 @@ void MmoPlayers_Update(void)
     }
 
     ApplyCorrection();
+    MmoDeadman_PollBank();
     CheckForBattleStart();
     ReportSelf();
 

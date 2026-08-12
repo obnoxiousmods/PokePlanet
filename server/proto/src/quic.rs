@@ -143,6 +143,16 @@ pub enum ClientControl {
     ///
     /// Appended so the existing variant numbering does not shift.
     HardReset,
+    /// Deposit the whole carried wallet into the PC bank. The server moves the money in its own
+    /// copy of the save and answers with `BankState`, so the client never authors the change.
+    ///
+    /// Appended so the existing variant numbering does not shift.
+    BankDeposit,
+    /// Withdraw from the PC bank into the carried wallet, up to the money cap. The server answers
+    /// with `BankState`.
+    ///
+    /// Appended so the existing variant numbering does not shift.
+    BankWithdraw,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -292,6 +302,15 @@ pub enum ServerControl {
         /// deploy together, so the field is always present in practice.
         #[serde(default)]
         species_encounter: Vec<(u16, f32)>,
+    },
+    /// The PC bank balance and the authoritative carried money after a deposit/withdraw (and once
+    /// at sign-in). The client adopts `carried` as its wallet, so the money move stays entirely on
+    /// the server -- a client can never mint money by claiming a withdrawal.
+    ///
+    /// Appended so the existing variant numbering does not shift.
+    BankState {
+        bank: u64,
+        carried: u32,
     },
 }
 

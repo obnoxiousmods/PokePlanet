@@ -321,6 +321,10 @@ impl Session {
                                 ))
                                 .await;
                         }
+                        ServerControl::BankState { bank, carried } => {
+                            tracing::debug!(bank, carried, "bank state");
+                            self.link.send(wire::encode_bank_state(bank, carried)).await;
+                        }
                         ServerControl::LinkBlock { from_slot, bytes } => {
                             self.link
                                 .send(wire::encode_link_block(from_slot, &bytes))
@@ -498,6 +502,12 @@ impl Session {
                         }
                         wire::GameMessage::HardReset => {
                             write_control(&mut send, &ClientControl::HardReset).await?;
+                        }
+                        wire::GameMessage::BankDeposit => {
+                            write_control(&mut send, &ClientControl::BankDeposit).await?;
+                        }
+                        wire::GameMessage::BankWithdraw => {
+                            write_control(&mut send, &ClientControl::BankWithdraw).await?;
                         }
                         wire::GameMessage::Hello { .. } => {
                             // Answered where the connection is accepted, since the point of

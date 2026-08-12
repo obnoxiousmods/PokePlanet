@@ -86,6 +86,12 @@ pub const MSG_BLOCK: u8 = 0x90;
 /// A run of per-frame key states, for replay validation.
 pub const MSG_KEYS: u8 = 0x91;
 pub const MSG_HARD_RESET: u8 = 0x92;
+/// Deposit the whole carried wallet into the PC bank (game -> sidecar).
+pub const MSG_BANK_DEPOSIT: u8 = 0x93;
+/// Withdraw from the PC bank into the carried wallet (game -> sidecar).
+pub const MSG_BANK_WITHDRAW: u8 = 0x94;
+/// The bank balance and authoritative carried money (server -> game).
+pub const MSG_BANK_STATE: u8 = 0x0D;
 
 /// Mirrors `enum NetAuthState` in the C header.
 pub const AUTH_OFFLINE: u8 = 0;
@@ -325,6 +331,14 @@ pub fn encode_rates(
     frame(b)
 }
 
+/// The PC bank balance and the authoritative carried money, for the game to adopt.
+pub fn encode_bank_state(bank: u64, carried: u32) -> Vec<u8> {
+    let mut b = vec![MSG_BANK_STATE];
+    b.extend_from_slice(&bank.to_le_bytes());
+    b.extend_from_slice(&carried.to_le_bytes());
+    frame(b)
+}
+
 /// One block of battle traffic for the game, filed under the sender's link slot.
 pub fn encode_link_block(from_slot: u8, bytes: &[u8]) -> Vec<u8> {
     let mut b = vec![MSG_LINK_BLOCK, from_slot];
@@ -370,6 +384,10 @@ pub enum GameMessage {
     BattleEnded,
     /// Deadman hard reset: no living Pokemon remain, so the character is wiped to a fresh start.
     HardReset,
+    /// Deposit the whole carried wallet into the PC bank.
+    BankDeposit,
+    /// Withdraw from the PC bank into the carried wallet.
+    BankWithdraw,
     /// This character's money is now this.
     ///
     /// The first field reported as itself instead of by uploading the entire save. The save
@@ -436,6 +454,8 @@ pub fn decode_game_message(body: &[u8]) -> anyhow::Result<GameMessage> {
     match kind {
         MSG_BATTLE_ENDED => Ok(GameMessage::BattleEnded),
         MSG_HARD_RESET => Ok(GameMessage::HardReset),
+        MSG_BANK_DEPOSIT => Ok(GameMessage::BankDeposit),
+        MSG_BANK_WITHDRAW => Ok(GameMessage::BankWithdraw),
         MSG_KEYS => {
             // Whole frames only. A trailing odd byte means the sender and this disagree about
             // the format, and guessing at the remainder would invent inputs nobody pressed.

@@ -44,6 +44,7 @@
 #define MSG_CORRECTION      0x0A
 #define MSG_LINK_BLOCK      0x0B
 #define MSG_RATES           0x0C
+#define MSG_BANK_STATE      0x0D
 // Game -> sidecar
 #define MSG_SELF_STATE   0x81
 #define MSG_BEGIN_LOGIN  0x82
@@ -63,6 +64,8 @@
 #define MSG_BLOCK           0x90
 #define MSG_KEYS            0x91
 #define MSG_HARD_RESET      0x92
+#define MSG_BANK_DEPOSIT    0x93
+#define MSG_BANK_WITHDRAW   0x94
 
 // Lives in the SDL backend, like the sidecar port beside it.
 extern const char *Platform_GetInstanceToken(void);
@@ -158,6 +161,11 @@ struct NetState
     // The server refused where we said we were. Only the newest matters: it is the truth.
     struct NetCorrection correction;
     bool8 hasCorrection;
+
+    // The latest PC bank balance and authoritative carried money from the server, pending until the
+    // game thread takes it (and adopts the wallet).
+    struct NetBankState bankState;
+    bool8 hasBankState;
 
     // Both sides agreed to battle, and this is the slot the server gave us.
     struct NetBattleStart battleStart;
@@ -596,6 +604,24 @@ static void HandleSaveImage(const u8 *payload, u32 len)
     }
 }
 
+static void HandleBankState(const u8 *payload, u32 len)
+{
+    u64 bank;
+
+    if (len < 12) // u64 bank + u32 carried
+        return;
+
+    bank = (u64)payload[0] | ((u64)payload[1] << 8) | ((u64)payload[2] << 16)
+         | ((u64)payload[3] << 24) | ((u64)payload[4] << 32) | ((u64)payload[5] << 40)
+         | ((u64)payload[6] << 48) | ((u64)payload[7] << 56);
+
+    SDL_LockMutex(sNet.lock);
+    sNet.bankState.bank = (bank > 0xFFFFFFFFu) ? 0xFFFFFFFFu : (u32)bank;
+    sNet.bankState.carried = (u32)(payload[8] | (payload[9] << 8) | (payload[10] << 16) | (payload[11] << 24));
+    sNet.hasBankState = TRUE;
+    SDL_UnlockMutex(sNet.lock);
+}
+
 static void HandleCorrection(const u8 *payload, u32 len)
 {
     if (len < 8)
@@ -651,6 +677,9 @@ static void DispatchFrame(const u8 *body, u32 len)
         break;
     case MSG_LINK_BLOCK:
         HandleLinkBlock(body + 1, len - 1);
+        break;
+    case MSG_BANK_STATE:
+        HandleBankState(body + 1, len - 1);
         break;
     case MSG_CORRECTION:
         HandleCorrection(body + 1, len - 1);
@@ -1375,6 +1404,45 @@ void Net_HardReset(void)
 
     body[0] = MSG_HARD_RESET;
     Enqueue(body, sizeof(body));
+}
+
+void Net_BankDeposit(void)
+{
+    u8 body[1];
+
+    if (!sInitialised)
+        return;
+
+    body[0] = MSG_BANK_DEPOSIT;
+    Enqueue(body, sizeof(body));
+}
+
+void Net_BankWithdraw(void)
+{
+    u8 body[1];
+
+    if (!sInitialised)
+        return;
+
+    body[0] = MSG_BANK_WITHDRAW;
+    Enqueue(body, sizeof(body));
+}
+
+bool8 Net_PopBankState(struct NetBankState *out)
+{
+    if (!sInitialised || out == NULL)
+        return FALSE;
+
+    SDL_LockMutex(sNet.lock);
+    if (!sNet.hasBankState)
+    {
+        SDL_UnlockMutex(sNet.lock);
+        return FALSE;
+    }
+    *out = sNet.bankState;
+    sNet.hasBankState = FALSE;
+    SDL_UnlockMutex(sNet.lock);
+    return TRUE;
 }
 
 bool8 Net_WasOnline(void)

@@ -386,6 +386,20 @@ async fn run_session(
 
     hand_over_save(&server, &conn, character.id, player_id).await?;
 
+    // Deadman characters carry a PC bank; tell the client its balance up front so the bank menu can
+    // show it. `carried` is read from the same save just handed over, so adopting it is a no-op.
+    if character.mode == "deadman" {
+        let bank = db::bank_balance(&server.db, character.id).await.unwrap_or(0);
+        let carried = db::load_save(&server.db, character.id)
+            .await
+            .ok()
+            .flatten()
+            .and_then(|s| crate::save_parse::parse(&s))
+            .map(|s| s.money())
+            .unwrap_or(character.money as u32);
+        write_frame(&mut send, &ServerControl::BankState { bank, carried }).await?;
+    }
+
     // Fan-in for anything the world wants to push at this client.
     let (control_tx, mut control_rx) = mpsc::channel::<ServerControl>(64);
 
@@ -553,6 +567,8 @@ fn is_heavy_control(control: &ClientControl) -> bool {
             | ClientControl::RegionChanged { .. }
             | ClientControl::BlockChunk { .. }
             | ClientControl::HardReset
+            | ClientControl::BankDeposit
+            | ClientControl::BankWithdraw
     )
 }
 
@@ -1426,6 +1442,54 @@ async fn control_loop(
                 tracing::info!(
                     player = player_id,
                     "deadman hard reset: character wiped to a fresh start"
+                );
+            }
+            ClientControl::BankDeposit | ClientControl::BankWithdraw => {
+                // The bank is a Deadman feature. The save lock is held (heavy op), so the read of
+                // the wallet and the write of the moved money are one atomic step -- no other
+                // writer can interleave and lose or double the money.
+                if mode != "deadman" {
+                    continue;
+                }
+                let deposit = matches!(control, ClientControl::BankDeposit);
+                let Ok(Some(stored)) = db::load_save(&server.db, character_id).await else {
+                    continue;
+                };
+                let Some(save) = crate::save_parse::parse(&stored) else {
+                    continue;
+                };
+                let carried = save.money();
+                let bank = db::bank_balance(&server.db, character_id).await.unwrap_or(0);
+                let (new_carried, new_bank) = if deposit {
+                    crate::economy::deposit_all(carried, bank)
+                } else {
+                    crate::economy::withdraw_all(carried, bank)
+                };
+                // Author the new carried money into the save, proving the image can be rebuilt
+                // faithfully before storing -- the same gate every money write goes through.
+                let block1 = crate::save_parse::with_money(&save, new_carried);
+                let Some(candidate) = crate::save_parse::reauthor(&stored, &block1) else {
+                    tracing::warn!(player = player_id, "could not rebuild save for a bank move");
+                    continue;
+                };
+                db::store_save(&server.db, character_id, &candidate).await?;
+                db::set_bank_balance(&server.db, character_id, new_bank).await?;
+                server
+                    .world
+                    .tell(
+                        player_id,
+                        ServerControl::BankState {
+                            bank: new_bank,
+                            carried: new_carried,
+                        },
+                    )
+                    .await;
+                tracing::info!(
+                    player = player_id,
+                    deposit,
+                    bank = new_bank,
+                    carried = new_carried,
+                    "bank move"
                 );
             }
             ClientControl::Goodbye => break,

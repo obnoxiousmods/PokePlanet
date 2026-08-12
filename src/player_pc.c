@@ -29,13 +29,16 @@
 #include "task.h"
 #include "window.h"
 #include "menu_specialized.h"
+#include "mmo_deadman.h"
+#include "net_client.h"
 
 // Top level PC menu options
 enum {
     MENU_ITEMSTORAGE,
     MENU_MAILBOX,
     MENU_DECORATION,
-    MENU_TURNOFF
+    MENU_TURNOFF,
+    MENU_BANK // Deadman only: deposit/withdraw pokedollars, safe from death
 };
 
 // Item storage menu options
@@ -189,12 +192,38 @@ static const u8 *const sItemStorage_OptionDescriptions[] =
     [MENU_EXIT]     = gText_GoBackPrevMenu,
 };
 
+// Deadman PC bank (pokedollars). Server-authoritative: the client asks, the server moves the money
+// and reports the new balance and wallet, which the field frame-poll applies.
+static void PlayerPC_Bank(u8);
+static void InitBankMenu(u8);
+static void BankMenuProcessInput(u8);
+static void Bank_Deposit(u8);
+static void Bank_Withdraw(u8);
+static void Bank_Exit(u8);
+
+static const u8 gText_MoneyStorage[] = _("BANK");
+static const u8 sText_BankPrompt[] = _("Bank: ${STR_VAR_1}\nWhat would you like to do?");
+static const u8 sText_BankDepositAll[] = _("DEPOSIT ALL");
+static const u8 sText_BankWithdrawAll[] = _("WITHDRAW ALL");
+static const u8 sText_BankDeposited[] = _("Your money is safe in the bank.");
+static const u8 sText_BankWithdrew[] = _("You took your money out.");
+
+enum { BANK_DEPOSIT, BANK_WITHDRAW, BANK_EXIT };
+static const struct MenuAction sBankMenuActions[] =
+{
+    [BANK_DEPOSIT]  = { sText_BankDepositAll,  {Bank_Deposit} },
+    [BANK_WITHDRAW] = { sText_BankWithdrawAll, {Bank_Withdraw} },
+    [BANK_EXIT]     = { gText_Cancel,          {Bank_Exit} },
+};
+static const u8 sBankMenuOrder[] = { BANK_DEPOSIT, BANK_WITHDRAW, BANK_EXIT };
+
 static const struct MenuAction sPlayerPCMenuActions[] =
 {
     [MENU_ITEMSTORAGE] = { gText_ItemStorage, {PlayerPC_ItemStorage} },
     [MENU_MAILBOX]     = { gText_Mailbox,     {PlayerPC_Mailbox} },
     [MENU_DECORATION]  = { gText_Decoration,  {PlayerPC_Decoration} },
-    [MENU_TURNOFF]     = { gText_TurnOff,     {PlayerPC_TurnOff} }
+    [MENU_TURNOFF]     = { gText_TurnOff,     {PlayerPC_TurnOff} },
+    [MENU_BANK]        = { gText_MoneyStorage, {PlayerPC_Bank} }
 };
 
 static const u8 sBedroomPC_OptionOrder[] =
@@ -213,6 +242,20 @@ static const u8 sPlayerPC_OptionOrder[] =
     MENU_TURNOFF
 };
 #define NUM_PLAYER_PC_OPTIONS ARRAY_COUNT(sPlayerPC_OptionOrder)
+
+// Deadman characters get a bank slot: pokedollars deposited here survive a normal death.
+static const u8 sDeadmanPC_OptionOrder[] =
+{
+    MENU_ITEMSTORAGE,
+    MENU_MAILBOX,
+    MENU_BANK,
+    MENU_TURNOFF
+};
+#define NUM_DEADMAN_PC_OPTIONS ARRAY_COUNT(sDeadmanPC_OptionOrder)
+
+// TRUE while the bedroom PC is open, so the turn-off path is chosen by intent rather than by the
+// number of menu options (which the Deadman bank slot would otherwise collide with).
+static EWRAM_DATA bool8 sIsBedroomPC = FALSE;
 
 static const struct MenuAction sItemStorage_MenuActions[] =
 {
@@ -372,6 +415,7 @@ void NewGameInitPCItems(void)
 
 void BedroomPC(void)
 {
+    sIsBedroomPC = TRUE;
     sTopMenuOptionOrder = sBedroomPC_OptionOrder;
     sTopMenuNumOptions = NUM_BEDROOM_PC_OPTIONS;
     DisplayItemMessageOnField(CreateTask(TaskDummy, 0), gText_WhatWouldYouLike, InitPlayerPCMenu);
@@ -379,8 +423,18 @@ void BedroomPC(void)
 
 void PlayerPC(void)
 {
-    sTopMenuOptionOrder = sPlayerPC_OptionOrder;
-    sTopMenuNumOptions = NUM_PLAYER_PC_OPTIONS;
+    sIsBedroomPC = FALSE;
+    // Deadman characters can bank pokedollars at any PC; everyone else gets the classic menu.
+    if (MmoDeadman_IsActive())
+    {
+        sTopMenuOptionOrder = sDeadmanPC_OptionOrder;
+        sTopMenuNumOptions = NUM_DEADMAN_PC_OPTIONS;
+    }
+    else
+    {
+        sTopMenuOptionOrder = sPlayerPC_OptionOrder;
+        sTopMenuNumOptions = NUM_PLAYER_PC_OPTIONS;
+    }
     DisplayItemMessageOnField(CreateTask(TaskDummy, 0), gText_WhatWouldYouLike, InitPlayerPCMenu);
 }
 
@@ -491,7 +545,7 @@ static void PlayerPC_Decoration(u8 taskId)
 
 static void PlayerPC_TurnOff(u8 taskId)
 {
-    if (sTopMenuNumOptions == NUM_BEDROOM_PC_OPTIONS) // Flimsy way to determine if Bedroom PC is in use
+    if (sIsBedroomPC)
     {
         if (gSaveBlock2Ptr->playerGender == MALE)
             ScriptContext_SetupScript(LittlerootTown_BrendansHouse_2F_EventScript_TurnOffPlayerPC);
@@ -503,6 +557,82 @@ static void PlayerPC_TurnOff(u8 taskId)
         ScriptContext_Enable();
     }
     DestroyTask(taskId);
+}
+
+// Deadman PC bank. Deposit protects your pokedollars from a normal death; withdraw brings them back.
+// The money move is entirely the server's -- the client only asks and then shows what it is told.
+static void PlayerPC_Bank(u8 taskId)
+{
+    // Apply any balance the server has already pushed (the sign-in balance, or a just-finished
+    // move), so the prompt shows the current figure even if the field poll has not run since.
+    MmoDeadman_PollBank();
+    ConvertIntToDecimalStringN(gStringVar1, MmoDeadman_BankBalance(), STR_CONV_MODE_LEFT_ALIGN, 7);
+    StringExpandPlaceholders(gStringVar4, sText_BankPrompt);
+    DisplayItemMessageOnField(taskId, gStringVar4, InitBankMenu);
+}
+
+static void InitBankMenu(u8 taskId)
+{
+    u16 *data = gTasks[taskId].data;
+    struct WindowTemplate windowTemplate = sWindowTemplates_MainMenus[WIN_MAIN_MENU_BEDROOM];
+
+    windowTemplate.width = GetMaxWidthInSubsetOfMenuTable(sBankMenuActions, sBankMenuOrder, ARRAY_COUNT(sBankMenuOrder));
+    tWindowId = AddWindow(&windowTemplate);
+    SetStandardWindowBorderStyle(tWindowId, FALSE);
+    PrintMenuActionTextsInUpperLeftCorner(tWindowId, ARRAY_COUNT(sBankMenuOrder), sBankMenuActions, sBankMenuOrder);
+    InitMenuInUpperLeftCornerNormal(tWindowId, ARRAY_COUNT(sBankMenuOrder), 0);
+    ScheduleBgCopyTilemapToVram(0);
+    gTasks[taskId].func = BankMenuProcessInput;
+}
+
+static void CloseBankMenuWindow(u8 taskId)
+{
+    u16 *data = gTasks[taskId].data;
+
+    ClearStdWindowAndFrameToTransparent(tWindowId, FALSE);
+    ClearWindowTilemap(tWindowId);
+    RemoveWindow(tWindowId);
+    ScheduleBgCopyTilemapToVram(0);
+}
+
+static void BankMenuProcessInput(u8 taskId)
+{
+    s8 input = Menu_ProcessInputNoWrap();
+
+    switch (input)
+    {
+    case MENU_NOTHING_CHOSEN:
+        break;
+    case MENU_B_PRESSED:
+        PlaySE(SE_SELECT);
+        CloseBankMenuWindow(taskId);
+        Bank_Exit(taskId);
+        break;
+    default:
+        PlaySE(SE_SELECT);
+        CloseBankMenuWindow(taskId);
+        sBankMenuActions[sBankMenuOrder[input]].func.void_u8(taskId);
+        break;
+    }
+}
+
+static void Bank_Deposit(u8 taskId)
+{
+    Net_BankDeposit();
+    // The server applies the move and pushes the new balance/wallet, which the field poll adopts;
+    // by the time this message is dismissed the round-trip has landed and the bank prompt is fresh.
+    DisplayItemMessageOnField(taskId, sText_BankDeposited, PlayerPC_Bank);
+}
+
+static void Bank_Withdraw(u8 taskId)
+{
+    Net_BankWithdraw();
+    DisplayItemMessageOnField(taskId, sText_BankWithdrew, PlayerPC_Bank);
+}
+
+static void Bank_Exit(u8 taskId)
+{
+    ReshowPlayerPC(taskId);
 }
 
 static void InitItemStorageMenu(u8 taskId, u8 var)
