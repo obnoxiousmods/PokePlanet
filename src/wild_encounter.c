@@ -1,6 +1,7 @@
 #include "global.h"
 #include "wild_encounter.h"
 #include "net_client.h"
+#include "mmo_deadman.h"
 #include "pokemon.h"
 #include "metatile_behavior.h"
 #include "fieldmap.h"
@@ -450,6 +451,11 @@ static bool8 TryGenerateWildMon(const struct WildPokemonInfo *wildMonInfo, u8 ar
     if (flags & WILD_CHECK_REPEL && !IsWildLevelAllowedByRepel(level))
         return FALSE;
     if (gMapHeader.mapLayoutId != LAYOUT_BATTLE_FRONTIER_BATTLE_PIKE_ROOM_WILD_MONS && flags & WILD_CHECK_KEEN_EYE && !IsAbilityAllowingEncounter(level))
+        return FALSE;
+
+    // Deadman: you cannot encounter a species you already own a living copy of. It must die or be
+    // released before you meet another -- captures are a commitment, not a farm.
+    if (MmoDeadman_IsActive() && MmoDeadman_OwnsSpecies(wildMonInfo->wildPokemon[wildMonIndex].species))
         return FALSE;
 
     CreateWildMon(wildMonInfo->wildPokemon[wildMonIndex].species, level);

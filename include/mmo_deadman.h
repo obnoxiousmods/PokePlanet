@@ -30,4 +30,10 @@ u8 MmoDeadman_LevelCap(void);
 // a deep bench. Mirrors the server's deadman::party_cap.
 u8 MmoDeadman_PartyCap(void);
 
+// TRUE when the player already owns a LIVING copy of `species`: one in the party with HP left, or
+// any in the PC boxes except the graveyard (a boxed mon is always alive; a graveyard corpse is
+// not). Deadman forbids encountering a species you already hold, so a capture is a commitment --
+// to catch another you must let the one you have die or release it.
+bool8 MmoDeadman_OwnsSpecies(u16 species);
+
 #endif // GUARD_MMO_DEADMAN_H

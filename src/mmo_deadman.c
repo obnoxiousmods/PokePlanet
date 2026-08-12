@@ -104,3 +104,31 @@ u8 MmoDeadman_PartyCap(void)
     u8 badges = MmoDeadman_BadgeCount();
     return sPartyCapByBadges[badges > 8 ? 8 : badges];
 }
+
+bool8 MmoDeadman_OwnsSpecies(u16 species)
+{
+    u8 i;
+    u8 box;
+    u8 slot;
+
+    // A living party member (fainted does not count -- it will die and free the species).
+    for (i = 0; i < PARTY_SIZE; i++)
+    {
+        if (GetMonData(&gPlayerParty[i], MON_DATA_SPECIES) == species
+         && GetMonData(&gPlayerParty[i], MON_DATA_HP) != 0)
+            return TRUE;
+    }
+
+    // Any boxed copy, except in the graveyard: a boxed mon is always alive, a corpse never is.
+    for (box = 0; box < TOTAL_BOXES_COUNT; box++)
+    {
+        if (box == MMO_GRAVEYARD_BOX)
+            continue;
+        for (slot = 0; slot < IN_BOX_COUNT; slot++)
+        {
+            if (GetBoxMonDataAt(box, slot, MON_DATA_SPECIES) == species)
+                return TRUE;
+        }
+    }
+    return FALSE;
+}
