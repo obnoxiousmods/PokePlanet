@@ -202,9 +202,158 @@ pub async fn transfer_item(
     Ok(Some((from_new, to_new)))
 }
 
+/// The party bytes after removing the mon in `slot`, packed down so the survivors stay contiguous
+/// and the vacated tail slot is zeroed. Pure; operates only on the game's own bytes, never decoding
+/// a Pokemon. `party` is `MAX_PARTY * MON_BYTES` long.
+fn party_without(party: &[u8], slot: usize, count: usize) -> Vec<u8> {
+    let mon = save_parse::SaveState::MON_BYTES;
+    let mut out = vec![0u8; party.len()];
+    let mut w = 0;
+    for s in 0..count {
+        if s == slot {
+            continue;
+        }
+        out[w * mon..w * mon + mon].copy_from_slice(&party[s * mon..s * mon + mon]);
+        w += 1;
+    }
+    out
+}
+
+/// The party bytes after appending `mon` at the first free slot (index `count`). Pure. The caller
+/// guarantees there is room (`count < MAX_PARTY`).
+fn party_with(party: &[u8], count: usize, mon: &[u8]) -> Vec<u8> {
+    let sz = save_parse::SaveState::MON_BYTES;
+    let mut out = party.to_vec();
+    out[count * sz..count * sz + sz].copy_from_slice(mon);
+    out
+}
+
+/// Move one Pokemon (identified by its `personality`, which is stable across party reordering) from
+/// `from`'s party to `to`'s party as one server-authored step, mirroring the money and item gifts.
+/// The Pokemon travels as the game's own bytes -- never decoded or re-encoded -- so it cannot be
+/// corrupted, and it exists in exactly one save at every moment because both parties are authored
+/// before either is stored. Returns the new `(from_count, to_count)`, or `None` if nothing moved:
+/// the sender does not hold that Pokemon, it is their last one (a party may not be emptied), or the
+/// receiver's party is already at `max_to_party` (their badge-based cap, never above the engine's 6).
+/// Hold BOTH save locks.
+pub async fn transfer_pokemon(
+    db: &Db,
+    from: i64,
+    to: i64,
+    personality: u32,
+    max_to_party: u8,
+) -> anyhow::Result<Option<(u8, u8)>> {
+    let (Some(from_bytes), Some(to_bytes)) =
+        (db::load_save(db, from).await?, db::load_save(db, to).await?)
+    else {
+        return Ok(None);
+    };
+    let (Some(from_state), Some(to_state)) =
+        (save_parse::parse(&from_bytes), save_parse::parse(&to_bytes))
+    else {
+        return Ok(None);
+    };
+
+    // Parsed party slots are packed (no gaps), so a Pokemon's index in the parsed party is its raw
+    // slot. Identify by personality so a reordered party cannot make us move the wrong Pokemon.
+    let from_count = from_state.party.len();
+    let Some(slot) = from_state
+        .party
+        .iter()
+        .position(|m| m.personality == personality)
+    else {
+        return Ok(None);
+    };
+    // Never let a player trade away their last Pokemon -- that would leave them unable to play (and,
+    // in Deadman, is indistinguishable from a wipe).
+    if from_count < 2 {
+        return Ok(None);
+    }
+
+    let cap = (max_to_party as usize).min(save_parse::SaveState::MAX_PARTY);
+    let to_count = to_state.party.len();
+    if to_count >= cap {
+        return Ok(None);
+    }
+
+    let mon = save_parse::SaveState::MON_BYTES;
+    let from_party = from_state.party_bytes();
+    let to_party = to_state.party_bytes();
+    if from_party.len() < save_parse::SaveState::MAX_PARTY * mon
+        || to_party.len() < save_parse::SaveState::MAX_PARTY * mon
+    {
+        return Ok(None);
+    }
+    let moved = from_party[slot * mon..slot * mon + mon].to_vec();
+
+    let new_from = party_without(&from_party, slot, from_count);
+    let new_to = party_with(&to_party, to_count, &moved);
+    let from_new_count = (from_count - 1) as u8;
+    let to_new_count = (to_count + 1) as u8;
+
+    // Author both images first; only store once both are known to be buildable, so a Pokemon can
+    // never be removed from one save without being placed in the other.
+    let Some(from_block1) = save_parse::with_party(&from_state, from_new_count, &new_from) else {
+        return Ok(None);
+    };
+    let Some(to_block1) = save_parse::with_party(&to_state, to_new_count, &new_to) else {
+        return Ok(None);
+    };
+    let (Some(from_cand), Some(to_cand)) = (
+        save_parse::reauthor(&from_bytes, &from_block1),
+        save_parse::reauthor(&to_bytes, &to_block1),
+    ) else {
+        return Ok(None);
+    };
+    db::store_save(db, from, &from_cand).await?;
+    db::store_save(db, to, &to_cand).await?;
+    Ok(Some((from_new_count, to_new_count)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Removing a party slot packs the survivors down and clears the freed tail, and appending puts
+    /// the Pokemon in the first free slot -- so a trade conserves every Pokemon's bytes exactly, with
+    /// none duplicated and none dropped. Uses sentinel bytes rather than real Pokemon: this is the
+    /// byte bookkeeping, which is all that must be proven correct (the bytes themselves never change).
+    #[test]
+    fn a_pokemon_move_is_exact_byte_bookkeeping() {
+        let mon = save_parse::SaveState::MON_BYTES;
+        let slots = save_parse::SaveState::MAX_PARTY;
+        // A party of three: slot s filled with the byte (s+1).
+        let mut party = vec![0u8; slots * mon];
+        for s in 0..3 {
+            for b in &mut party[s * mon..s * mon + mon] {
+                *b = (s + 1) as u8;
+            }
+        }
+
+        // Remove the middle mon: [1,2,3,..] -> [1,3,..], tail cleared.
+        let after = party_without(&party, 1, 3);
+        assert!(after[0..mon].iter().all(|&b| b == 1), "first mon stays");
+        assert!(
+            after[mon..2 * mon].iter().all(|&b| b == 3),
+            "third packs into slot 1"
+        );
+        assert!(
+            after[2 * mon..].iter().all(|&b| b == 0),
+            "everything past the survivors is clear"
+        );
+
+        // Append a fourth mon (byte 9) to a party of two.
+        let two = after; // now holds two mons (bytes 1 and 3)
+        let mut newcomer = vec![0u8; mon];
+        newcomer.iter_mut().for_each(|b| *b = 9);
+        let joined = party_with(&two, 2, &newcomer);
+        assert!(joined[0..mon].iter().all(|&b| b == 1));
+        assert!(joined[mon..2 * mon].iter().all(|&b| b == 3));
+        assert!(
+            joined[2 * mon..3 * mon].iter().all(|&b| b == 9),
+            "newcomer lands in slot 2"
+        );
+    }
 
     /// An item transfer moves only what the sender holds and only what fits under the receiver's
     /// stack cap, so it can neither take an item the sender lacks nor duplicate one past a full slot.

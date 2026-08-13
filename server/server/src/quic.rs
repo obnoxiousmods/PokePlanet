@@ -1719,6 +1719,79 @@ async fn control_loop(
                     Err(e) => tracing::warn!(player = player_id, error = %e, "item gift failed"),
                 }
             }
+            ClientControl::GivePokemon {
+                target,
+                personality,
+            } => {
+                // The Pokemon leg of a trade, the same server-authored shape as money and items: the
+                // server moves the Pokemon between its own copies of both saves as raw bytes (never
+                // decoded), so it cannot be duplicated or corrupted, and pushes each their new party.
+                let Some(receiver_cid) = server.world.hand_off_target(player_id, target).await
+                else {
+                    continue;
+                };
+                if receiver_cid == character_id {
+                    continue;
+                }
+                // The receiver's party cap: their badge-based Deadman cap, or the engine's six in a
+                // Normal world. Trading a Pokemon to a full party is refused rather than routed to a
+                // box (kept simple and predictable; the giver keeps it).
+                let cap = match server.world.mode_and_badges(target).await {
+                    Some((m, badges)) if m == "deadman" => crate::deadman::party_cap(badges),
+                    _ => 6,
+                };
+                let (lo, hi) = if character_id < receiver_cid {
+                    (character_id, receiver_cid)
+                } else {
+                    (receiver_cid, character_id)
+                };
+                let _g_lo = server.save_lock(lo).lock_owned().await;
+                let _g_hi = server.save_lock(hi).lock_owned().await;
+                match crate::economy::transfer_pokemon(
+                    &server.db,
+                    character_id,
+                    receiver_cid,
+                    personality,
+                    cap,
+                )
+                .await
+                {
+                    Ok(Some((from_count, to_count))) => {
+                        // Push each side its freshly authored party so both adopt it without a full
+                        // save reload. Read the stored image back so the bytes are exactly what was
+                        // written.
+                        for (pid, cid, count) in [
+                            (player_id, character_id, from_count),
+                            (target, receiver_cid, to_count),
+                        ] {
+                            if let Ok(Some(stored)) = db::load_save(&server.db, cid).await {
+                                if let Some(state) = crate::save_parse::parse(&stored) {
+                                    server
+                                        .world
+                                        .tell(
+                                            pid,
+                                            ServerControl::PartySet {
+                                                count,
+                                                party: state.party_bytes(),
+                                            },
+                                        )
+                                        .await;
+                                }
+                            }
+                        }
+                        tracing::info!(
+                            from = player_id,
+                            to = target,
+                            personality,
+                            "pokemon traded"
+                        );
+                    }
+                    Ok(None) => {}
+                    Err(e) => {
+                        tracing::warn!(player = player_id, error = %e, "pokemon trade failed")
+                    }
+                }
+            }
             ClientControl::Goodbye => break,
             ClientControl::Hello { .. }
             | ClientControl::BeginLogin

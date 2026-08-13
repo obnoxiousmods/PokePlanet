@@ -543,5 +543,6 @@ gSpecials::
 	def_special PokePlanetGiveOpenBagMenu
 	def_special PokePlanet_GiveItemPicked
 	def_special PokePlanet_GiveItem
+	def_special PokePlanet_GivePokemon
 	def_special PokePlanet_AcceptBattle
 	def_special PokePlanet_DeclineBattle

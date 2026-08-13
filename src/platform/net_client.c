@@ -50,6 +50,7 @@
 #define MSG_PROFILES        0x10
 #define MSG_SET_MONEY       0x11
 #define MSG_SET_ITEM        0x12
+#define MSG_SET_PARTY       0x13
 // Game -> sidecar
 #define MSG_SELF_STATE   0x81
 #define MSG_BEGIN_LOGIN  0x82
@@ -77,6 +78,7 @@
 #define MSG_SELECT_MODE     0x98
 #define MSG_GIVE_MONEY      0x99
 #define MSG_GIVE_ITEM       0x9A
+#define MSG_GIVE_POKEMON    0x9B
 
 // Lives in the SDL backend, like the sidecar port beside it.
 extern const char *Platform_GetInstanceToken(void);
@@ -119,6 +121,9 @@ extern const char *Platform_GetInstanceToken(void);
 // How many server-authored item-count updates can be buffered for the game thread at once. A trade
 // touches only a couple of items; this is generous headroom before the oldest is dropped.
 #define NET_SET_ITEM_QUEUE 8
+// The party image size the server authors and this side adopts: PARTY_SIZE (6) * sizeof(struct
+// Pokemon) (100). Kept as a literal so this platform file needs no game headers.
+#define NET_PARTY_BYTES (6 * 100)
 
 // Blocks arrive faster than the game reads them: the battle engine sends one and then waits
 // several frames before looking, and the handshake alone is a short burst. Deep enough that
@@ -210,6 +215,12 @@ struct NetState
     u16 setItemQty[NET_SET_ITEM_QUEUE];
     u8 setItemHead;
     u8 setItemCount;
+
+    // Server-authored party image waiting for the game thread to adopt (a traded Pokemon leaving the
+    // giver or arriving at the receiver). The whole party at once, since it moves as one unit.
+    u8 setParty[NET_PARTY_BYTES];
+    u8 setPartyCount;
+    bool8 hasSetParty;
 
     // Both sides agreed to battle, and this is the slot the server gave us.
     struct NetBattleStart battleStart;
@@ -765,6 +776,19 @@ static void HandleSetMoney(const u8 *payload, u32 len)
     SDL_UnlockMutex(sNet.lock);
 }
 
+static void HandleSetParty(const u8 *payload, u32 len)
+{
+    // count byte, then the raw party image.
+    if (len < 1 + NET_PARTY_BYTES)
+        return;
+
+    SDL_LockMutex(sNet.lock);
+    sNet.setPartyCount = payload[0];
+    memcpy(sNet.setParty, payload + 1, NET_PARTY_BYTES);
+    sNet.hasSetParty = TRUE;
+    SDL_UnlockMutex(sNet.lock);
+}
+
 static void HandleSetItem(const u8 *payload, u32 len)
 {
     u16 item;
@@ -865,6 +889,9 @@ static void DispatchFrame(const u8 *body, u32 len)
         break;
     case MSG_SET_ITEM:
         HandleSetItem(body + 1, len - 1);
+        break;
+    case MSG_SET_PARTY:
+        HandleSetParty(body + 1, len - 1);
         break;
     case MSG_CORRECTION:
         HandleCorrection(body + 1, len - 1);
@@ -1755,6 +1782,43 @@ bool8 Net_PopSetItem(u16 *item, u16 *quantity)
     *quantity = sNet.setItemQty[sNet.setItemHead];
     sNet.setItemHead = (u8)((sNet.setItemHead + 1) % NET_SET_ITEM_QUEUE);
     sNet.setItemCount--;
+    SDL_UnlockMutex(sNet.lock);
+    return TRUE;
+}
+
+void Net_GivePokemon(u32 target, u32 personality)
+{
+    u8 body[9];
+
+    if (!sInitialised)
+        return;
+
+    body[0] = MSG_GIVE_POKEMON;
+    body[1] = (u8)(target & 0xFF);
+    body[2] = (u8)((target >> 8) & 0xFF);
+    body[3] = (u8)((target >> 16) & 0xFF);
+    body[4] = (u8)((target >> 24) & 0xFF);
+    body[5] = (u8)(personality & 0xFF);
+    body[6] = (u8)((personality >> 8) & 0xFF);
+    body[7] = (u8)((personality >> 16) & 0xFF);
+    body[8] = (u8)((personality >> 24) & 0xFF);
+    Enqueue(body, sizeof(body));
+}
+
+bool8 Net_PopSetParty(u8 *count, u8 *party, u32 partyLen)
+{
+    if (!sInitialised || count == NULL || party == NULL || partyLen < NET_PARTY_BYTES)
+        return FALSE;
+
+    SDL_LockMutex(sNet.lock);
+    if (!sNet.hasSetParty)
+    {
+        SDL_UnlockMutex(sNet.lock);
+        return FALSE;
+    }
+    *count = sNet.setPartyCount;
+    memcpy(party, sNet.setParty, NET_PARTY_BYTES);
+    sNet.hasSetParty = FALSE;
     SDL_UnlockMutex(sNet.lock);
     return TRUE;
 }

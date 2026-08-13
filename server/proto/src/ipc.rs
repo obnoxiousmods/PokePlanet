@@ -102,6 +102,8 @@ pub const MSG_SELECT_MODE: u8 = 0x98;
 pub const MSG_GIVE_MONEY: u8 = 0x99;
 /// Give an item to another player (game -> sidecar).
 pub const MSG_GIVE_ITEM: u8 = 0x9A;
+/// Give a party Pokemon to another player (game -> sidecar).
+pub const MSG_GIVE_POKEMON: u8 = 0x9B;
 /// The bank balance and authoritative carried money (server -> game).
 pub const MSG_BANK_STATE: u8 = 0x0D;
 /// The items on the ground of the player's current map (server -> game).
@@ -114,6 +116,8 @@ pub const MSG_PROFILES: u8 = 0x10;
 pub const MSG_SET_MONEY: u8 = 0x11;
 /// This character's held count of one item is now this, server-authored (server -> game).
 pub const MSG_SET_ITEM: u8 = 0x12;
+/// This character's whole party is now these bytes, server-authored (server -> game).
+pub const MSG_SET_PARTY: u8 = 0x13;
 
 /// Mirrors `enum NetAuthState` in the C header.
 pub const AUTH_OFFLINE: u8 = 0;
@@ -368,6 +372,14 @@ pub fn encode_set_item(item: u16, quantity: u16) -> Vec<u8> {
     frame(b)
 }
 
+/// This character's server-authored party image, for the game to adopt. Layout: count byte, then the
+/// raw party bytes (`PARTY_SIZE * MON_SIZE`).
+pub fn encode_set_party(count: u8, party: &[u8]) -> Vec<u8> {
+    let mut b = vec![MSG_SET_PARTY, count];
+    b.extend_from_slice(party);
+    frame(b)
+}
+
 /// The PC bank balance and the authoritative carried money, for the game to adopt.
 pub fn encode_bank_state(bank: u64, carried: u32) -> Vec<u8> {
     let mut b = vec![MSG_BANK_STATE];
@@ -506,6 +518,11 @@ pub enum GameMessage {
         item: u16,
         quantity: u16,
     },
+    /// Give the party Pokemon with this personality to another player.
+    GivePokemon {
+        target: u32,
+        personality: u32,
+    },
     /// This character's money is now this.
     ///
     /// The first field reported as itself instead of by uploading the entire save. The save
@@ -623,6 +640,15 @@ pub fn decode_game_message(body: &[u8]) -> anyhow::Result<GameMessage> {
                 target: u32::from_le_bytes([b[0], b[1], b[2], b[3]]),
                 item: u16::from_le_bytes([b[4], b[5]]),
                 quantity: u16::from_le_bytes([b[6], b[7]]),
+            })
+        }
+        MSG_GIVE_POKEMON => {
+            let b = rest
+                .get(..8)
+                .ok_or_else(|| anyhow::anyhow!("short give-pokemon message"))?;
+            Ok(GameMessage::GivePokemon {
+                target: u32::from_le_bytes([b[0], b[1], b[2], b[3]]),
+                personality: u32::from_le_bytes([b[4], b[5], b[6], b[7]]),
             })
         }
         MSG_KEYS => {

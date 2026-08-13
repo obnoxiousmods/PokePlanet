@@ -1278,6 +1278,7 @@ const u8 gText_PokePlanetGive1000[] = _("¥1000");
 const u8 gText_PokePlanetGive10000[] = _("¥10000");
 const u8 gText_PokePlanetMoney[] = _("MONEY");
 const u8 gText_PokePlanetItem[] = _("ITEM");
+const u8 gText_PokePlanetPokemon[] = _("POKéMON");
 const u8 gText_PokePlanetQty1[] = _("1");
 const u8 gText_PokePlanetQty10[] = _("10");
 const u8 gText_PokePlanetQty99[] = _("99");

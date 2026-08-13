@@ -32,7 +32,20 @@ PokePlanet_EventScript_MenuTrade::
 	switch VAR_RESULT
 	case POKEPLANET_TRADE_MONEY, PokePlanet_EventScript_GiveMoneyMenu
 	case POKEPLANET_TRADE_ITEM, PokePlanet_EventScript_GiveItemStart
+	case POKEPLANET_TRADE_POKEMON, PokePlanet_EventScript_GivePokemonStart
 	@ Exit (and a B press) fall through.
+	release
+	end
+
+@ Give a Pokemon: the native party menu picks one, then it is handed over. The server clamps to the
+@ receiver's party cap and moves it as raw bytes, so it can never be duplicated. Eggs and your last
+@ Pokemon are refused.
+PokePlanet_EventScript_GivePokemonStart::
+	special ChoosePartyMon
+	waitstate
+	special PokePlanet_GivePokemon
+	goto_if_eq VAR_RESULT, FALSE, PokePlanet_EventScript_GiveItemDone
+	msgbox PokePlanet_Text_PokemonGiven, MSGBOX_DEFAULT
 	release
 	end
 
@@ -167,6 +180,9 @@ PokePlanet_Text_MoneyGiven:
 
 PokePlanet_Text_ItemGiven:
 	.string "Sent the item to {STR_VAR_1}!$"
+
+PokePlanet_Text_PokemonGiven:
+	.string "Sent the POKéMON to {STR_VAR_1}!$"
 
 PokePlanet_Text_RequestSent:
 	.string "Battle request sent to {STR_VAR_1}!\p"

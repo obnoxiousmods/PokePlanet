@@ -311,6 +311,18 @@ void Net_GiveItem(u32 target, u16 item, u16 quantity);
 // drain a burst. Works in both modes.
 bool8 Net_PopSetItem(u16 *item, u16 *quantity);
 
+// Give the party Pokemon with this `personality` to the player `target` (their remote id).
+// Server-authoritative like Net_GiveMoney/Item: the server moves the Pokemon between the two saves
+// (as raw bytes, never decoded) and pushes each side its new party; this side changes nothing until
+// Net_PopSetParty delivers the server's word. Identified by personality, not a slot.
+void Net_GivePokemon(u32 target, u32 personality);
+
+// Take the server's authoritative party image if one is pending, TRUE if it filled `count` and the
+// `party` buffer (which must be at least 6*100 = 600 bytes). The caller copies it straight into
+// gPlayerParty and sets the party count. This is how a trade's giver and receiver both learn their
+// new party. Works in both modes.
+bool8 Net_PopSetParty(u8 *count, u8 *party, u32 partyLen);
+
 // The most items that can lie on one map at once, as far as this client draws them.
 #define NET_MAX_DROPS 32
 

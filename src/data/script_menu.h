@@ -23,11 +23,13 @@ static const struct MenuAction MultichoiceList_PokePlanetPlayer[] =
     {gText_Exit},
 };
 
-// The trade submenu: give money or an item. Order must match the POKEPLANET_TRADE_* constants.
+// The trade submenu: give money, an item, or a Pokemon. Order must match the POKEPLANET_TRADE_*
+// constants.
 static const struct MenuAction MultichoiceList_PokePlanetTrade[] =
 {
     {gText_PokePlanetMoney},
     {gText_PokePlanetItem},
+    {gText_PokePlanetPokemon},
     {gText_Exit},
 };
 

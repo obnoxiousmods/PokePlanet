@@ -25,6 +25,7 @@
 #include "link.h"
 #include "money.h"
 #include "net_client.h"
+#include "pokemon.h"
 #include "constants/maps.h"
 #include "fieldmap.h"
 #include "field_screen_effect.h"
@@ -412,6 +413,29 @@ void PokePlanet_GiveItemPicked(void)
     gSpecialVar_Result = (item != ITEM_NONE && !GetItemImportance(item)) ? TRUE : FALSE;
 }
 
+// Called from Trade -> Pokemon after the party menu picked a slot (in VAR_0x8004). Sends that
+// Pokemon (by its personality, which the server matches in its own copy of the party) to the player
+// just interacted with. Refuses a cancel, an egg, and giving away your last Pokemon. The server owns
+// the move and pushes both parties back, so nothing leaves the party locally until PollGiftParty
+// adopts the server's word. VAR_RESULT reports whether the gift was sent.
+void PokePlanet_GivePokemon(void)
+{
+    u8 slot = (u8)gSpecialVar_0x8004;
+    u32 personality;
+
+    if (sInteractingWith == 0 || slot >= PARTY_SIZE
+        || GetMonData(&gPlayerParty[slot], MON_DATA_IS_EGG)
+        || CalculatePlayerPartyCount() < 2)
+    {
+        gSpecialVar_Result = FALSE;
+        return;
+    }
+
+    personality = GetMonData(&gPlayerParty[slot], MON_DATA_PERSONALITY);
+    Net_GivePokemon(sInteractingWith, personality);
+    gSpecialVar_Result = TRUE;
+}
+
 // Called from the Trade -> Give item flow after the bag picked an item (gSpecialVar_ItemId) and the
 // script chose a quantity (VAR_0x8004). Sends it to the player just interacted with; the server owns
 // the move and pushes both bags back, so nothing leaves the bag locally until PollGiftItems adopts
@@ -721,6 +745,22 @@ static void PollGiftItems(void)
     }
 }
 
+// Adopt a server-authored party image: a traded Pokemon leaving the giver's party or arriving in the
+// receiver's. The server owns the move and pushes the whole new party to each side, which is copied
+// straight into gPlayerParty here. The autosave then reports it back, already matching the server's
+// stored copy, so a Pokemon is never duplicated or lost. Works in both modes.
+static void PollGiftParty(void)
+{
+    u8 count;
+    u8 party[sizeof(gPlayerParty)];
+
+    if (Net_PopSetParty(&count, party, sizeof(party)))
+    {
+        memcpy(gPlayerParty, party, sizeof(gPlayerParty));
+        gPlayerPartyCount = count;
+    }
+}
+
 void MmoPlayers_Update(void)
 {
     // Remembers whether we were online last frame, so a drop can be noticed and cleaned up.
@@ -772,6 +812,7 @@ void MmoPlayers_Update(void)
     MmoDeadman_PollBank();
     PollGiftMoney();
     PollGiftItems();
+    PollGiftParty();
     MmoWorldItems_Update();
     CheckForcedSightBattle();
     UpdateFollowPlayer();

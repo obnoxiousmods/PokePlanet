@@ -595,6 +595,21 @@ impl SaveState {
             .map(|(p, _, q)| (*p, *q))
     }
 
+    /// The whole party as the game's own bytes (`PARTY_SIZE * MON_SIZE`), copied out of SaveBlock1.
+    /// Empty if the block is somehow too short to hold it. Used to move a Pokemon between saves
+    /// without ever decoding it -- the same byte-faithful path `with_party` takes.
+    pub fn party_bytes(&self) -> Vec<u8> {
+        self.block1
+            .get(OFFSET_PARTY..OFFSET_PARTY + PARTY_SIZE * MON_SIZE)
+            .map(|b| b.to_vec())
+            .unwrap_or_default()
+    }
+
+    /// The size of one party Pokemon on the wire, so callers can slice `party_bytes`.
+    pub const MON_BYTES: usize = MON_SIZE;
+    /// The most Pokemon a party can hold.
+    pub const MAX_PARTY: usize = PARTY_SIZE;
+
     /// What in this save could not have come from playing the game.
     ///
     /// None means only that nothing here is provably impossible -- it is not a statement

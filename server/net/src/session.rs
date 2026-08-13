@@ -362,6 +362,9 @@ impl Session {
                         ServerControl::ItemSet { item, quantity } => {
                             self.link.send(wire::encode_set_item(item, quantity)).await;
                         }
+                        ServerControl::PartySet { count, party } => {
+                            self.link.send(wire::encode_set_party(count, &party)).await;
+                        }
                         ServerControl::LinkBlock { from_slot, bytes } => {
                             self.link
                                 .send(wire::encode_link_block(from_slot, &bytes))
@@ -582,6 +585,19 @@ impl Session {
                                     target,
                                     item,
                                     quantity,
+                                },
+                            )
+                            .await?;
+                        }
+                        wire::GameMessage::GivePokemon {
+                            target,
+                            personality,
+                        } => {
+                            write_control(
+                                &mut send,
+                                &ClientControl::GivePokemon {
+                                    target,
+                                    personality,
                                 },
                             )
                             .await?;

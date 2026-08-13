@@ -142,7 +142,8 @@
 // PokePlanet trade submenu selections
 #define POKEPLANET_TRADE_MONEY             0
 #define POKEPLANET_TRADE_ITEM              1
-#define POKEPLANET_TRADE_EXIT              2
+#define POKEPLANET_TRADE_POKEMON           2
+#define POKEPLANET_TRADE_EXIT              3
 
 // PokePlanet "give item" quantity selections
 #define POKEPLANET_GIVEITEM_1              0

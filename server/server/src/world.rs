@@ -588,6 +588,16 @@ impl World {
         Some(b.character_id)
     }
 
+    /// A live player's world and badge count, for deciding rules that depend on them (a receiver's
+    /// party cap when a Pokemon is traded to them). `None` if they are not online.
+    pub async fn mode_and_badges(&self, id: PlayerId) -> Option<(String, u8)> {
+        self.players
+            .read()
+            .await
+            .get(&id)
+            .map(|p| (p.mode.clone(), p.badges))
+    }
+
     /// Deliver a chat message according to its target. Returns false if a private
     /// message had no recipient online.
     /// Deliver a line to whoever should see it. `from_id` identifies the sender; `from` is

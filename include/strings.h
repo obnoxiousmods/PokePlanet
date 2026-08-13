@@ -2772,6 +2772,7 @@ extern const u8 gText_PokePlanetGive1000[];
 extern const u8 gText_PokePlanetGive10000[];
 extern const u8 gText_PokePlanetMoney[];
 extern const u8 gText_PokePlanetItem[];
+extern const u8 gText_PokePlanetPokemon[];
 extern const u8 gText_PokePlanetQty1[];
 extern const u8 gText_PokePlanetQty10[];
 extern const u8 gText_PokePlanetQty99[];

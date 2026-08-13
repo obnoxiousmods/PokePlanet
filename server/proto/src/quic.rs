@@ -205,6 +205,16 @@ pub enum ClientControl {
         item: u16,
         quantity: u16,
     },
+    /// Give the Pokemon with this `personality` to `target` (a nearby player). Like the money and
+    /// item gifts, the server moves the Pokemon between its own copies of both saves -- as raw bytes,
+    /// never decoded -- so it can neither be duplicated nor corrupted, and pushes each their new
+    /// party. Identified by personality (stable across reordering), not a slot index.
+    ///
+    /// Appended so the existing variant numbering does not shift.
+    GivePokemon {
+        target: PlayerId,
+        personality: u32,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -405,6 +415,15 @@ pub enum ServerControl {
     ItemSet {
         item: u16,
         quantity: u16,
+    },
+    /// This character's whole party is now these bytes, server-authored (e.g. after giving or
+    /// receiving a Pokemon). `party` is the game's own party image (`PARTY_SIZE * MON_SIZE`) and
+    /// `count` how many slots are filled; the client adopts both directly.
+    ///
+    /// Appended so the existing variant numbering does not shift.
+    PartySet {
+        count: u8,
+        party: Vec<u8>,
     },
 }
 
