@@ -289,6 +289,16 @@ void Net_BankWithdraw(void);
 // `carried` as the wallet (SetMoney) and shows `bank`. Cleared once taken.
 bool8 Net_PopBankState(struct NetBankState *out);
 
+// Give `amount` carried pokedollars to the player `target` (their remote id). Server-authoritative:
+// the server moves the money between the two saves and pushes each side its new balance; this side
+// changes nothing until Net_PopSetMoney delivers the server's word.
+void Net_GiveMoney(u32 target, u32 amount);
+
+// Take the server's authoritative carried-money value if one is pending, TRUE if there was one. The
+// caller adopts it with SetMoney. This is how a gift's giver and receiver both learn their new
+// wallet. Works in both modes. Cleared once taken.
+bool8 Net_PopSetMoney(u32 *amount);
+
 // The most items that can lie on one map at once, as far as this client draws them.
 #define NET_MAX_DROPS 32
 

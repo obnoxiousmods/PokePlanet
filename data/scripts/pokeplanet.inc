@@ -24,10 +24,35 @@ PokePlanet_EventScript_MenuBattle::
 	release
 	end
 
-@ Trade is wired up in its own feature; until then it announces itself rather than silently doing
-@ nothing, so the menu never feels broken.
+@ Trade: give the other player carried pokedollars. A preset-amount menu keeps it to a couple of
+@ button presses (no free-form number entry). The move is server-authoritative: the special sends
+@ the amount, the server takes it from your save and adds it to theirs, and both wallets update when
+@ the server pushes them back. The whole item/Pokemon trade builds on this same channel later.
 PokePlanet_EventScript_MenuTrade::
-	msgbox PokePlanet_Text_ComingSoon, MSGBOX_DEFAULT
+	multichoice 0, 0, MULTI_POKEPLANET_GIVEMONEY, FALSE
+	switch VAR_RESULT
+	case POKEPLANET_GIVE_100, PokePlanet_EventScript_Give100
+	case POKEPLANET_GIVE_1000, PokePlanet_EventScript_Give1000
+	case POKEPLANET_GIVE_10000, PokePlanet_EventScript_Give10000
+	@ Cancel (and a B press) fall through.
+	release
+	end
+
+PokePlanet_EventScript_Give100::
+	setvar VAR_0x8004, 100
+	goto PokePlanet_EventScript_GiveMoney
+
+PokePlanet_EventScript_Give1000::
+	setvar VAR_0x8004, 1000
+	goto PokePlanet_EventScript_GiveMoney
+
+PokePlanet_EventScript_Give10000::
+	setvar VAR_0x8004, 10000
+	goto PokePlanet_EventScript_GiveMoney
+
+PokePlanet_EventScript_GiveMoney::
+	special PokePlanet_GiveMoney
+	msgbox PokePlanet_Text_MoneyGiven, MSGBOX_DEFAULT
 	release
 	end
 
@@ -90,6 +115,9 @@ PokePlanet_Text_ComingSoon:
 PokePlanet_Text_Following:
 	.string "Now following {STR_VAR_1}!\p"
 	.string "Move on your own to stop.$"
+
+PokePlanet_Text_MoneyGiven:
+	.string "Sent the money to {STR_VAR_1}!$"
 
 PokePlanet_Text_RequestSent:
 	.string "Battle request sent to {STR_VAR_1}!\p"

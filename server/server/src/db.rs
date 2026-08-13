@@ -654,7 +654,9 @@ pub async fn bank_balance(db: &Db, character_id: i64) -> anyhow::Result<u64> {
             &[&character_id],
         )
         .await?;
-    Ok(row.map(|r| r.get::<_, i64>("money").max(0) as u64).unwrap_or(0))
+    Ok(row
+        .map(|r| r.get::<_, i64>("money").max(0) as u64)
+        .unwrap_or(0))
 }
 
 /// Set a character's banked money, creating the row on first deposit.

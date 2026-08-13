@@ -94,9 +94,67 @@ pub async fn credit(db: &Db, character_id: i64, amount: u32) -> anyhow::Result<O
     Ok(Some(total))
 }
 
+/// The amount that can actually move from a sender holding `from_balance` to a receiver holding
+/// `to_balance`: capped by what the sender has AND by the room left under the receiver's money cap,
+/// so a transfer never mints money (over the cap) nor lets a sender spend what they lack. Pure.
+fn movable(from_balance: u32, to_balance: u32, amount: u32) -> u32 {
+    let room = MAX_MONEY.saturating_sub(to_balance);
+    amount.min(from_balance).min(room)
+}
+
+/// Move up to `amount` pokedollars from `from` to `to` as one server-authored step. Returns the new
+/// `(from_balance, to_balance)`, or `None` if nothing moved (either save unreadable, the sender is
+/// broke, or the receiver is already at the cap). The caller MUST hold BOTH characters' save locks
+/// across this call so no other writer can interleave; lock them in a stable order to avoid deadlock.
+pub async fn transfer(
+    db: &Db,
+    from: i64,
+    to: i64,
+    amount: u32,
+) -> anyhow::Result<Option<(u32, u32)>> {
+    let (Some(from_bal), Some(to_bal)) = (money(db, from).await?, money(db, to).await?) else {
+        return Ok(None);
+    };
+    let moved = movable(from_bal, to_bal, amount);
+    if moved == 0 {
+        return Ok(None);
+    }
+    // Take first: if the deduct somehow fails the receiver is never credited, so money can't appear.
+    let Some(from_left) = try_deduct(db, from, moved).await? else {
+        return Ok(None);
+    };
+    let Some(to_total) = credit(db, to, moved).await? else {
+        return Ok(None);
+    };
+    Ok(Some((from_left, to_total)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A transfer moves only what the sender has and only what fits under the receiver's cap, so it
+    /// can neither overdraw the sender nor mint money past the game's limit.
+    #[test]
+    fn a_transfer_conserves_money() {
+        assert_eq!(
+            movable(1000, 0, 400),
+            400,
+            "a plain move takes the asked amount"
+        );
+        assert_eq!(movable(300, 0, 400), 300, "capped by what the sender holds");
+        assert_eq!(
+            movable(1000, MAX_MONEY - 100, 400),
+            100,
+            "capped by the room left under the receiver's cap"
+        );
+        assert_eq!(
+            movable(1000, MAX_MONEY, 400),
+            0,
+            "a full receiver takes nothing"
+        );
+        assert_eq!(movable(0, 0, 400), 0, "a broke sender moves nothing");
+    }
 
     /// A stake you cannot cover is refused, and the boundary (exactly your whole balance) is allowed.
     #[test]
@@ -122,7 +180,11 @@ mod tests {
         // Deposit all: wallet emptied, bank grows by exactly the wallet.
         assert_eq!(deposit_all(5000, 0), (0, 5000));
         assert_eq!(deposit_all(3000, 5000), (0, 8000));
-        assert_eq!(deposit_all(0, 8000), (0, 8000), "depositing nothing changes nothing");
+        assert_eq!(
+            deposit_all(0, 8000),
+            (0, 8000),
+            "depositing nothing changes nothing"
+        );
 
         // Withdraw all: fills the wallet, surplus over the cap stays in the bank.
         assert_eq!(withdraw_all(0, 5000), (5000, 0));
@@ -134,7 +196,11 @@ mod tests {
         // A full round-trip conserves the total no matter the cap.
         let (c1, b1) = deposit_all(MAX_MONEY, 900_000); // bank now well over the cap
         let (c2, b2) = withdraw_all(c1, b1);
-        assert_eq!(c2 as u64 + b2, MAX_MONEY as u64 + 900_000, "no money created or destroyed");
+        assert_eq!(
+            c2 as u64 + b2,
+            MAX_MONEY as u64 + 900_000,
+            "no money created or destroyed"
+        );
     }
 
     /// A payout never pushes a balance past the cap, and never overflows.

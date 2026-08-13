@@ -483,8 +483,13 @@ impl World {
             .cloned()
             .unwrap_or_default();
         for id in watchers {
-            self.tell(id, ServerControl::MapDrops { drops: wire.clone() })
-                .await;
+            self.tell(
+                id,
+                ServerControl::MapDrops {
+                    drops: wire.clone(),
+                },
+            )
+            .await;
         }
     }
 
@@ -558,6 +563,29 @@ impl World {
             });
         }
         Ok(())
+    }
+
+    /// Validate that `giver` can hand assets to `target` right now — both online, distinct, on the
+    /// same map, and standing within a couple tiles — and return the target's database character id.
+    /// This is the proximity gate for a money gift; the actual money move happens server-side under
+    /// both save locks, so a spoofed target that is not truly next to you is simply refused here.
+    pub async fn hand_off_target(&self, giver: PlayerId, target: PlayerId) -> Option<i64> {
+        if giver == target {
+            return None;
+        }
+        let players = self.players.read().await;
+        let a = players.get(&giver)?;
+        let b = players.get(&target)?;
+        if a.pose.map != b.pose.map {
+            return None;
+        }
+        // Widen before subtracting: both coords are client-reported i16.
+        let dx = (a.pose.x as i32 - b.pose.x as i32).abs();
+        let dy = (a.pose.y as i32 - b.pose.y as i32).abs();
+        if dx + dy > 2 {
+            return None;
+        }
+        Some(b.character_id)
     }
 
     /// Deliver a chat message according to its target. Returns false if a private

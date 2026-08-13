@@ -23,6 +23,16 @@ static const struct MenuAction MultichoiceList_PokePlanetPlayer[] =
     {gText_Exit},
 };
 
+// Preset amounts for the Trade -> Give money flow. Order must match the POKEPLANET_GIVE_* constants
+// in constants/script_menu.h and the cases in pokeplanet.inc.
+static const struct MenuAction MultichoiceList_PokePlanetGiveMoney[] =
+{
+    {gText_PokePlanetGive100},
+    {gText_PokePlanetGive1000},
+    {gText_PokePlanetGive10000},
+    {gText_Exit},
+};
+
 static const struct MenuAction MultichoiceList_ContestInfo[] =
 {
     {gText_WhatsAContest},
@@ -909,6 +919,7 @@ static const struct MultichoiceListStruct sMultichoiceLists[] =
     [MULTI_FALLARBOR_TENT_RULES]       = MULTICHOICE(MultichoiceList_FallarborTentRules),
     [MULTI_TAG_MATCH_TYPE]             = MULTICHOICE(MultichoiceList_TagMatchType),
     [MULTI_POKEPLANET_PLAYER]          = MULTICHOICE(MultichoiceList_PokePlanetPlayer),
+    [MULTI_POKEPLANET_GIVEMONEY]       = MULTICHOICE(MultichoiceList_PokePlanetGiveMoney),
 };
 
 const u8 *const gStdStrings[] =

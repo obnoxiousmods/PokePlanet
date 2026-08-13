@@ -98,6 +98,8 @@ pub const MSG_PICKUP_ITEM: u8 = 0x96;
 pub const MSG_FORCE_BATTLE: u8 = 0x97;
 /// The world the player picked in the menu, after seeing both save summaries (game -> sidecar).
 pub const MSG_SELECT_MODE: u8 = 0x98;
+/// Give pokedollars to another player (game -> sidecar).
+pub const MSG_GIVE_MONEY: u8 = 0x99;
 /// The bank balance and authoritative carried money (server -> game).
 pub const MSG_BANK_STATE: u8 = 0x0D;
 /// The items on the ground of the player's current map (server -> game).
@@ -106,6 +108,8 @@ pub const MSG_MAP_DROPS: u8 = 0x0E;
 pub const MSG_PICKED_UP: u8 = 0x0F;
 /// Both of an account's save summaries, for the two-world menu (server -> game).
 pub const MSG_PROFILES: u8 = 0x10;
+/// This character's carried money is now this, server-authored (server -> game).
+pub const MSG_SET_MONEY: u8 = 0x11;
 
 /// Mirrors `enum NetAuthState` in the C header.
 pub const AUTH_OFFLINE: u8 = 0;
@@ -345,6 +349,13 @@ pub fn encode_rates(
     frame(b)
 }
 
+/// This character's server-authored carried money, for the game to adopt.
+pub fn encode_set_money(amount: u32) -> Vec<u8> {
+    let mut b = vec![MSG_SET_MONEY];
+    b.extend_from_slice(&amount.to_le_bytes());
+    frame(b)
+}
+
 /// The PC bank balance and the authoritative carried money, for the game to adopt.
 pub fn encode_bank_state(bank: u64, carried: u32) -> Vec<u8> {
     let mut b = vec![MSG_BANK_STATE];
@@ -472,6 +483,11 @@ pub enum GameMessage {
     SelectMode {
         mode: String,
     },
+    /// Give pokedollars to another player.
+    GiveMoney {
+        target: u32,
+        amount: u32,
+    },
     /// This character's money is now this.
     ///
     /// The first field reported as itself instead of by uploading the entire save. The save
@@ -572,6 +588,15 @@ pub fn decode_game_message(body: &[u8]) -> anyhow::Result<GameMessage> {
                 .trim_end_matches('\0')
                 .to_string(),
         }),
+        MSG_GIVE_MONEY => {
+            let b = rest
+                .get(..8)
+                .ok_or_else(|| anyhow::anyhow!("short give-money message"))?;
+            Ok(GameMessage::GiveMoney {
+                target: u32::from_le_bytes([b[0], b[1], b[2], b[3]]),
+                amount: u32::from_le_bytes([b[4], b[5], b[6], b[7]]),
+            })
+        }
         MSG_KEYS => {
             // Whole frames only. A trailing odd byte means the sender and this disagree about
             // the format, and guessing at the remainder would invent inputs nobody pressed.

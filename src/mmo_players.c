@@ -8,6 +8,7 @@
 // Ticked once per overworld frame from OverworldBasic().
 
 #include "global.h"
+#include "event_data.h"
 #include "event_object_movement.h"
 #include "field_player_avatar.h"
 #include "mmo_autosave.h"
@@ -20,6 +21,7 @@
 #include "mmo_text.h"
 #include "mmo_worlditems.h"
 #include "link.h"
+#include "money.h"
 #include "net_client.h"
 #include "constants/maps.h"
 #include "fieldmap.h"
@@ -389,6 +391,15 @@ void PokePlanet_SendBattleRequest(void)
         Net_RequestBattle(sInteractingWith);
 }
 
+// Called from the Trade -> Give money flow: hand the chosen amount (in VAR_0x8004) to the player
+// just interacted with. The server owns the move and pushes both wallets back, so nothing changes
+// locally until PollGiftMoney adopts the server's word.
+void PokePlanet_GiveMoney(void)
+{
+    if (sInteractingWith != 0 && gSpecialVar_0x8004 != 0)
+        Net_GiveMoney(sInteractingWith, gSpecialVar_0x8004);
+}
+
 // The player being trailed by the "Follow" menu option, or 0 when not following.
 static u32 sFollowingPlayerId;
 
@@ -645,6 +656,18 @@ static void CheckForcedSightBattle(void)
     sLockedTarget = 0;
 }
 
+// Adopt any server-authored carried-money value: the giver's balance after a gift, or a received
+// gift landing in the receiver's wallet. The server owns every money move, so both sides only learn
+// their new balance here. Works in both modes (the bank poll above is Deadman-only). The autosave
+// then reports this value back, which already matches the server's stored copy, so nothing regresses.
+static void PollGiftMoney(void)
+{
+    u32 amount;
+
+    if (Net_PopSetMoney(&amount))
+        SetMoney(&gSaveBlock1Ptr->money, amount);
+}
+
 void MmoPlayers_Update(void)
 {
     // Remembers whether we were online last frame, so a drop can be noticed and cleaned up.
@@ -694,6 +717,7 @@ void MmoPlayers_Update(void)
 
     ApplyCorrection();
     MmoDeadman_PollBank();
+    PollGiftMoney();
     MmoWorldItems_Update();
     CheckForcedSightBattle();
     UpdateFollowPlayer();

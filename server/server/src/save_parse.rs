@@ -2319,9 +2319,9 @@ mod tests {
             let mut plain = [0u8; 48];
             let growth = order[0] * 12;
             plain[growth..growth + 2].copy_from_slice(&species.to_le_bytes());
-            let checksum: u16 = plain
-                .chunks_exact(2)
-                .fold(0u16, |a, c| a.wrapping_add(u16::from_le_bytes([c[0], c[1]])));
+            let checksum: u16 = plain.chunks_exact(2).fold(0u16, |a, c| {
+                a.wrapping_add(u16::from_le_bytes([c[0], c[1]]))
+            });
             mon[BOX_OFFSET_CHECKSUM..BOX_OFFSET_CHECKSUM + 2]
                 .copy_from_slice(&checksum.to_le_bytes());
             for (i, chunk) in plain.chunks_exact(4).enumerate() {
@@ -2370,7 +2370,12 @@ mod tests {
 
         // The same species lying in the GRAVEYARD is a corpse, not a living duplicate.
         let mut with_grave = vec![0u8; full];
-        put_species(&mut with_grave, GRAVEYARD_BOX * IN_BOX_COUNT, 0xBBBB_0002, 25);
+        put_species(
+            &mut with_grave,
+            GRAVEYARD_BOX * IN_BOX_COUNT,
+            0xBBBB_0002,
+            25,
+        );
         assert_eq!(
             living_species_duplicated(&[mon(25)], &with_grave),
             None,

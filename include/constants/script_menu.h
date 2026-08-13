@@ -123,12 +123,19 @@
 #define MULTI_FALLARBOR_TENT_RULES         112
 #define MULTI_TAG_MATCH_TYPE               113
 #define MULTI_POKEPLANET_PLAYER            114
+#define MULTI_POKEPLANET_GIVEMONEY         115
 
 // PokePlanet player interaction menu selections
 #define POKEPLANET_PLAYER_BATTLE           0
 #define POKEPLANET_PLAYER_TRADE            1
 #define POKEPLANET_PLAYER_FOLLOW           2
 #define POKEPLANET_PLAYER_EXIT             3
+
+// PokePlanet "give money" amount selections
+#define POKEPLANET_GIVE_100                0
+#define POKEPLANET_GIVE_1000               1
+#define POKEPLANET_GIVE_10000              2
+#define POKEPLANET_GIVE_CANCEL             3
 
 // Lilycove SS Tidal Multichoice Selections
 #define SSTIDAL_SELECTION_SLATEPORT        0

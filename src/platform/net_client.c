@@ -48,6 +48,7 @@
 #define MSG_MAP_DROPS       0x0E
 #define MSG_PICKED_UP       0x0F
 #define MSG_PROFILES        0x10
+#define MSG_SET_MONEY       0x11
 // Game -> sidecar
 #define MSG_SELF_STATE   0x81
 #define MSG_BEGIN_LOGIN  0x82
@@ -73,6 +74,7 @@
 #define MSG_PICKUP_ITEM     0x96
 #define MSG_FORCE_BATTLE    0x97
 #define MSG_SELECT_MODE     0x98
+#define MSG_GIVE_MONEY      0x99
 
 // Lives in the SDL backend, like the sidecar port beside it.
 extern const char *Platform_GetInstanceToken(void);
@@ -190,6 +192,11 @@ struct NetState
     u16 pickedItem;
     u16 pickedQuantity;
     bool8 hasPicked;
+
+    // The server-authored carried money (a received gift, or the sender's balance after giving),
+    // pending until the game thread adopts it into the wallet. Applies in both modes.
+    u32 setMoney;
+    bool8 hasSetMoney;
 
     // Both sides agreed to battle, and this is the slot the server gave us.
     struct NetBattleStart battleStart;
@@ -734,6 +741,17 @@ static void HandlePickedUp(const u8 *payload, u32 len)
     SDL_UnlockMutex(sNet.lock);
 }
 
+static void HandleSetMoney(const u8 *payload, u32 len)
+{
+    if (len < 4)
+        return;
+
+    SDL_LockMutex(sNet.lock);
+    sNet.setMoney = (u32)(payload[0] | (payload[1] << 8) | (payload[2] << 16) | (payload[3] << 24));
+    sNet.hasSetMoney = TRUE;
+    SDL_UnlockMutex(sNet.lock);
+}
+
 static void HandleCorrection(const u8 *payload, u32 len)
 {
     if (len < 8)
@@ -798,6 +816,9 @@ static void DispatchFrame(const u8 *body, u32 len)
         break;
     case MSG_PICKED_UP:
         HandlePickedUp(body + 1, len - 1);
+        break;
+    case MSG_SET_MONEY:
+        HandleSetMoney(body + 1, len - 1);
         break;
     case MSG_CORRECTION:
         HandleCorrection(body + 1, len - 1);
@@ -1614,6 +1635,42 @@ bool8 Net_PopBankState(struct NetBankState *out)
     }
     *out = sNet.bankState;
     sNet.hasBankState = FALSE;
+    SDL_UnlockMutex(sNet.lock);
+    return TRUE;
+}
+
+void Net_GiveMoney(u32 target, u32 amount)
+{
+    u8 body[9];
+
+    if (!sInitialised)
+        return;
+
+    body[0] = MSG_GIVE_MONEY;
+    body[1] = (u8)(target & 0xFF);
+    body[2] = (u8)((target >> 8) & 0xFF);
+    body[3] = (u8)((target >> 16) & 0xFF);
+    body[4] = (u8)((target >> 24) & 0xFF);
+    body[5] = (u8)(amount & 0xFF);
+    body[6] = (u8)((amount >> 8) & 0xFF);
+    body[7] = (u8)((amount >> 16) & 0xFF);
+    body[8] = (u8)((amount >> 24) & 0xFF);
+    Enqueue(body, sizeof(body));
+}
+
+bool8 Net_PopSetMoney(u32 *amount)
+{
+    if (!sInitialised || amount == NULL)
+        return FALSE;
+
+    SDL_LockMutex(sNet.lock);
+    if (!sNet.hasSetMoney)
+    {
+        SDL_UnlockMutex(sNet.lock);
+        return FALSE;
+    }
+    *amount = sNet.setMoney;
+    sNet.hasSetMoney = FALSE;
     SDL_UnlockMutex(sNet.lock);
     return TRUE;
 }

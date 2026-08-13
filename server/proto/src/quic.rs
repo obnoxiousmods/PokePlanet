@@ -185,6 +185,15 @@ pub enum ClientControl {
     SelectMode {
         mode: String,
     },
+    /// Give `amount` pokedollars to `target` (a nearby player). The server moves the money in its
+    /// own copies of both saves -- debits the sender, credits the receiver -- so it can neither be
+    /// minted nor lost, and pushes each their new wallet.
+    ///
+    /// Appended so the existing variant numbering does not shift.
+    GiveMoney {
+        target: PlayerId,
+        amount: u32,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -369,6 +378,13 @@ pub enum ServerControl {
     Profiles {
         normal: Option<CharacterProfile>,
         deadman: Option<CharacterProfile>,
+    },
+    /// This character's carried money is now this, server-authored (e.g. after giving or receiving
+    /// money). The client adopts it as its wallet in either world.
+    ///
+    /// Appended so the existing variant numbering does not shift.
+    MoneySet {
+        amount: u32,
     },
 }
 

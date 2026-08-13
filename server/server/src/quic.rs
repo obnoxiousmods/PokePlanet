@@ -415,7 +415,11 @@ async fn run_session(
             items: rates.items,
             catch: rates.catch,
             shop_price: rates.shop_price,
-            species_encounter: rates.species_encounter.iter().map(|(&s, &m)| (s, m)).collect(),
+            species_encounter: rates
+                .species_encounter
+                .iter()
+                .map(|(&s, &m)| (s, m))
+                .collect(),
         },
     )
     .await?;
@@ -425,7 +429,9 @@ async fn run_session(
     // Deadman characters carry a PC bank; tell the client its balance up front so the bank menu can
     // show it. `carried` is read from the same save just handed over, so adopting it is a no-op.
     if character.mode == "deadman" {
-        let bank = db::bank_balance(&server.db, character.id).await.unwrap_or(0);
+        let bank = db::bank_balance(&server.db, character.id)
+            .await
+            .unwrap_or(0);
         let carried = db::load_save(&server.db, character.id)
             .await
             .ok()
@@ -1516,7 +1522,9 @@ async fn control_loop(
                     continue;
                 };
                 let carried = save.money();
-                let bank = db::bank_balance(&server.db, character_id).await.unwrap_or(0);
+                let bank = db::bank_balance(&server.db, character_id)
+                    .await
+                    .unwrap_or(0);
                 let (new_carried, new_bank) = if deposit {
                     crate::economy::deposit_all(carried, bank)
                 } else {
@@ -1586,6 +1594,60 @@ async fn control_loop(
                         server.world.broadcast_map_drops(pose.map).await;
                         tracing::info!(player = player_id, item, quantity, "item picked up");
                     }
+                }
+            }
+            ClientControl::GiveMoney { target, amount } => {
+                // The dollars half of a trade: hand carried pokedollars to a player you are standing
+                // next to. Server-authoritative -- the giver's client subtracts nothing itself; the
+                // server proves it can take from one save and add to the other before either believes
+                // a new balance. Money is neither minted nor destroyed (transfer honors both the
+                // sender's balance and the receiver's money cap).
+                if amount == 0 {
+                    continue;
+                }
+                let Some(receiver_cid) = server.world.hand_off_target(player_id, target).await
+                else {
+                    continue;
+                };
+                // A character can only be online once, but never lock the same save twice (the mutex
+                // is not reentrant) -- that would deadlock the connection.
+                if receiver_cid == character_id {
+                    continue;
+                }
+                // Take both save locks in a stable id order so two gifts crossing in opposite
+                // directions can never each hold one lock and wait on the other.
+                let (lo, hi) = if character_id < receiver_cid {
+                    (character_id, receiver_cid)
+                } else {
+                    (receiver_cid, character_id)
+                };
+                let _g_lo = server.save_lock(lo).lock_owned().await;
+                let _g_hi = server.save_lock(hi).lock_owned().await;
+                match crate::economy::transfer(&server.db, character_id, receiver_cid, amount).await
+                {
+                    Ok(Some((sender_left, receiver_total))) => {
+                        server
+                            .world
+                            .tell(
+                                player_id,
+                                ServerControl::MoneySet {
+                                    amount: sender_left,
+                                },
+                            )
+                            .await;
+                        server
+                            .world
+                            .tell(
+                                target,
+                                ServerControl::MoneySet {
+                                    amount: receiver_total,
+                                },
+                            )
+                            .await;
+                        tracing::info!(from = player_id, to = target, amount, "money gifted");
+                    }
+                    Ok(None) => {}
+                    Err(e) => tracing::warn!(player = player_id, error = %e, "money gift failed"),
                 }
             }
             ClientControl::Goodbye => break,
