@@ -728,7 +728,6 @@ static void EnterMainMenu(u8 taskId)
 static const u8 sText_WorldSelect_Normal[]  = _("NORMAL");
 static const u8 sText_WorldSelect_Deadman[] = _("DEADMAN");
 static const u8 sText_WorldSelect_New[]      = _("New adventure");
-static const u8 sText_WorldSelect_Badges[]   = _("Badges ");
 static const u8 sText_WorldSelect_Cursor[]   = _("{RIGHT_ARROW}");
 static const u8 sText_WorldSelect_NoCursor[] = _(" ");
 static const u8 sTextColor_WorldDeadman[] = {TEXT_DYNAMIC_COLOR_1, TEXT_COLOR_RED, TEXT_DYNAMIC_COLOR_3};
@@ -762,24 +761,34 @@ static void DrawWorldPanel(u8 slot, struct NetProfile *profile, bool8 has)
 
     if (has)
     {
+        // Mirror the vanilla CONTINUE panel exactly: PLAYER / TIME on the first row and
+        // POKeDEX / BADGES on the second, each a left-aligned label with a right-aligned value, so
+        // the two world slots read as the game's own save-select rather than a bespoke screen. The
+        // figures come from the server's summary of each world. Only the title above is recoloured
+        // (red for Deadman), which is what keeps the two slots visually distinct.
         MmoText_FromAscii(name, profile->name, sizeof(name));
-        AddTextPrinterParameterized3(win, FONT_NORMAL, 14, 17, sTextColor_MenuInfo, TEXT_SKIP_DRAW, name);
+        AddTextPrinterParameterized3(win, FONT_NORMAL, 2, 17, sTextColor_MenuInfo, TEXT_SKIP_DRAW, gText_ContinueMenuPlayer);
+        AddTextPrinterParameterized3(win, FONT_NORMAL, GetStringRightAlignXOffset(FONT_NORMAL, name, 100), 17, sTextColor_MenuInfo, TEXT_SKIP_DRAW, name);
 
-        StringCopy(str, sText_WorldSelect_Badges);
-        ConvertIntToDecimalStringN(gStringVar1, profile->badges, STR_CONV_MODE_LEFT_ALIGN, 1);
-        StringAppend(str, gStringVar1);
-        AddTextPrinterParameterized3(win, FONT_NORMAL, 120, 17, sTextColor_MenuInfo, TEXT_SKIP_DRAW, str);
-
+        AddTextPrinterParameterized3(win, FONT_NORMAL, 0x6C, 17, sTextColor_MenuInfo, TEXT_SKIP_DRAW, gText_ContinueMenuTime);
         {
             u8 *ptr = ConvertIntToDecimalStringN(str, profile->playTimeSeconds / 3600, STR_CONV_MODE_LEFT_ALIGN, 3);
             *ptr = 0xF0; // the ':' the play-time clock uses
             ConvertIntToDecimalStringN(ptr + 1, (profile->playTimeSeconds / 60) % 60, STR_CONV_MODE_LEADING_ZEROS, 2);
         }
-        AddTextPrinterParameterized3(win, FONT_NORMAL, 14, 33, sTextColor_MenuInfo, TEXT_SKIP_DRAW, str);
+        AddTextPrinterParameterized3(win, FONT_NORMAL, GetStringRightAlignXOffset(FONT_NORMAL, str, 0xD0), 17, sTextColor_MenuInfo, TEXT_SKIP_DRAW, str);
+
+        AddTextPrinterParameterized3(win, FONT_NORMAL, 2, 33, sTextColor_MenuInfo, TEXT_SKIP_DRAW, gText_ContinueMenuPokedex);
+        ConvertIntToDecimalStringN(str, profile->pokedexCaught, STR_CONV_MODE_LEFT_ALIGN, 3);
+        AddTextPrinterParameterized3(win, FONT_NORMAL, GetStringRightAlignXOffset(FONT_NORMAL, str, 100), 33, sTextColor_MenuInfo, TEXT_SKIP_DRAW, str);
+
+        AddTextPrinterParameterized3(win, FONT_NORMAL, 0x6C, 33, sTextColor_MenuInfo, TEXT_SKIP_DRAW, gText_ContinueMenuBadges);
+        ConvertIntToDecimalStringN(str, profile->badges, STR_CONV_MODE_LEFT_ALIGN, 1);
+        AddTextPrinterParameterized3(win, FONT_NORMAL, GetStringRightAlignXOffset(FONT_NORMAL, str, 0xD0), 33, sTextColor_MenuInfo, TEXT_SKIP_DRAW, str);
     }
     else
     {
-        AddTextPrinterParameterized3(win, FONT_NORMAL, 14, 17, sTextColor_MenuInfo, TEXT_SKIP_DRAW, sText_WorldSelect_New);
+        AddTextPrinterParameterized3(win, FONT_NORMAL, 2, 17, sTextColor_MenuInfo, TEXT_SKIP_DRAW, sText_WorldSelect_New);
     }
 
     PutWindowTilemap(win);
