@@ -232,14 +232,22 @@ async fn handle_connection(server: Arc<Server>, conn: Connection) -> anyhow::Res
         )
         .await?;
 
-        // Wait for the pick. Only SelectMode is expected here.
-        let picked = read_frame(&mut recv)
-            .await?
-            .ok_or_else(|| anyhow::anyhow!("closed before SelectMode"))?;
-        let chosen_mode = match quic::decode::<ClientControl>(&picked)? {
-            ClientControl::SelectMode { mode } if mode == "deadman" => "deadman",
-            ClientControl::SelectMode { .. } => "normal",
-            other => anyhow::bail!("expected SelectMode, got {other:?}"),
+        // Wait for the pick. The client is already linked the moment its sidecar connects, and it
+        // streams input frames (`Keys`) for replay validation every tenth of a second from then on
+        // -- so those idle frames, and any other in-flight report, arrive here BEFORE the player has
+        // chosen a world. Skip anything that is not the pick and keep waiting, rather than treating
+        // the first frame as the answer: erroring on a stray `Keys` was closing the connection
+        // before the menu could be answered, which the player saw as "Can't reach PokePlanet".
+        let chosen_mode = loop {
+            let picked = read_frame(&mut recv)
+                .await?
+                .ok_or_else(|| anyhow::anyhow!("closed before SelectMode"))?;
+            match quic::decode::<ClientControl>(&picked)? {
+                ClientControl::SelectMode { mode } if mode == "deadman" => break "deadman",
+                ClientControl::SelectMode { .. } => break "normal",
+                ClientControl::Goodbye => anyhow::bail!("closed before SelectMode"),
+                _ => continue, // not the pick yet (keys, movement, a report) -- ignore and wait
+            }
         };
         db::ensure_character(
             &server.db,
