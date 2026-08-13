@@ -26,9 +26,13 @@ struct Latched {
     mode_profiles: Option<Vec<u8>>,
 }
 
-/// How long to wait for a game to come back before following it out. Long enough to cover a
-/// relaunch, short enough that a closed game does not leave a process behind.
-const EXIT_GRACE: std::time::Duration = std::time::Duration::from_secs(20);
+/// How long to wait for a game to come back before following it out. Short: a genuine IPC blip
+/// reconnects on loopback in well under a second (and bumps the generation counter, which cancels
+/// the exit regardless of this), so this only needs to outlast that. Keeping it short means a player
+/// who closes the game and relaunches gets a FRESH sidecar -- back in "select" mode, so the
+/// Normal/Deadman menu shows again -- instead of reattaching to the old one still pinned to the last
+/// world they picked. That reuse was the "it doesn't ask me which world" report.
+const EXIT_GRACE: std::time::Duration = std::time::Duration::from_secs(4);
 
 /// Handle used by the rest of the sidecar to talk to whichever game process is attached.
 #[derive(Clone, Default)]
