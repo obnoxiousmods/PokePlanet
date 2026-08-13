@@ -240,7 +240,10 @@ impl Session {
                                 "both save summaries for world select"
                             );
                             self.link
-                                .send_profile(wire::encode_profiles(normal.as_ref(), deadman.as_ref()))
+                                .send_mode_profiles(wire::encode_profiles(
+                                    normal.as_ref(),
+                                    deadman.as_ref(),
+                                ))
                                 .await;
                             self.report(wire::AUTH_ONLINE, "", "").await;
                         }

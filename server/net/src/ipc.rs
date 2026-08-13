@@ -18,6 +18,12 @@ use tokio::sync::{mpsc, Mutex};
 struct Latched {
     status: Option<Vec<u8>>,
     profile: Option<Vec<u8>>,
+    /// The two-world save summaries for the select menu. Kept separate from `profile` because,
+    /// unlike a single character's profile, these carry no position for the client to adopt -- so
+    /// they are safe to replay to a game that attaches after they were sent, which is exactly the
+    /// race that left the world-select menu blank on a fresh launch (the sidecar reaches the server
+    /// and gets the summaries before the slower-booting game has attached to receive them).
+    mode_profiles: Option<Vec<u8>>,
 }
 
 /// How long to wait for a game to come back before following it out. Long enough to cover a
@@ -57,6 +63,13 @@ impl GameLink {
     /// Send the save summary, remembering it for whichever game attaches next.
     pub async fn send_profile(&self, frame: Vec<u8>) {
         self.latched.lock().await.profile = Some(frame.clone());
+        self.send(frame).await;
+    }
+
+    /// Send the two-world select summaries, remembering them for whichever game attaches next.
+    /// Replayed on attach (unlike `profile`) because they carry no position -- see `Latched`.
+    pub async fn send_mode_profiles(&self, frame: Vec<u8>) {
+        self.latched.lock().await.mode_profiles = Some(frame.clone());
         self.send(frame).await;
     }
 
@@ -107,6 +120,13 @@ impl GameLink {
             // that fetches its save, which is the only copy of either it should act on.
             if let Some(status) = latched.status.as_ref() {
                 let _ = tx.try_send(status.clone());
+            }
+            // The select-menu summaries are safe to replay (no position), and doing so is what
+            // lets a game that boots slower than the server handshake still show the world-select
+            // menu instead of a blank one. Only meaningful while a pick is pending; once a world is
+            // chosen the session stops sending them and the stale copy is harmless.
+            if let Some(mode_profiles) = latched.mode_profiles.as_ref() {
+                let _ = tx.try_send(mode_profiles.clone());
             }
         }
         *self.outbound.lock().await = Some(tx);
