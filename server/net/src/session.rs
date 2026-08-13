@@ -590,6 +590,30 @@ impl Session {
                             // silently ignored.
                         }
                         wire::GameMessage::Attached => {
+                            // A game process just attached over the loopback link. If this sidecar
+                            // was reused from a previous game that had already pinned a world (a
+                            // relaunch within the exit grace, or a new sidecar that failed to bind
+                            // the port and left the old one serving), its current_mode is that
+                            // world -- so without this the freshly launched game is dropped straight
+                            // back into it and the player is never asked again. Restore the
+                            // configured sign-in mode (usually "select") and end this session so
+                            // run() reconnects and re-Hellos with it, re-running the world-select
+                            // handshake for the new game. A mid-game *network* reconnect never comes
+                            // through here (it loops inside run() without a fresh attach), so this
+                            // does not disturb resuming the pinned world after a connection blip.
+                            let configured = self.settings.mode.clone();
+                            let was_pinned = {
+                                let mut mode = self.current_mode.lock().unwrap();
+                                if *mode != configured {
+                                    *mode = configured;
+                                    true
+                                } else {
+                                    false
+                                }
+                            };
+                            if was_pinned {
+                                return Ok(());
+                            }
                             // Only worth asking once signed in. Before that the sign-in
                             // exchange is already on its way and brings the same data with
                             // it, and the server would have no character to answer about.
