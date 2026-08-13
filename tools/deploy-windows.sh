@@ -69,5 +69,5 @@ fi
 [ "$failed" -eq 0 ] || exit 1
 
 echo "== deployed =="
-ls -la --time-style=+%H:%M "$DEST"/pokeplanet.exe "$DEST"/pokeplanet-deadmon.exe \
-    "$DEST"/pokeplanet_tester.exe "$DEST"/pokeplanet-net.exe
+ls -la --time-style=+%H:%M "$DEST"/pokeplanet.exe "$DEST"/pokeplanet_tester.exe \
+    "$DEST"/pokeplanet-net.exe
