@@ -74,6 +74,12 @@ static u8 sChatWindowKind = CHAT_WINDOW_NONE;
 static u16 sFramesLeft;
 static bool8 sComposing;
 static bool8 sWelcomed;
+// How many consecutive settled field frames to wait before the one-off greeting. Showing it the
+// instant the field first goes clear lands it mid login-warp, where a following settle forgets its
+// window without redrawing that strip and leaves its white box on screen as a blank bar. One second
+// of a genuinely clear field puts it safely past that transition.
+#define WELCOME_DELAY_FRAMES 60
+static u16 sSettledFrames;
 
 // Comfortably longer than anything that fits the window, but bounded: the wire caps a
 // message at NET_TEXT_LEN and the server will not carry more.
@@ -321,8 +327,10 @@ void MmoChat_Update(void)
                 UnlockPlayerFieldControls();
             HideChatWindow();
         }
-        // Greet again after a reconnect, so the reminder is there for a fresh session.
+        // Greet again after a reconnect, so the reminder is there for a fresh session -- and make it
+        // wait for a settled field again rather than firing on the first frame back.
         sWelcomed = FALSE;
+        sSettledFrames = 0;
         return;
     }
 
@@ -368,14 +376,20 @@ void MmoChat_Update(void)
     // battle at all. The battle has its own base and renders frameless, so it is safe to draw.
     if (!gMain.inBattle && (ScriptContext_IsEnabled() || ArePlayerFieldControlsLocked()))
     {
+        // Field not settled (a script, or the login/warp lock). Restart the greeting wait so the
+        // banner only appears once play has genuinely begun, never mid-transition.
+        sSettledFrames = 0;
         HideChatWindow();
         return;
     }
 
-    // The first clear moment online, tell the player chat exists and how to reach it. Nothing
-    // else on screen says so, and a chat nobody knows is there may as well not be.
+    // Once the field has been clear for a moment, tell the player chat exists and how to reach it.
+    // Nothing else on screen says so, and a chat nobody knows is there may as well not be. The wait
+    // keeps the greeting out of the login-warp settle, where its window would leak as a blank bar.
     if (!sWelcomed)
     {
+        if (++sSettledFrames < WELCOME_DELAY_FRAMES)
+            return;
         sWelcomed = TRUE;
         ShowWelcome();
         return;
