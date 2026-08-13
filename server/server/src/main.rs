@@ -141,13 +141,28 @@ async fn main() -> anyhow::Result<()> {
     });
 
     tokio::spawn(irc::run(cfg.clone(), world.clone()));
-    tokio::spawn(quic::run(server.clone(), endpoint));
 
-    let app = http::router(server);
-    let serve = axum::serve(listener, app).with_graceful_shutdown(async {
-        let _ = tokio::signal::ctrl_c().await;
-        tracing::info!("shutting down");
+    // The HTTP site is a SPAWNED, non-critical task. It used to be the one thing `main` awaited,
+    // with the QUIC game server merely spawned beside it -- so when the HTTP server's future
+    // completed (its ctrl_c graceful-shutdown could be tripped by a stray SIGINT, or the serve
+    // future resolving), `main` returned Ok, the process exited 0, and that took the *game server*
+    // down with it. A dead landing page must never be able to end everyone's session. If it stops,
+    // log it and let it stay stopped; the game server keeps running.
+    tokio::spawn({
+        let app = http::router(server.clone());
+        async move {
+            if let Err(e) = axum::serve(listener, app).await {
+                tracing::error!(error = %e, "HTTP server stopped");
+            } else {
+                tracing::warn!("HTTP server stopped");
+            }
+        }
     });
-    serve.await?;
+
+    // The QUIC game server IS the process. Keep `main` alive on it: while it is serving, the process
+    // lives; if it ever returns, the process exits and systemd (Restart=always) brings a fresh one
+    // up. Nothing else completing can end it.
+    quic::run(server, endpoint).await;
+    tracing::error!("QUIC game server returned; exiting for a clean restart");
     Ok(())
 }
