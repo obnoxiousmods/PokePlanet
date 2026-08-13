@@ -721,6 +721,136 @@ static void EnterMainMenu(u8 taskId)
 // silently playing the wrong character.
 #define SERVER_SAVE_WAIT_FRAMES 600
 
+// World select: a single binary, one account, two save slots -- Normal on top, Deadman below. The
+// server answers a "select" sign-in with both save summaries (Net_GetModeProfiles); the player
+// picks one and only then does that world's save stream in and play begins. Drawn to look like the
+// continue panel, with the Deadman slot in red so the two are never confused.
+static const u8 sText_WorldSelect_Normal[]  = _("NORMAL");
+static const u8 sText_WorldSelect_Deadman[] = _("DEADMAN");
+static const u8 sText_WorldSelect_New[]      = _("New adventure");
+static const u8 sText_WorldSelect_Badges[]   = _("Badges ");
+static const u8 sText_WorldSelect_Cursor[]   = _("{RIGHT_ARROW}");
+static const u8 sText_WorldSelect_NoCursor[] = _(" ");
+static const u8 sTextColor_WorldDeadman[] = {TEXT_DYNAMIC_COLOR_1, TEXT_COLOR_RED, TEXT_DYNAMIC_COLOR_3};
+
+static const struct WindowTemplate sWorldSelectWindows[2] =
+{
+    { .bg = 0, .tilemapLeft = 2, .tilemapTop = 2,  .width = 26, .height = 6, .paletteNum = 15, .baseBlock = 0x1A0 },
+    { .bg = 0, .tilemapLeft = 2, .tilemapTop = 10, .width = 26, .height = 6, .paletteNum = 15, .baseBlock = 0x240 },
+};
+
+static u8 sWorldSelectWin[2];
+static u8 sWorldSelectCursor; // 0 = Normal, 1 = Deadman
+static bool8 sWorldSelectDrawn;
+static bool8 sWorldSelectPicked;
+
+static void DrawWorldPanel(u8 slot, struct NetProfile *profile, bool8 has)
+{
+    u8 win = sWorldSelectWin[slot];
+    bool8 deadman = (slot == 1);
+    const u8 *color = deadman ? sTextColor_WorldDeadman : sTextColor_MenuInfo;
+    u8 str[48];
+    u8 name[NET_NAME_LEN + 1];
+
+    FillWindowPixelBuffer(win, PIXEL_FILL(1));
+    DrawStdWindowFrame(win, FALSE);
+
+    // Title, with a cursor arrow on the selected slot.
+    StringCopy(str, sWorldSelectCursor == slot ? sText_WorldSelect_Cursor : sText_WorldSelect_NoCursor);
+    StringAppend(str, deadman ? sText_WorldSelect_Deadman : sText_WorldSelect_Normal);
+    AddTextPrinterParameterized3(win, FONT_NORMAL, 2, 1, color, TEXT_SKIP_DRAW, str);
+
+    if (has)
+    {
+        MmoText_FromAscii(name, profile->name, sizeof(name));
+        AddTextPrinterParameterized3(win, FONT_NORMAL, 14, 17, sTextColor_MenuInfo, TEXT_SKIP_DRAW, name);
+
+        StringCopy(str, sText_WorldSelect_Badges);
+        ConvertIntToDecimalStringN(gStringVar1, profile->badges, STR_CONV_MODE_LEFT_ALIGN, 1);
+        StringAppend(str, gStringVar1);
+        AddTextPrinterParameterized3(win, FONT_NORMAL, 120, 17, sTextColor_MenuInfo, TEXT_SKIP_DRAW, str);
+
+        {
+            u8 *ptr = ConvertIntToDecimalStringN(str, profile->playTimeSeconds / 3600, STR_CONV_MODE_LEFT_ALIGN, 3);
+            *ptr = 0xF0; // the ':' the play-time clock uses
+            ConvertIntToDecimalStringN(ptr + 1, (profile->playTimeSeconds / 60) % 60, STR_CONV_MODE_LEADING_ZEROS, 2);
+        }
+        AddTextPrinterParameterized3(win, FONT_NORMAL, 14, 33, sTextColor_MenuInfo, TEXT_SKIP_DRAW, str);
+    }
+    else
+    {
+        AddTextPrinterParameterized3(win, FONT_NORMAL, 14, 17, sTextColor_MenuInfo, TEXT_SKIP_DRAW, sText_WorldSelect_New);
+    }
+
+    PutWindowTilemap(win);
+    CopyWindowToVram(win, COPYWIN_FULL);
+}
+
+static void DrawWorldSelect(void)
+{
+    struct NetProfile normal, deadman;
+    bool8 normalHas = FALSE, deadmanHas = FALSE;
+
+    Net_GetModeProfiles(&normal, &normalHas, &deadman, &deadmanHas);
+    DrawWorldPanel(0, &normal, normalHas);
+    DrawWorldPanel(1, &deadman, deadmanHas);
+}
+
+static void Task_WorldSelect(u8 taskId)
+{
+    if (gPaletteFade.active)
+        return;
+
+    if (!sWorldSelectDrawn)
+    {
+        // Take down the "signing in" message and its window-0 darken so the panels show cleanly.
+        ClearWindowTilemap(7);
+        ClearMainMenuWindowTilemap(&sWindowTemplates_MainMenu[7]);
+        SetGpuReg(REG_OFFSET_WIN0H, 0);
+        SetGpuReg(REG_OFFSET_WIN0V, 0);
+
+        sWorldSelectWin[0] = AddWindow(&sWorldSelectWindows[0]);
+        sWorldSelectWin[1] = AddWindow(&sWorldSelectWindows[1]);
+        DrawWorldSelect();
+        ScheduleBgCopyTilemapToVram(0);
+        sWorldSelectDrawn = TRUE;
+        return;
+    }
+
+    if (JOY_NEW(DPAD_UP | DPAD_DOWN))
+    {
+        PlaySE(SE_SELECT);
+        sWorldSelectCursor ^= 1;
+        DrawWorldSelect();
+        ScheduleBgCopyTilemapToVram(0);
+    }
+    else if (JOY_NEW(A_BUTTON))
+    {
+        const char *mode = (sWorldSelectCursor == 1) ? "deadman" : "normal";
+
+        PlaySE(SE_SELECT);
+        Net_SelectMode(mode);
+        Platform_SetMode(mode);
+
+        // Tear the panels down and go back to the connect task, which now waits for the chosen
+        // world's save (it streams in only after SelectMode) and then enters the game.
+        ClearStdWindowAndFrameToTransparent(sWorldSelectWin[0], FALSE);
+        ClearStdWindowAndFrameToTransparent(sWorldSelectWin[1], FALSE);
+        ClearWindowTilemap(sWorldSelectWin[0]);
+        ClearWindowTilemap(sWorldSelectWin[1]);
+        RemoveWindow(sWorldSelectWin[0]);
+        RemoveWindow(sWorldSelectWin[1]);
+        ScheduleBgCopyTilemapToVram(0);
+
+        sWorldSelectPicked = TRUE;
+        sWorldSelectDrawn = FALSE;
+        gTasks[taskId].data[2] = 0; // tLastAuthState: force the connect message to redraw
+        gTasks[taskId].data[3] = 0; // tHoldTimer
+        gTasks[taskId].data[4] = 0; // tHasDrawn
+        gTasks[taskId].func = Task_PokePlanetConnect;
+    }
+}
+
 static void Task_PokePlanetConnect(u8 taskId)
 {
     s16 *data = gTasks[taskId].data;
@@ -758,6 +888,22 @@ static void Task_PokePlanetConnect(u8 taskId)
 
     if (authState == NET_AUTH_ONLINE)
     {
+        // A "select" sign-in: the server sent both save summaries instead of a single character's
+        // save. Let the player choose a world first; the chosen world's save then streams in and the
+        // wait below picks up as normal. A committed sign-in never sends these, so this is skipped.
+        {
+            struct NetProfile n, d;
+            bool8 nHas, dHas;
+
+            if (!sWorldSelectPicked && Net_GetModeProfiles(&n, &nHas, &d, &dHas))
+            {
+                sWorldSelectDrawn = FALSE;
+                sWorldSelectCursor = 0;
+                gTasks[taskId].func = Task_WorldSelect;
+                return;
+            }
+        }
+
         // Wait for the server's save before going anywhere.
         //
         // It arrives on its own stream, shortly *after* the status says ONLINE, so checking

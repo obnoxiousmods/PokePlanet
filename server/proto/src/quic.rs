@@ -175,6 +175,14 @@ pub enum ClientControl {
     ForceBattle {
         target: PlayerId,
     },
+    /// Pick the world to play after seeing both save summaries. Sent by a client that connected with
+    /// `Hello { mode: "select" }`: the server answered with `Profiles`, and this chooses which
+    /// character to actually load. The server then resolves that character and streams its save.
+    ///
+    /// Appended so the existing variant numbering does not shift.
+    SelectMode {
+        mode: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -349,6 +357,16 @@ pub enum ServerControl {
     PickedUp {
         item: u16,
         quantity: u16,
+    },
+    /// Both of an account's save summaries, so the client's main menu can show a Normal slot and a
+    /// Deadman slot side by side and let the player pick. `None` for a world the account has never
+    /// entered (a fresh adventure). Sent in answer to `Hello { mode: "select" }`; the client then
+    /// replies with `SelectMode` and the chosen world's save follows.
+    ///
+    /// Appended so the existing variant numbering does not shift.
+    Profiles {
+        normal: Option<CharacterProfile>,
+        deadman: Option<CharacterProfile>,
     },
 }
 

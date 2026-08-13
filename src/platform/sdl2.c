@@ -107,9 +107,12 @@ static char sProfile[64] = "";
 static char sServerHost[128] = DEFAULT_SERVER_HOST;
 static unsigned int sServerPort = DEFAULT_SERVER_PORT;
 static unsigned int sSidecarPort = DEFAULT_SIDECAR_PORT;
-// Which world this launch plays. Read from the same pokeemerald.cfg the sidecar reads, so the game
-// and the sidecar agree on the mode, and the server (told by the sidecar's Hello) agrees too.
-static char sMode[16] = "normal";
+// Which world this launch plays. "select" (the default) asks the server for both save summaries so
+// the main menu can show a Normal slot and a Deadman slot and let the player pick; the pick then
+// sets this to "normal"/"deadman". A config `mode=` or a mode-named binary can still commit a world
+// up front (skipping the menu). Read from the same pokeemerald.cfg the sidecar reads, so the game
+// and the sidecar agree, and the server (told by the sidecar's Hello) agrees too.
+static char sMode[16] = "select";
 // TRUE when the mode was fixed by the executable's own name (pokeplanet-deadmon.exe), not the
 // config. A dedicated Deadman binary IS the mode: the config cannot talk it back into the normal
 // world, so double-clicking the Deadman icon can only ever enter Deadman.
@@ -126,6 +129,20 @@ u16 Platform_GetSidecarPort(void)
 bool8 Platform_IsDeadman(void)
 {
     return SDL_strcmp(sMode, "deadman") == 0;
+}
+
+// Commit the world the player picked at the menu, so Platform_IsDeadman() (and everything that reads
+// it) reflects the chosen world for the rest of the session. Deliberately NOT written to the config:
+// the choice is a per-launch one, so the two-save menu appears every time (like a save loader) rather
+// than the last pick sticking. The sidecar remembers the pick for mid-session reconnects on its own.
+void Platform_SetMode(const char *mode)
+{
+    if (mode == NULL)
+        return;
+    if (SDL_strcmp(mode, "deadman") == 0)
+        SDL_strlcpy(sMode, "deadman", sizeof(sMode));
+    else
+        SDL_strlcpy(sMode, "normal", sizeof(sMode));
 }
 
 // Names this launch, so a game and the sidecar it starts can only pair with each other.
@@ -958,8 +975,9 @@ static void StoreConfigFile(void)
     fprintf(configFile, "server=%s\n", sServerHost);
     fprintf(configFile, "serverPort=%u\n", sServerPort);
     fprintf(configFile, "sidecarPort=%u\n", sSidecarPort);
-    // Preserved across a display-setting write so the chosen world survives an options change.
-    fprintf(configFile, "mode=%s\n", sMode);
+    // The world is chosen at the menu each launch, not persisted, so it is deliberately not written
+    // here -- writing the runtime pick would make the last choice stick and skip the menu. A player
+    // who wants to commit a world can still add a `mode=` line to the config by hand.
     fclose(configFile);
 }
 

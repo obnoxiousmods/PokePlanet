@@ -96,12 +96,16 @@ pub const MSG_DROP_ITEM: u8 = 0x95;
 pub const MSG_PICKUP_ITEM: u8 = 0x96;
 /// A Deadman line-of-sight lock forces a battle with a player (game -> sidecar).
 pub const MSG_FORCE_BATTLE: u8 = 0x97;
+/// The world the player picked in the menu, after seeing both save summaries (game -> sidecar).
+pub const MSG_SELECT_MODE: u8 = 0x98;
 /// The bank balance and authoritative carried money (server -> game).
 pub const MSG_BANK_STATE: u8 = 0x0D;
 /// The items on the ground of the player's current map (server -> game).
 pub const MSG_MAP_DROPS: u8 = 0x0E;
 /// A pickup succeeded; add this item to the bag (server -> game).
 pub const MSG_PICKED_UP: u8 = 0x0F;
+/// Both of an account's save summaries, for the two-world menu (server -> game).
+pub const MSG_PROFILES: u8 = 0x10;
 
 /// Mirrors `enum NetAuthState` in the C header.
 pub const AUTH_OFFLINE: u8 = 0;
@@ -349,6 +353,34 @@ pub fn encode_bank_state(bank: u64, carried: u32) -> Vec<u8> {
     frame(b)
 }
 
+/// Both save summaries for the two-world menu. Each is a presence byte (1/0) then, if present, the
+/// same fixed fields encode_profile carries (minus the player id, which the menu does not need).
+pub fn encode_profiles(
+    normal: Option<&crate::quic::CharacterProfile>,
+    deadman: Option<&crate::quic::CharacterProfile>,
+) -> Vec<u8> {
+    fn put_profile(b: &mut Vec<u8>, profile: Option<&crate::quic::CharacterProfile>) {
+        match profile {
+            None => b.push(0),
+            Some(p) => {
+                b.push(1);
+                b.push(p.graphics_id);
+                b.push(p.badges);
+                b.extend_from_slice(&p.pokedex_caught.to_le_bytes());
+                b.extend_from_slice(&p.pokedex_seen.to_le_bytes());
+                b.extend_from_slice(&p.play_time_seconds.to_le_bytes());
+                b.extend_from_slice(&p.money.to_le_bytes());
+                put_str(b, &p.name, NAME_LEN);
+            }
+        }
+    }
+
+    let mut b = vec![MSG_PROFILES];
+    put_profile(&mut b, normal);
+    put_profile(&mut b, deadman);
+    frame(b)
+}
+
 /// A successful pickup, for the game to add to the bag.
 pub fn encode_picked_up(item: u16, quantity: u16) -> Vec<u8> {
     let mut b = vec![MSG_PICKED_UP];
@@ -434,6 +466,10 @@ pub enum GameMessage {
     /// A Deadman line-of-sight lock forces a battle with this player.
     ForceBattle {
         target: u32,
+    },
+    /// The world the player picked in the menu.
+    SelectMode {
+        mode: String,
     },
     /// This character's money is now this.
     ///
@@ -528,6 +564,12 @@ pub fn decode_game_message(body: &[u8]) -> anyhow::Result<GameMessage> {
                 target: u32::from_le_bytes([b[0], b[1], b[2], b[3]]),
             })
         }
+        MSG_SELECT_MODE => Ok(GameMessage::SelectMode {
+            // The mode is the rest of the frame; short and ASCII ("normal"/"deadman").
+            mode: String::from_utf8_lossy(rest)
+                .trim_end_matches('\0')
+                .to_string(),
+        }),
         MSG_KEYS => {
             // Whole frames only. A trailing odd byte means the sender and this disagree about
             // the format, and guessing at the remainder would invent inputs nobody pressed.

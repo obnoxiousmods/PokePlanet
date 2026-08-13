@@ -179,12 +179,13 @@ async fn handle_connection(server: Arc<Server>, conn: Connection) -> anyhow::Res
         } => (token, protocol_version, mode),
         other => anyhow::bail!("expected Hello, got {other:?}"),
     };
-    // Only two worlds exist; anything else is treated as normal so a bad value cannot conjure a
-    // third ruleset.
-    let mode = if mode == "deadman" {
-        "deadman"
-    } else {
-        "normal"
+    // Two worlds exist, plus a "select" request from a single-binary client that wants to see both
+    // save summaries and pick in its menu. Anything else is treated as normal so a bad value cannot
+    // conjure a third ruleset.
+    let mode = match mode.as_str() {
+        "deadman" => "deadman",
+        "select" => "select",
+        _ => "normal",
     };
 
     if !quic::version_is_compatible(protocol_version) {
@@ -211,9 +212,44 @@ async fn handle_connection(server: Arc<Server>, conn: Connection) -> anyhow::Res
     };
 
     // The session token anchors to the account's 'normal' character (that is what login created).
-    // Resolve to the character for the selected world; a deadman character is created here the first
-    // time an account enters that world, with the same name and look as the anchor.
-    let character = if character.mode == mode {
+    // A "select" client wants to choose its world after seeing both saves: send it both summaries
+    // and wait for its pick, then resolve that world's character. A committed client (normal or
+    // deadman) resolves straight to that world, as before -- the tester and any reconnect take this
+    // path with the mode they already know.
+    let character = if mode == "select" {
+        let normal = if character.mode == "normal" {
+            Some(character.clone())
+        } else {
+            db::find_character(&server.db, character.account_id, "normal").await?
+        };
+        let deadman = db::find_character(&server.db, character.account_id, "deadman").await?;
+        write_frame(
+            &mut send,
+            &ServerControl::Profiles {
+                normal: normal.as_ref().map(|c| c.profile()),
+                deadman: deadman.as_ref().map(|c| c.profile()),
+            },
+        )
+        .await?;
+
+        // Wait for the pick. Only SelectMode is expected here.
+        let picked = read_frame(&mut recv)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("closed before SelectMode"))?;
+        let chosen_mode = match quic::decode::<ClientControl>(&picked)? {
+            ClientControl::SelectMode { mode } if mode == "deadman" => "deadman",
+            ClientControl::SelectMode { .. } => "normal",
+            other => anyhow::bail!("expected SelectMode, got {other:?}"),
+        };
+        db::ensure_character(
+            &server.db,
+            character.account_id,
+            chosen_mode,
+            &character.name,
+            character.graphics_id,
+        )
+        .await?
+    } else if character.mode == mode {
         character
     } else {
         db::ensure_character(
@@ -1549,8 +1585,9 @@ async fn control_loop(
             ClientControl::Goodbye => break,
             ClientControl::Hello { .. }
             | ClientControl::BeginLogin
-            | ClientControl::PollLogin { .. } => {
-                // Already authenticated; nothing to do.
+            | ClientControl::PollLogin { .. }
+            | ClientControl::SelectMode { .. } => {
+                // Already authenticated and the world already chosen; nothing to do.
             }
         }
     }

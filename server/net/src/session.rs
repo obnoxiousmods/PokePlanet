@@ -32,14 +32,21 @@ pub struct Session {
     settings: Settings,
     link: GameLink,
     tokens: TokenStore,
+    /// The world this session signs in with. Starts at the configured mode (often "select", which
+    /// asks the server for both save summaries so the game menu can choose); once the game picks a
+    /// world it is pinned here, so a mid-game reconnect resumes that same world instead of dropping
+    /// the player back to the menu.
+    current_mode: std::sync::Mutex<String>,
 }
 
 impl Session {
     pub fn new(settings: Settings, link: GameLink, tokens: TokenStore) -> Self {
+        let current_mode = std::sync::Mutex::new(settings.mode.clone());
         Self {
             settings,
             link,
             tokens,
+            current_mode,
         }
     }
 
@@ -126,6 +133,8 @@ impl Session {
             .context("QUIC handshake failed")?;
 
         let (mut send, recv) = conn.open_bi().await?;
+        // Copy the mode out of the lock before any await, so the guard never crosses one.
+        let mode = self.current_mode.lock().unwrap().clone();
         // The server does not see a stream until it carries data, so Hello must go first.
         write_control(
             &mut send,
@@ -133,7 +142,7 @@ impl Session {
                 protocol_version: PROTOCOL_VERSION,
                 token: self.tokens.load(),
                 client_version: env!("CARGO_PKG_VERSION").to_string(),
-                mode: self.settings.mode.clone(),
+                mode,
             },
         )
         .await?;
@@ -221,6 +230,19 @@ impl Session {
                             // summary as soon as it sees the ONLINE state.
                             self.link.send_profile(wire::encode_profile(&profile, player_id)).await;
                             self.report(wire::AUTH_ONLINE, &profile.name, "").await;
+                        }
+                        ServerControl::Profiles { normal, deadman } => {
+                            // The two save summaries for the world-select menu. Reported ONLINE so
+                            // the menu unblocks and shows them; the chosen world's save follows the
+                            // SelectMode reply.
+                            tracing::info!(
+                                normal = normal.is_some(), deadman = deadman.is_some(),
+                                "both save summaries for world select"
+                            );
+                            self.link
+                                .send_profile(wire::encode_profiles(normal.as_ref(), deadman.as_ref()))
+                                .await;
+                            self.report(wire::AUTH_ONLINE, "", "").await;
                         }
                         ServerControl::AuthRequired { ticket, login_url } => {
                             if self.settings.fixed_token {
@@ -523,6 +545,19 @@ impl Session {
                         }
                         wire::GameMessage::ForceBattle { target } => {
                             write_control(&mut send, &ClientControl::ForceBattle { target }).await?;
+                        }
+                        wire::GameMessage::SelectMode { mode } => {
+                            // Pin the chosen world so a later reconnect resumes it directly, then
+                            // tell the server which character to load and stream.
+                            let mode = if mode == "deadman" { "deadman" } else { "normal" };
+                            *self.current_mode.lock().unwrap() = mode.to_string();
+                            write_control(
+                                &mut send,
+                                &ClientControl::SelectMode {
+                                    mode: mode.to_string(),
+                                },
+                            )
+                            .await?;
                         }
                         wire::GameMessage::Hello { .. } => {
                             // Answered where the connection is accepted, since the point of

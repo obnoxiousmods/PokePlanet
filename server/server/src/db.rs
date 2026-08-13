@@ -569,6 +569,24 @@ fn is_unique_violation(e: &tokio_postgres::Error) -> bool {
 /// Discord names are not unique and character names have to be, so a new player whose name
 /// is taken gets a number appended. Returning players keep whatever name they were given,
 /// which is why this looks for an existing character before trying to make one.
+/// The account's character for a world, or `None` if it has never entered that world. Unlike
+/// `ensure_character`, this never creates one -- used to show a save summary without conjuring a
+/// character the player has not chosen to start.
+pub async fn find_character(
+    db: &Db,
+    account_id: i64,
+    mode: &str,
+) -> anyhow::Result<Option<Character>> {
+    let client = db.get().await?;
+    let row = client
+        .query_opt(
+            "SELECT * FROM characters WHERE account_id = $1 AND mode = $2",
+            &[&account_id, &mode],
+        )
+        .await?;
+    Ok(row.map(|r| Character::from_row(&r)))
+}
+
 pub async fn ensure_character(
     db: &Db,
     account_id: i64,

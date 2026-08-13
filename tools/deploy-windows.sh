@@ -38,17 +38,17 @@ copy_or_explain() {
     fi
 }
 
-# The same binary ships under several names. The game reads its profile from argv[0], so each
-# copy gets its own save, config, log, token cache and sidecar port -- which is what makes it
-# possible to run more than one at once and actually test multiplayer on one machine:
-#   pokeplanet.exe          the normal world
-#   pokeplanet-deadmon.exe  the Deadman world (the name fixes the mode; no config editing)
-#   pokeplanet_tester.exe   a second normal account for local multiplayer testing
+# One binary. The world (Normal or Deadman) is chosen at the main menu's two-save picker every
+# launch, so there is no longer a separate Deadman executable. The tester copy is still shipped:
+# the game reads its profile from argv[0], so pokeplanet_tester.exe gets its own save, config, log,
+# token cache and sidecar port, which is what makes running two clients for multiplayer testing work.
 failed=0
 copy_or_explain "$SRC/pokeemerald.exe" "$DEST/pokeplanet.exe" || failed=1
-copy_or_explain "$SRC/pokeemerald.exe" "$DEST/pokeplanet-deadmon.exe" || failed=1
 copy_or_explain "$SRC/pokeemerald.exe" "$DEST/pokeplanet_tester.exe" || failed=1
 copy_or_explain "$SRC/server/target/x86_64-pc-windows-gnu/release/pokeplanet-net.exe" "$DEST/" || failed=1
+# The old dedicated Deadman binary is obsolete now that the menu picks the world; remove it so
+# players do not launch a stale build.
+rm -f "$DEST/pokeplanet-deadmon.exe" "$DEST/pokeemerald-deadmon.cfg" 2>/dev/null || true
 # These were plain `cp -v`, which under `set -e` aborted the whole script the instant a file
 # was locked -- before the friendly "close the game" summary, on the one failure that actually
 # happens. Route them through the same handler as the binaries.

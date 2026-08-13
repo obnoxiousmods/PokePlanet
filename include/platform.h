@@ -16,6 +16,9 @@ void Platform_LaunchSidecar(void);
 // only decides what the client shows itself.
 bool8 Platform_IsDeadman(void);
 
+// Commit the world the player picked at the main-menu world select (see Net_GetModeProfiles).
+void Platform_SetMode(const char *mode);
+
 // Typing with the real keyboard, for chat. While active the button mapping is suppressed,
 // so the game sees no input at all until the player finishes.
 void Platform_BeginTextInput(void);

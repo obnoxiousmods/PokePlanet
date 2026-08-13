@@ -103,6 +103,17 @@ const char *Net_GetLoginUrl(void);
 // Copy the server's save summary into `out`. Returns FALSE until one has arrived.
 bool8 Net_GetProfile(struct NetProfile *out);
 
+// Both save summaries for the world-select menu, from a `Hello { mode: "select" }` sign-in. Returns
+// TRUE once they have arrived. `*normalHas`/`*deadmanHas` say whether the account already has a
+// character in that world (FALSE = a fresh adventure). The `map`/`x`/`y`/`playerId` fields of each
+// summary are not meaningful here -- only name, badges, Pokedex and play time.
+bool8 Net_GetModeProfiles(struct NetProfile *normal, bool8 *normalHas,
+                          struct NetProfile *deadman, bool8 *deadmanHas);
+
+// Tell the server which world the player picked at the menu. The chosen world's save then streams
+// in and Net_ServerSaveDecided()/Net_TakeServerSave() report it, as for a committed sign-in.
+void Net_SelectMode(const char *mode);
+
 void Net_BeginLogin(void);
 
 // Report one frame's key state, so the server can drive this character's validation instance with

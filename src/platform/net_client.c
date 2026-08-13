@@ -47,6 +47,7 @@
 #define MSG_BANK_STATE      0x0D
 #define MSG_MAP_DROPS       0x0E
 #define MSG_PICKED_UP       0x0F
+#define MSG_PROFILES        0x10
 // Game -> sidecar
 #define MSG_SELF_STATE   0x81
 #define MSG_BEGIN_LOGIN  0x82
@@ -71,6 +72,7 @@
 #define MSG_DROP_ITEM       0x95
 #define MSG_PICKUP_ITEM     0x96
 #define MSG_FORCE_BATTLE    0x97
+#define MSG_SELECT_MODE     0x98
 
 // Lives in the SDL backend, like the sidecar port beside it.
 extern const char *Platform_GetInstanceToken(void);
@@ -171,6 +173,14 @@ struct NetState
     // game thread takes it (and adopts the wallet).
     struct NetBankState bankState;
     bool8 hasBankState;
+
+    // Both save summaries for the world-select menu (from a "select" sign-in), and whether each
+    // world already has a character. Only meaningful once hasModeProfiles is set.
+    struct NetProfile normalModeProfile;
+    struct NetProfile deadmanModeProfile;
+    bool8 normalModeHas;
+    bool8 deadmanModeHas;
+    bool8 hasModeProfiles;
 
     // Items lying on the current map, from the server. The field renderer draws these and the
     // player picks them up. Replaced wholesale by each MSG_MAP_DROPS.
@@ -384,6 +394,50 @@ static void HandleProfile(const u8 *payload, u32 len)
     // Appended after the name on the wire, so everything before it keeps its offset.
     sNet.profile.playerId = ReadU32(payload + 20 + NET_NAME_LEN);
     sNet.hasProfile = TRUE;
+    SDL_UnlockMutex(sNet.lock);
+}
+
+// One summary block from MSG_PROFILES: a presence byte, then (if present) graphicsId, badges,
+// caught, seen, playTime, money, name. Returns the number of bytes consumed, or 0 on a short frame.
+static u32 ReadModeProfile(const u8 *p, u32 avail, struct NetProfile *out, bool8 *has)
+{
+    if (avail < 1)
+        return 0;
+    if (p[0] == 0)
+    {
+        *has = FALSE;
+        return 1;
+    }
+    if (avail < 1 + 1 + 1 + 2 + 2 + 4 + 4 + NET_NAME_LEN)
+        return 0;
+
+    out->graphicsId = p[1];
+    out->badges = p[2];
+    out->pokedexCaught = ReadU16(p + 3);
+    out->pokedexSeen = ReadU16(p + 5);
+    out->playTimeSeconds = ReadU32(p + 7);
+    out->money = ReadU32(p + 11);
+    CopyField(out->name, p + 15, NET_NAME_LEN);
+    out->playerId = 0;
+    out->mapGroup = 0;
+    out->mapNum = 0;
+    out->x = 0;
+    out->y = 0;
+    *has = TRUE;
+    return 1 + 14 + NET_NAME_LEN;
+}
+
+static void HandleProfiles(const u8 *payload, u32 len)
+{
+    u32 used;
+
+    SDL_LockMutex(sNet.lock);
+    sNet.normalModeHas = FALSE;
+    sNet.deadmanModeHas = FALSE;
+    used = ReadModeProfile(payload, len, &sNet.normalModeProfile, &sNet.normalModeHas);
+    if (used != 0)
+        ReadModeProfile(payload + used, len - used, &sNet.deadmanModeProfile, &sNet.deadmanModeHas);
+    sNet.hasModeProfiles = TRUE;
     SDL_UnlockMutex(sNet.lock);
 }
 
@@ -759,6 +813,9 @@ static void DispatchFrame(const u8 *body, u32 len)
         break;
     case MSG_PROFILE:
         HandleProfile(body + 1, len - 1);
+        break;
+    case MSG_PROFILES:
+        HandleProfiles(body + 1, len - 1);
         break;
     default:
         break; // Unknown types are ignored so the sidecar can add messages freely.
@@ -1176,6 +1233,44 @@ bool8 Net_GetProfile(struct NetProfile *out)
         *out = sNet.profile;
     SDL_UnlockMutex(sNet.lock);
     return have;
+}
+
+bool8 Net_GetModeProfiles(struct NetProfile *normal, bool8 *normalHas,
+                          struct NetProfile *deadman, bool8 *deadmanHas)
+{
+    bool8 have;
+
+    if (!sInitialised || normal == NULL || deadman == NULL || normalHas == NULL || deadmanHas == NULL)
+        return FALSE;
+
+    SDL_LockMutex(sNet.lock);
+    have = sNet.hasModeProfiles;
+    if (have)
+    {
+        *normal = sNet.normalModeProfile;
+        *deadman = sNet.deadmanModeProfile;
+        *normalHas = sNet.normalModeHas;
+        *deadmanHas = sNet.deadmanModeHas;
+    }
+    SDL_UnlockMutex(sNet.lock);
+    return have;
+}
+
+void Net_SelectMode(const char *mode)
+{
+    u8 body[16];
+    u32 n = 0;
+
+    if (!sInitialised || mode == NULL)
+        return;
+
+    body[n++] = MSG_SELECT_MODE;
+    while (mode[n - 1] != '\0' && n < sizeof(body))
+    {
+        body[n] = (u8)mode[n - 1];
+        n++;
+    }
+    Enqueue(body, n);
 }
 
 void Net_BeginLogin(void)
