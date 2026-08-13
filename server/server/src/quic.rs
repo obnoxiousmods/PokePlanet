@@ -1650,6 +1650,75 @@ async fn control_loop(
                     Err(e) => tracing::warn!(player = player_id, error = %e, "money gift failed"),
                 }
             }
+            ClientControl::GiveItem {
+                target,
+                item,
+                quantity,
+            } => {
+                // The items half of a trade, exactly the money gift's shape: hand a stack of one item
+                // to a player you are standing next to. Server-authoritative -- the sender's client
+                // removes nothing itself; the server takes it from one save and adds it to the other,
+                // so an item cannot be duplicated. The move honors the sender's count and the
+                // receiver's per-slot cap, so nothing is created or destroyed.
+                if quantity == 0 || item == 0 {
+                    continue;
+                }
+                let Some(receiver_cid) = server.world.hand_off_target(player_id, target).await
+                else {
+                    continue;
+                };
+                if receiver_cid == character_id {
+                    continue;
+                }
+                let (lo, hi) = if character_id < receiver_cid {
+                    (character_id, receiver_cid)
+                } else {
+                    (receiver_cid, character_id)
+                };
+                let _g_lo = server.save_lock(lo).lock_owned().await;
+                let _g_hi = server.save_lock(hi).lock_owned().await;
+                match crate::economy::transfer_item(
+                    &server.db,
+                    character_id,
+                    receiver_cid,
+                    item,
+                    quantity,
+                )
+                .await
+                {
+                    Ok(Some((sender_left, receiver_total))) => {
+                        server
+                            .world
+                            .tell(
+                                player_id,
+                                ServerControl::ItemSet {
+                                    item,
+                                    quantity: sender_left,
+                                },
+                            )
+                            .await;
+                        server
+                            .world
+                            .tell(
+                                target,
+                                ServerControl::ItemSet {
+                                    item,
+                                    quantity: receiver_total,
+                                },
+                            )
+                            .await;
+                        tracing::info!(
+                            from = player_id,
+                            to = target,
+                            item,
+                            quantity,
+                            "item gifted"
+                        );
+                    }
+                    Ok(None) => {}
+                    Err(e) => tracing::warn!(player = player_id, error = %e, "item gift failed"),
+                }
+            }
             ClientControl::Goodbye => break,
             ClientControl::Hello { .. }
             | ClientControl::BeginLogin

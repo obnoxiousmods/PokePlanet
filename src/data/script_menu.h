@@ -23,6 +23,14 @@ static const struct MenuAction MultichoiceList_PokePlanetPlayer[] =
     {gText_Exit},
 };
 
+// The trade submenu: give money or an item. Order must match the POKEPLANET_TRADE_* constants.
+static const struct MenuAction MultichoiceList_PokePlanetTrade[] =
+{
+    {gText_PokePlanetMoney},
+    {gText_PokePlanetItem},
+    {gText_Exit},
+};
+
 // Preset amounts for the Trade -> Give money flow. Order must match the POKEPLANET_GIVE_* constants
 // in constants/script_menu.h and the cases in pokeplanet.inc.
 static const struct MenuAction MultichoiceList_PokePlanetGiveMoney[] =
@@ -30,6 +38,16 @@ static const struct MenuAction MultichoiceList_PokePlanetGiveMoney[] =
     {gText_PokePlanetGive100},
     {gText_PokePlanetGive1000},
     {gText_PokePlanetGive10000},
+    {gText_Exit},
+};
+
+// How many of the chosen item to give. Order must match the POKEPLANET_GIVEITEM_* constants. The
+// server clamps the count to what the giver actually holds, so 99 is "as many as you have, up to 99".
+static const struct MenuAction MultichoiceList_PokePlanetGiveItemQty[] =
+{
+    {gText_PokePlanetQty1},
+    {gText_PokePlanetQty10},
+    {gText_PokePlanetQty99},
     {gText_Exit},
 };
 
@@ -920,6 +938,8 @@ static const struct MultichoiceListStruct sMultichoiceLists[] =
     [MULTI_TAG_MATCH_TYPE]             = MULTICHOICE(MultichoiceList_TagMatchType),
     [MULTI_POKEPLANET_PLAYER]          = MULTICHOICE(MultichoiceList_PokePlanetPlayer),
     [MULTI_POKEPLANET_GIVEMONEY]       = MULTICHOICE(MultichoiceList_PokePlanetGiveMoney),
+    [MULTI_POKEPLANET_TRADE]           = MULTICHOICE(MultichoiceList_PokePlanetTrade),
+    [MULTI_POKEPLANET_GIVEITEMQTY]     = MULTICHOICE(MultichoiceList_PokePlanetGiveItemQty),
 };
 
 const u8 *const gStdStrings[] =

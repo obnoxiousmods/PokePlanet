@@ -351,7 +351,11 @@ static const TaskFunc sContextMenuFuncs[] = {
     [ITEMMENULOCATION_QUIZ_LADY] =              Task_ItemContext_Normal,
     [ITEMMENULOCATION_APPRENTICE] =             Task_ItemContext_Normal,
     [ITEMMENULOCATION_WALLY] =                  NULL,
-    [ITEMMENULOCATION_PCBOX] =                  Task_ItemContext_GiveToPC
+    [ITEMMENULOCATION_PCBOX] =                  Task_ItemContext_GiveToPC,
+    // Selecting an item fades and closes the bag, leaving the choice in gSpecialVar_ItemId for the
+    // interaction script to hand to the server -- the same immediate select-and-return the berry
+    // tree uses.
+    [ITEMMENULOCATION_POKEPLANET_GIVE] =        Task_FadeAndCloseBagMenu
 };
 
 static const struct YesNoFuncTable sYesNoTossFunctions = {ConfirmToss, CancelToss};
@@ -610,6 +614,15 @@ void QuizLadyOpenBagMenu(void)
 {
     GoToBagMenu(ITEMMENULOCATION_QUIZ_LADY, POCKETS_COUNT, CB2_QuizLadyExitBagMenu);
     gSpecialVar_Result = FALSE;
+}
+
+// PokePlanet: open the bag so the player can pick one item to give to another player. Selecting an
+// item leaves it in gSpecialVar_ItemId and continues the interaction script (via waitstate); a
+// cancel leaves ITEM_NONE there. The give itself is server-authoritative, so nothing leaves the bag
+// here -- the server debits it and pushes back the new count.
+void PokePlanetGiveOpenBagMenu(void)
+{
+    GoToBagMenu(ITEMMENULOCATION_POKEPLANET_GIVE, POCKETS_COUNT, CB2_ReturnToFieldContinueScript);
 }
 
 void GoToBagMenu(u8 location, u8 pocket, void ( *exitCallback)())

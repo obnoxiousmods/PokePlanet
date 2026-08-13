@@ -356,6 +356,9 @@ impl Session {
                         ServerControl::MoneySet { amount } => {
                             self.link.send(wire::encode_set_money(amount)).await;
                         }
+                        ServerControl::ItemSet { item, quantity } => {
+                            self.link.send(wire::encode_set_item(item, quantity)).await;
+                        }
                         ServerControl::LinkBlock { from_slot, bytes } => {
                             self.link
                                 .send(wire::encode_link_block(from_slot, &bytes))
@@ -564,6 +567,21 @@ impl Session {
                         }
                         wire::GameMessage::GiveMoney { target, amount } => {
                             write_control(&mut send, &ClientControl::GiveMoney { target, amount }).await?;
+                        }
+                        wire::GameMessage::GiveItem {
+                            target,
+                            item,
+                            quantity,
+                        } => {
+                            write_control(
+                                &mut send,
+                                &ClientControl::GiveItem {
+                                    target,
+                                    item,
+                                    quantity,
+                                },
+                            )
+                            .await?;
                         }
                         wire::GameMessage::Hello { .. } => {
                             // Answered where the connection is accepted, since the point of

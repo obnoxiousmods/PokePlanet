@@ -540,5 +540,8 @@ gSpecials::
 	def_special PokePlanet_SendBattleRequest
 	def_special PokePlanet_SetFollow
 	def_special PokePlanet_GiveMoney
+	def_special PokePlanetGiveOpenBagMenu
+	def_special PokePlanet_GiveItemPicked
+	def_special PokePlanet_GiveItem
 	def_special PokePlanet_AcceptBattle
 	def_special PokePlanet_DeclineBattle

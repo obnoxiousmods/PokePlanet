@@ -575,6 +575,26 @@ impl SaveState {
         self.coins_raw ^ (self.encryption_key as u16)
     }
 
+    /// How many of `item` this save holds in `pocket` right now (0 if none). The bag lists only the
+    /// filled slots, so a missing item is simply zero. Used to author a server-side item transfer.
+    pub fn item_quantity(&self, pocket: u8, item: u16) -> u16 {
+        self.bag
+            .iter()
+            .find(|(p, i, _)| *p == pocket && *i == item)
+            .map(|(_, _, q)| *q)
+            .unwrap_or(0)
+    }
+
+    /// The pocket and quantity of `item`, or `None` if the bag does not hold it. An item id belongs
+    /// to exactly one pocket, so this locates it unambiguously without the client naming the pocket
+    /// (whose index order differs between the game and this parser). Used to author an item gift.
+    pub fn find_item(&self, item: u16) -> Option<(u8, u16)> {
+        self.bag
+            .iter()
+            .find(|(_, i, _)| *i == item)
+            .map(|(p, _, q)| (*p, *q))
+    }
+
     /// What in this save could not have come from playing the game.
     ///
     /// None means only that nothing here is provably impossible -- it is not a statement

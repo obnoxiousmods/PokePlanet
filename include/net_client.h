@@ -299,6 +299,18 @@ void Net_GiveMoney(u32 target, u32 amount);
 // wallet. Works in both modes. Cleared once taken.
 bool8 Net_PopSetMoney(u32 *amount);
 
+// Give `quantity` of `item` to the player `target` (their remote id). Server-authoritative, exactly
+// like Net_GiveMoney: the server moves the item between the two saves and pushes each side its new
+// held count; this side changes nothing until Net_PopSetItem delivers the server's word. The item's
+// pocket is resolved server-side, so it is not sent.
+void Net_GiveItem(u32 target, u16 item, u16 quantity);
+
+// Take one pending server-authoritative item count if there is one, TRUE if it filled `item`/
+// `quantity`. The caller sets the bag so it holds exactly `quantity` of `item` (add or remove the
+// difference). This is how a gift's giver and receiver both learn their new count. Call in a loop to
+// drain a burst. Works in both modes.
+bool8 Net_PopSetItem(u16 *item, u16 *quantity);
+
 // The most items that can lie on one map at once, as far as this client draws them.
 #define NET_MAX_DROPS 32
 

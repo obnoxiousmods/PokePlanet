@@ -194,6 +194,17 @@ pub enum ClientControl {
         target: PlayerId,
         amount: u32,
     },
+    /// Give `quantity` of one `item` to `target` (a nearby player). Like GiveMoney, the server moves
+    /// the item in its own copies of both saves -- removes it from the sender, adds it to the
+    /// receiver -- so it can neither be duplicated nor lost, and pushes each their new stack count.
+    /// The item's pocket is located from the sender's own bag, so it is not on the wire.
+    ///
+    /// Appended so the existing variant numbering does not shift.
+    GiveItem {
+        target: PlayerId,
+        item: u16,
+        quantity: u16,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -385,6 +396,15 @@ pub enum ServerControl {
     /// Appended so the existing variant numbering does not shift.
     MoneySet {
         amount: u32,
+    },
+    /// This character now holds this many of `item`, server-authored (e.g. after giving or receiving
+    /// it in a trade). The client sets its bag to match. The item resolves its own pocket, so none is
+    /// carried here.
+    ///
+    /// Appended so the existing variant numbering does not shift.
+    ItemSet {
+        item: u16,
+        quantity: u16,
     },
 }
 

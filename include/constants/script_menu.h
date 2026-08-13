@@ -124,6 +124,8 @@
 #define MULTI_TAG_MATCH_TYPE               113
 #define MULTI_POKEPLANET_PLAYER            114
 #define MULTI_POKEPLANET_GIVEMONEY         115
+#define MULTI_POKEPLANET_TRADE             116
+#define MULTI_POKEPLANET_GIVEITEMQTY       117
 
 // PokePlanet player interaction menu selections
 #define POKEPLANET_PLAYER_BATTLE           0
@@ -136,6 +138,17 @@
 #define POKEPLANET_GIVE_1000               1
 #define POKEPLANET_GIVE_10000              2
 #define POKEPLANET_GIVE_CANCEL             3
+
+// PokePlanet trade submenu selections
+#define POKEPLANET_TRADE_MONEY             0
+#define POKEPLANET_TRADE_ITEM              1
+#define POKEPLANET_TRADE_EXIT              2
+
+// PokePlanet "give item" quantity selections
+#define POKEPLANET_GIVEITEM_1              0
+#define POKEPLANET_GIVEITEM_10             1
+#define POKEPLANET_GIVEITEM_99             2
+#define POKEPLANET_GIVEITEM_CANCEL         3
 
 // Lilycove SS Tidal Multichoice Selections
 #define SSTIDAL_SELECTION_SLATEPORT        0

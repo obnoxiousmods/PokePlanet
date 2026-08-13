@@ -17,6 +17,9 @@ enum {
     ITEMMENULOCATION_APPRENTICE,
     ITEMMENULOCATION_WALLY,
     ITEMMENULOCATION_PCBOX,
+    // PokePlanet: pick one item to give to another player, then return to the interaction script.
+    // Uses the same select-and-return flow as the berry tree.
+    ITEMMENULOCATION_POKEPLANET_GIVE,
     ITEMMENULOCATION_LAST,
 };
 
@@ -89,6 +92,7 @@ void CB2_GoToItemDepositMenu(void);
 void FavorLadyOpenBagMenu(void);
 void QuizLadyOpenBagMenu(void);
 void ApprenticeOpenBagMenu(void);
+void PokePlanetGiveOpenBagMenu(void);
 void CB2_BagMenuFromBattle(void);
 void UpdatePocketListPosition(u8 pocketId);
 void CB2_ReturnToBagMenuPocket(void);

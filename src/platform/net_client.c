@@ -49,6 +49,7 @@
 #define MSG_PICKED_UP       0x0F
 #define MSG_PROFILES        0x10
 #define MSG_SET_MONEY       0x11
+#define MSG_SET_ITEM        0x12
 // Game -> sidecar
 #define MSG_SELF_STATE   0x81
 #define MSG_BEGIN_LOGIN  0x82
@@ -75,6 +76,7 @@
 #define MSG_FORCE_BATTLE    0x97
 #define MSG_SELECT_MODE     0x98
 #define MSG_GIVE_MONEY      0x99
+#define MSG_GIVE_ITEM       0x9A
 
 // Lives in the SDL backend, like the sidecar port beside it.
 extern const char *Platform_GetInstanceToken(void);
@@ -114,6 +116,9 @@ extern const char *Platform_GetInstanceToken(void);
 // for FLASH_BASE. Not a meaningful amount of memory for the class of bug it removes.
 #define TX_FRAME_MAX     1088
 #define CHAT_INBOX_LINES 16
+// How many server-authored item-count updates can be buffered for the game thread at once. A trade
+// touches only a couple of items; this is generous headroom before the oldest is dropped.
+#define NET_SET_ITEM_QUEUE 8
 
 // Blocks arrive faster than the game reads them: the battle engine sends one and then waits
 // several frames before looking, and the handshake alone is a short burst. Deep enough that
@@ -197,6 +202,14 @@ struct NetState
     // pending until the game thread adopts it into the wallet. Applies in both modes.
     u32 setMoney;
     bool8 hasSetMoney;
+
+    // Server-authored item counts waiting for the game thread to set the bag to match (a gift's
+    // giver and receiver both learn their new count this way). A small queue, since a trade can set
+    // several items in a burst; oldest first.
+    u16 setItemId[NET_SET_ITEM_QUEUE];
+    u16 setItemQty[NET_SET_ITEM_QUEUE];
+    u8 setItemHead;
+    u8 setItemCount;
 
     // Both sides agreed to battle, and this is the slot the server gave us.
     struct NetBattleStart battleStart;
@@ -752,6 +765,36 @@ static void HandleSetMoney(const u8 *payload, u32 len)
     SDL_UnlockMutex(sNet.lock);
 }
 
+static void HandleSetItem(const u8 *payload, u32 len)
+{
+    u16 item;
+    u16 quantity;
+    u8 slot;
+
+    if (len < 4)
+        return;
+
+    item = (u16)(payload[0] | (payload[1] << 8));
+    quantity = (u16)(payload[2] | (payload[3] << 8));
+
+    SDL_LockMutex(sNet.lock);
+    if (sNet.setItemCount < NET_SET_ITEM_QUEUE)
+    {
+        slot = (u8)((sNet.setItemHead + sNet.setItemCount) % NET_SET_ITEM_QUEUE);
+        sNet.setItemCount++;
+    }
+    else
+    {
+        // Full: overwrite the oldest rather than drop the newest, since the newest count is the most
+        // current truth for its item. Advancing the head makes room.
+        slot = sNet.setItemHead;
+        sNet.setItemHead = (u8)((sNet.setItemHead + 1) % NET_SET_ITEM_QUEUE);
+    }
+    sNet.setItemId[slot] = item;
+    sNet.setItemQty[slot] = quantity;
+    SDL_UnlockMutex(sNet.lock);
+}
+
 static void HandleCorrection(const u8 *payload, u32 len)
 {
     if (len < 8)
@@ -819,6 +862,9 @@ static void DispatchFrame(const u8 *body, u32 len)
         break;
     case MSG_SET_MONEY:
         HandleSetMoney(body + 1, len - 1);
+        break;
+    case MSG_SET_ITEM:
+        HandleSetItem(body + 1, len - 1);
         break;
     case MSG_CORRECTION:
         HandleCorrection(body + 1, len - 1);
@@ -1671,6 +1717,44 @@ bool8 Net_PopSetMoney(u32 *amount)
     }
     *amount = sNet.setMoney;
     sNet.hasSetMoney = FALSE;
+    SDL_UnlockMutex(sNet.lock);
+    return TRUE;
+}
+
+void Net_GiveItem(u32 target, u16 item, u16 quantity)
+{
+    u8 body[9];
+
+    if (!sInitialised)
+        return;
+
+    body[0] = MSG_GIVE_ITEM;
+    body[1] = (u8)(target & 0xFF);
+    body[2] = (u8)((target >> 8) & 0xFF);
+    body[3] = (u8)((target >> 16) & 0xFF);
+    body[4] = (u8)((target >> 24) & 0xFF);
+    body[5] = (u8)(item & 0xFF);
+    body[6] = (u8)((item >> 8) & 0xFF);
+    body[7] = (u8)(quantity & 0xFF);
+    body[8] = (u8)((quantity >> 8) & 0xFF);
+    Enqueue(body, sizeof(body));
+}
+
+bool8 Net_PopSetItem(u16 *item, u16 *quantity)
+{
+    if (!sInitialised || item == NULL || quantity == NULL)
+        return FALSE;
+
+    SDL_LockMutex(sNet.lock);
+    if (sNet.setItemCount == 0)
+    {
+        SDL_UnlockMutex(sNet.lock);
+        return FALSE;
+    }
+    *item = sNet.setItemId[sNet.setItemHead];
+    *quantity = sNet.setItemQty[sNet.setItemHead];
+    sNet.setItemHead = (u8)((sNet.setItemHead + 1) % NET_SET_ITEM_QUEUE);
+    sNet.setItemCount--;
     SDL_UnlockMutex(sNet.lock);
     return TRUE;
 }

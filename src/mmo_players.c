@@ -20,6 +20,8 @@
 #include "mmo_players.h"
 #include "mmo_text.h"
 #include "mmo_worlditems.h"
+#include "item.h"
+#include "item_menu.h"
 #include "link.h"
 #include "money.h"
 #include "net_client.h"
@@ -400,6 +402,36 @@ void PokePlanet_GiveMoney(void)
         Net_GiveMoney(sInteractingWith, gSpecialVar_0x8004);
 }
 
+// Called right after the give-item bag closes: reports via VAR_RESULT whether the player actually
+// picked a giveable item, so the script can skip the quantity menu on a cancel or a key/important
+// item (which are never tradeable). Leaves gSpecialVar_ItemId in place for the give itself.
+void PokePlanet_GiveItemPicked(void)
+{
+    u16 item = gSpecialVar_ItemId;
+
+    gSpecialVar_Result = (item != ITEM_NONE && !GetItemImportance(item)) ? TRUE : FALSE;
+}
+
+// Called from the Trade -> Give item flow after the bag picked an item (gSpecialVar_ItemId) and the
+// script chose a quantity (VAR_0x8004). Sends it to the player just interacted with; the server owns
+// the move and pushes both bags back, so nothing leaves the bag locally until PollGiftItems adopts
+// the server's word. Key and other important items are never giveable. VAR_RESULT reports whether a
+// gift was sent, so the script can tell the player.
+void PokePlanet_GiveItem(void)
+{
+    u16 item = gSpecialVar_ItemId;
+    u16 quantity = gSpecialVar_0x8004;
+
+    if (sInteractingWith == 0 || item == ITEM_NONE || quantity == 0 || GetItemImportance(item))
+    {
+        gSpecialVar_Result = FALSE;
+        return;
+    }
+
+    Net_GiveItem(sInteractingWith, item, quantity);
+    gSpecialVar_Result = TRUE;
+}
+
 // The player being trailed by the "Follow" menu option, or 0 when not following.
 static u32 sFollowingPlayerId;
 
@@ -668,6 +700,27 @@ static void PollGiftMoney(void)
         SetMoney(&gSaveBlock1Ptr->money, amount);
 }
 
+// Adopt any server-authored item counts: a given item leaving the giver's bag, or a received item
+// landing in the receiver's. The server owns every item move, so both sides set their bag to the
+// count the server reports here (adding or removing the difference). The bag then reports that same
+// count back, which already matches the server's stored copy, so nothing is duplicated or lost.
+// Drains the whole burst in one frame. Works in both modes; the item resolves its own pocket.
+static void PollGiftItems(void)
+{
+    u16 item;
+    u16 target;
+
+    while (Net_PopSetItem(&item, &target))
+    {
+        u16 have = CountTotalItemQuantityInBag(item);
+
+        if (target > have)
+            AddBagItem(item, target - have);
+        else if (target < have)
+            RemoveBagItem(item, have - target);
+    }
+}
+
 void MmoPlayers_Update(void)
 {
     // Remembers whether we were online last frame, so a drop can be noticed and cleaned up.
@@ -718,6 +771,7 @@ void MmoPlayers_Update(void)
     ApplyCorrection();
     MmoDeadman_PollBank();
     PollGiftMoney();
+    PollGiftItems();
     MmoWorldItems_Update();
     CheckForcedSightBattle();
     UpdateFollowPlayer();

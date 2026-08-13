@@ -129,9 +129,110 @@ pub async fn transfer(
     Ok(Some((from_left, to_total)))
 }
 
+/// How many of one item can move from a holder of `from_qty` to a holder of `to_qty`: capped by what
+/// the sender actually holds AND by the room left under the receiver's stack cap, so an item transfer
+/// never duplicates an item nor overflows a slot. Pure.
+fn movable_items(from_qty: u16, to_qty: u16, amount: u16) -> u16 {
+    let room = save_parse::MAX_ITEM_QUANTITY.saturating_sub(to_qty);
+    amount.min(from_qty).min(room)
+}
+
+/// Move up to `amount` of one item between two characters as one server-authored step, mirroring the
+/// money transfer: the server rewrites both saves so a client can never duplicate an item by claiming
+/// it kept its copy. Returns the new `(from_qty, to_qty)` for that item, or `None` if nothing moved
+/// (a save unreadable, the sender lacks the item, the receiver's slot is full, or their pocket has no
+/// free slot to hold a new stack). The pocket is located from the sender's own bag -- an item id
+/// belongs to exactly one pocket -- so the client never names it. Both images are authored before
+/// either is stored, so a failure to place the item on the receiver never leaves the sender already
+/// debited. Hold BOTH save locks.
+pub async fn transfer_item(
+    db: &Db,
+    from: i64,
+    to: i64,
+    item: u16,
+    amount: u16,
+) -> anyhow::Result<Option<(u16, u16)>> {
+    if item == 0 {
+        return Ok(None);
+    }
+    let (Some(from_bytes), Some(to_bytes)) =
+        (db::load_save(db, from).await?, db::load_save(db, to).await?)
+    else {
+        return Ok(None);
+    };
+    let (Some(from_state), Some(to_state)) =
+        (save_parse::parse(&from_bytes), save_parse::parse(&to_bytes))
+    else {
+        return Ok(None);
+    };
+    // The sender must actually hold the item; its pocket comes from where it sits in their bag.
+    let Some((pocket, from_qty)) = from_state.find_item(item) else {
+        return Ok(None);
+    };
+    // Key items are never tradeable -- they are bikes, passes and story items, not fungible goods.
+    // The client blocks them too (by importance), but a modified client must not get past this.
+    // Pocket 1 is Key Items in the save's pocket order (see BAG_POCKETS).
+    const KEY_ITEMS_POCKET: u8 = 1;
+    if pocket == KEY_ITEMS_POCKET {
+        return Ok(None);
+    }
+    let to_qty = to_state.item_quantity(pocket, item);
+    let moved = movable_items(from_qty, to_qty, amount);
+    if moved == 0 {
+        return Ok(None);
+    }
+    let from_new = from_qty - moved;
+    let to_new = to_qty + moved;
+    // Author both images first; only store once both are known to be buildable (the receiver's
+    // pocket might be full, which with_item signals by returning None).
+    let Some(from_block1) = save_parse::with_item(&from_state, pocket, item, from_new) else {
+        return Ok(None);
+    };
+    let Some(to_block1) = save_parse::with_item(&to_state, pocket, item, to_new) else {
+        return Ok(None);
+    };
+    let (Some(from_cand), Some(to_cand)) = (
+        save_parse::reauthor(&from_bytes, &from_block1),
+        save_parse::reauthor(&to_bytes, &to_block1),
+    ) else {
+        return Ok(None);
+    };
+    db::store_save(db, from, &from_cand).await?;
+    db::store_save(db, to, &to_cand).await?;
+    Ok(Some((from_new, to_new)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An item transfer moves only what the sender holds and only what fits under the receiver's
+    /// stack cap, so it can neither take an item the sender lacks nor duplicate one past a full slot.
+    #[test]
+    fn an_item_transfer_conserves_items() {
+        let cap = save_parse::MAX_ITEM_QUANTITY;
+        assert_eq!(
+            movable_items(5, 0, 3),
+            3,
+            "a plain move hands over the asked count"
+        );
+        assert_eq!(movable_items(2, 0, 3), 2, "capped by what the sender holds");
+        assert_eq!(
+            movable_items(80, cap - 10, 40),
+            10,
+            "capped by the room left in the receiver's slot"
+        );
+        assert_eq!(
+            movable_items(5, cap, 3),
+            0,
+            "a full receiver slot takes nothing"
+        );
+        assert_eq!(
+            movable_items(0, 0, 3),
+            0,
+            "a sender without the item moves nothing"
+        );
+    }
 
     /// A transfer moves only what the sender has and only what fits under the receiver's cap, so it
     /// can neither overdraw the sender nor mint money past the game's limit.
