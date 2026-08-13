@@ -24,15 +24,17 @@ PokePlanet_EventScript_MenuBattle::
 	release
 	end
 
-@ Trade and Follow are wired up in their own features; until then they announce themselves rather
-@ than silently doing nothing, so the menu never feels broken.
+@ Trade is wired up in its own feature; until then it announces itself rather than silently doing
+@ nothing, so the menu never feels broken.
 PokePlanet_EventScript_MenuTrade::
 	msgbox PokePlanet_Text_ComingSoon, MSGBOX_DEFAULT
 	release
 	end
 
+@ Follow: trail the other player automatically until you move by hand (or they leave).
 PokePlanet_EventScript_MenuFollow::
-	msgbox PokePlanet_Text_ComingSoon, MSGBOX_DEFAULT
+	special PokePlanet_SetFollow
+	msgbox PokePlanet_Text_Following, MSGBOX_DEFAULT
 	release
 	end
 
@@ -84,6 +86,10 @@ PokePlanet_EventScript_PlayerGone::
 PokePlanet_Text_ComingSoon:
 	.string "That's coming soon to\n"
 	.string "POKéPLANET!$"
+
+PokePlanet_Text_Following:
+	.string "Now following {STR_VAR_1}!\p"
+	.string "Move on your own to stop.$"
 
 PokePlanet_Text_RequestSent:
 	.string "Battle request sent to {STR_VAR_1}!\p"

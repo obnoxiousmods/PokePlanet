@@ -389,6 +389,90 @@ void PokePlanet_SendBattleRequest(void)
         Net_RequestBattle(sInteractingWith);
 }
 
+// The player being trailed by the "Follow" menu option, or 0 when not following.
+static u32 sFollowingPlayerId;
+
+// Called from the Follow menu: start trailing the player just interacted with. Cleared on its own
+// when they leave the map, when the player moves by hand, or on any interruption (script/battle/warp).
+void PokePlanet_SetFollow(void)
+{
+    sFollowingPlayerId = sInteractingWith;
+}
+
+// Step the player one tile in `dir` if the tile is clear. Returns whether it stepped.
+static bool8 TryFollowStep(u8 dir)
+{
+    struct ObjectEvent *player = &gObjectEvents[gPlayerAvatar.objectEventId];
+    s16 x = player->currentCoords.x;
+    s16 y = player->currentCoords.y;
+
+    MoveCoords(dir, &x, &y);
+    if (GetCollisionAtCoords(player, x, y, dir) == COLLISION_NONE)
+    {
+        PlayerWalkNormal(dir);
+        return TRUE;
+    }
+    return FALSE;
+}
+
+// Trail the followed player: each time the player is settled on a tile, take one step toward the
+// target, stopping a tile behind. Any manual input, a lost target, or a locked field ends it.
+static void UpdateFollowPlayer(void)
+{
+    struct ObjectEvent *player, *target = NULL;
+    u8 slot;
+    s16 dx, dy;
+
+    if (sFollowingPlayerId == 0)
+        return;
+
+    if (ArePlayerFieldControlsLocked() || ScriptContext_IsEnabled()
+     || (gMain.newKeys & (DPAD_ANY | B_BUTTON)))
+    {
+        sFollowingPlayerId = 0;
+        return;
+    }
+
+    for (slot = 0; slot < NET_MAX_REMOTE_PLAYERS; slot++)
+    {
+        if (sSlots[slot].spawned && sSlots[slot].playerId == sFollowingPlayerId)
+        {
+            target = FindSlotObject(slot);
+            break;
+        }
+    }
+    if (target == NULL)
+    {
+        sFollowingPlayerId = 0;
+        return;
+    }
+
+    // Only choose a step on a frame the player is settled on a tile -- the same gate the field
+    // control uses before accepting a direction, so this never fights the avatar's own movement.
+    if (gPlayerAvatar.tileTransitionState != T_TILE_CENTER
+     && gPlayerAvatar.tileTransitionState != T_NOT_MOVING)
+        return;
+
+    player = &gObjectEvents[gPlayerAvatar.objectEventId];
+    dx = target->currentCoords.x - player->currentCoords.x;
+    dy = target->currentCoords.y - player->currentCoords.y;
+
+    if (abs(dx) + abs(dy) <= 1)
+        return; // right behind them -- hold position
+
+    // Close the larger gap first; if that way is blocked, try the other axis.
+    if (abs(dx) >= abs(dy))
+    {
+        if (!TryFollowStep(dx > 0 ? DIR_EAST : DIR_WEST) && dy != 0)
+            TryFollowStep(dy > 0 ? DIR_SOUTH : DIR_NORTH);
+    }
+    else
+    {
+        if (!TryFollowStep(dy > 0 ? DIR_SOUTH : DIR_NORTH) && dx != 0)
+            TryFollowStep(dx > 0 ? DIR_EAST : DIR_WEST);
+    }
+}
+
 extern const u8 PokePlanet_EventScript_BattleInvite[];
 
 // Who challenged us, kept for the script's YES branch for the same reason as above: a
@@ -612,6 +696,7 @@ void MmoPlayers_Update(void)
     MmoDeadman_PollBank();
     MmoWorldItems_Update();
     CheckForcedSightBattle();
+    UpdateFollowPlayer();
     CheckForBattleStart();
     ReportSelf();
 

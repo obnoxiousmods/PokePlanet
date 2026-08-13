@@ -538,5 +538,6 @@ gSpecials::
 
 @ PokePlanet
 	def_special PokePlanet_SendBattleRequest
+	def_special PokePlanet_SetFollow
 	def_special PokePlanet_AcceptBattle
 	def_special PokePlanet_DeclineBattle
