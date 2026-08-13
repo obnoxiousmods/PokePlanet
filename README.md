@@ -8,7 +8,7 @@ polished, authentic, a genuinely fresh take, and **no pay-to-win**.
 > Update it whenever something moves between Done, In progress and Planned — a roadmap that
 > lags is worse than none, because people act on it.
 
-**Last updated:** 2026-08-10 &nbsp;·&nbsp; **Building and running:** [docs/BUILDING.md](docs/BUILDING.md)
+**Last updated:** 2026-08-13 &nbsp;·&nbsp; **Building and running:** [docs/BUILDING.md](docs/BUILDING.md)
 
 ---
 
@@ -41,7 +41,7 @@ those two seams.
 ### World and presence
 - **Server-authoritative movement.** Teleports, impossible speeds, diagonal steps and walking
   through walls are all refused server-side, checked against collision exported from the game's
-  own map data. 79 server tests, and CI is green -- it builds the whole game, runs the suite,
+  own map data. 110 server tests, and CI is green -- it builds the whole game, runs the suite,
   lints, formats, and enforces that this file and the README stay identical.
 - **Presence indexed by map**, so a snapshot concerns only the players sharing a map rather
   than scanning every player each tick.
@@ -118,6 +118,41 @@ Refused server-side, each verified against real data with a negative control:
   return no longer waits on a cable-link handshake that a networked battle can never complete).
 - **Gameplay rates held by the server**: experience, encounters, money, items, catch and shop
   prices, plus per-species encounter rates. Edit one file, restart, every client is told.
+
+### Deadman Mode — a permadeath world
+- **A separate character per account**, its own party, boxes, money and progress, chosen at a
+  Normal/Deadman **world-select** at sign-in. The account's Normal character is never touched.
+- **Permadeath.** A Pokémon that faints outside a Poké Center dies for good, moved to a read-only
+  Graveyard box it can never leave; the server records the death and refuses any report that
+  revives a corpse.
+- **Badge-gated growth.** Party size and a level cap both grow with badges; a derived combat level
+  (3–126) drives the display and the ladder.
+- **PvP with stakes.** Forced line-of-sight battles between Deadman players within ±2 badges; the
+  loser drops their carried money and items as a world drop the killer owns for 60s, then public
+  for 180s, then gone. First pickup wins, server-authoritative, dupe-proof.
+- **A high-stakes economy.** 0.8× experience, scarce money, a low catch rate and per-species
+  encounter weighting — every capture and purchase is a decision. Normal mode keeps its own rates.
+- **A PC bank** for money and items that death never touches, and a hard reset when a character has
+  no living Pokémon left anywhere.
+- **One living per species** — a second of a species you already own in Deadman will not appear.
+- Per-mode leaderboards and a Deadman survival ladder + death feed on the website.
+
+### Trade
+- **Give money, an item, or a Pokémon** to a nearby player from the interaction menu. Every
+  transfer moves the asset inside the server's own copies of both saves — money and item counts
+  clamped so nothing is minted or lost, a Pokémon moved as the game's own bytes (never decoded) and
+  identified by personality — so nothing can be duplicated. Key items and eggs are refused, and a
+  party is never emptied to its last Pokémon. Both sides adopt the result the server pushes back.
+  109 of the 110 server tests are in this and the anti-cheat suites.
+
+### Reliability
+- **The game server is the process.** `main` awaits the QUIC game server itself, not the
+  landing-page HTTP task it used to — a stopped HTTP or IRC task can no longer end `main` and take
+  every player offline. `Restart=always` brings the service back within seconds regardless of how
+  it exits, so a stray fault is a blip rather than an outage.
+- **The sidecar follows the game out.** It exits shortly after the game closes (a short grace that
+  survives an IPC blip via a generation counter), so a relaunch starts a fresh sidecar back at the
+  world-select rather than reattaching to one still pinned to the last world.
 
 ### Beyond the hardware
 - **More than four sprite palettes.** The GBA gave the overworld four for everyone who is not
