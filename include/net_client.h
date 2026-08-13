@@ -305,7 +305,9 @@ struct NetDrop
 // Drop a stack of one item onto the ground, or pick up the drop with this id. The server records
 // the drop / hands the item over; the caller removes the item from the bag before dropping and adds
 // it when a pickup is confirmed (see Net_PopPickedUp).
-void Net_DropItem(u16 item, u16 quantity);
+// Drop `quantity` of `item`. `owner` is a PvP killer who gets first claim (a death-drop), or 0 for
+// a free drop anyone may take at once.
+void Net_DropItem(u16 item, u16 quantity, u32 owner);
 void Net_PickUpItem(u32 id);
 
 // Copy the drops on the current map into `out` (up to `max`), returning how many. For rendering and

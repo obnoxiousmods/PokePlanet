@@ -834,6 +834,10 @@ void FishingWildEncounter(u8 rod)
     }
     IncrementGameStat(GAME_STAT_FISHING_ENCOUNTERS);
     SetPokemonAnglerSpecies(species);
+    // Deadman one-living-per-species: a species you already own alive slips the hook rather than
+    // biting, closing the fishing gap in the encounter lock. The player simply returns to the field.
+    if (MmoDeadman_IsActive() && MmoDeadman_OwnsSpecies(species))
+        return;
     BattleSetup_StartWildBattle();
 }
 

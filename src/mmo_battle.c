@@ -60,6 +60,10 @@ static void SeatPlayer(u8 slot, const char *name, u32 trainerId, u8 gender)
     MmoText_FromAscii(p->name, name, LINK_PLAYER_NAME_LENGTH + 1);
 }
 
+// The player this machine is fighting, remembered for the length of the battle so a Deadman death
+// can name its killer -- the drop of the loser's carried items is reserved to them for a while.
+static u32 sPvpOpponentId;
+
 // Both players agreed and the server has assigned the slots. Go.
 void MmoBattle_Start(const struct NetBattleStart *start)
 {
@@ -68,6 +72,8 @@ void MmoBattle_Start(const struct NetBattleStart *start)
 
     if (mine >= 2)
         return;
+
+    sPvpOpponentId = start->opponent;
 
     // The slot the server gave us, which GetMultiplayerId now answers with. Everything
     // below -- master election included -- reads it.
@@ -156,7 +162,8 @@ static void CB2_ReturnFromMmoBattle(void)
                 u16 quantity = CountTotalItemQuantityInBag(items[i]);
                 if (quantity == 0)
                     continue;
-                Net_DropItem(items[i], quantity);
+                // Owned by the killer: they alone may grab it for the first minute, then anyone.
+                Net_DropItem(items[i], quantity, sPvpOpponentId);
                 RemoveBagItem(items[i], quantity);
             }
         }

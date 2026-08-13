@@ -537,8 +537,8 @@ impl Session {
                         wire::GameMessage::BankWithdraw => {
                             write_control(&mut send, &ClientControl::BankWithdraw).await?;
                         }
-                        wire::GameMessage::DropItem { item, quantity } => {
-                            write_control(&mut send, &ClientControl::DropItem { item, quantity }).await?;
+                        wire::GameMessage::DropItem { item, quantity, owner } => {
+                            write_control(&mut send, &ClientControl::DropItem { item, quantity, owner }).await?;
                         }
                         wire::GameMessage::PickUpItem { id } => {
                             write_control(&mut send, &ClientControl::PickUpItem { id }).await?;

@@ -454,10 +454,11 @@ pub enum GameMessage {
     BankDeposit,
     /// Withdraw from the PC bank into the carried wallet.
     BankWithdraw,
-    /// Drop a stack of one item onto the ground.
+    /// Drop a stack of one item onto the ground. `owner` is a PvP killer with first claim, or 0.
     DropItem {
         item: u16,
         quantity: u16,
+        owner: u32,
     },
     /// Pick up the world drop with this id.
     PickUpItem {
@@ -541,11 +542,12 @@ pub fn decode_game_message(body: &[u8]) -> anyhow::Result<GameMessage> {
         MSG_BANK_WITHDRAW => Ok(GameMessage::BankWithdraw),
         MSG_DROP_ITEM => {
             let b = rest
-                .get(..4)
+                .get(..8)
                 .ok_or_else(|| anyhow::anyhow!("short drop message"))?;
             Ok(GameMessage::DropItem {
                 item: u16::from_le_bytes([b[0], b[1]]),
                 quantity: u16::from_le_bytes([b[2], b[3]]),
+                owner: u32::from_le_bytes([b[4], b[5], b[6], b[7]]),
             })
         }
         MSG_PICKUP_ITEM => {

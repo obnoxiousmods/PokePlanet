@@ -153,13 +153,15 @@ pub enum ClientControl {
     ///
     /// Appended so the existing variant numbering does not shift.
     BankWithdraw,
-    /// Drop a stack of one item onto the ground where the player stands. The server debits the item
-    /// from the character's bag (so it cannot be duplicated) and spawns a world drop others can take.
+    /// Drop a stack of one item onto the ground where the player stands. The server spawns a world
+    /// drop others can take. `owner` is a PvP killer who gets first claim during the owner window (a
+    /// death-drop), or 0 for a freely-dropped item anyone may take at once.
     ///
     /// Appended so the existing variant numbering does not shift.
     DropItem {
         item: u16,
         quantity: u16,
+        owner: PlayerId,
     },
     /// Pick up the world drop with this id. The server credits the item to the character's bag if the
     /// pickup rules allow it (owner window, expiry) and removes the drop.

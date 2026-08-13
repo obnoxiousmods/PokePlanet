@@ -11,6 +11,7 @@
 #include "egg_hatch.h"
 #include "text.h"
 #include "menu.h"
+#include "mmo_deadman.h"
 #include "international_string_util.h"
 #include "script.h"
 #include "strings.h"
@@ -253,6 +254,14 @@ static u16 TakeSelectedPokemonFromDaycare(struct DaycareMon *daycareMon)
     if (GetMonData(&pokemon, MON_DATA_LEVEL) != MAX_LEVEL)
     {
         experience = GetMonData(&pokemon, MON_DATA_EXP) + daycareMon->steps;
+        // Deadman: daycare steps must not push a mon past the badge level cap, or the server would
+        // refuse the over-cap party. Trim the accumulated experience to the cap's ceiling.
+        if (MmoDeadman_IsActive())
+        {
+            u32 capExp = gExperienceTables[gSpeciesInfo[species].growthRate][MmoDeadman_LevelCap()];
+            if (experience > capExp)
+                experience = capExp;
+        }
         SetMonData(&pokemon, MON_DATA_EXP, &experience);
         ApplyDaycareExperience(&pokemon);
     }

@@ -1549,18 +1549,24 @@ async fn control_loop(
                     "bank move"
                 );
             }
-            ClientControl::DropItem { item, quantity } => {
+            ClientControl::DropItem {
+                item,
+                quantity,
+                owner,
+            } => {
                 // The client removed the item from its own bag before sending this (the same trust
                 // as every other bag report); the server records the drop and shows it to everyone
-                // on the map. The pickup side is where duplication is actually prevented -- a drop
-                // is handed to exactly one taker.
+                // on the map. `owner` (a PvP killer, over a death-drop) gets first claim during the
+                // owner window; 0 is a free drop anyone may take at once. The pickup side is where
+                // duplication is actually prevented -- a drop is handed to exactly one taker.
                 if quantity == 0 || item == 0 {
                     continue;
                 }
                 if let Some(pose) = server.world.pose_of(player_id).await {
+                    let owner = (owner != 0).then_some(owner);
                     server
                         .world
-                        .drop_item(pose.map, pose.x, pose.y, item, quantity, None)
+                        .drop_item(pose.map, pose.x, pose.y, item, quantity, owner)
                         .await;
                     server.world.broadcast_map_drops(pose.map).await;
                     tracing::info!(player = player_id, item, quantity, "item dropped");

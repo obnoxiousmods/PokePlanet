@@ -1618,9 +1618,9 @@ bool8 Net_PopBankState(struct NetBankState *out)
     return TRUE;
 }
 
-void Net_DropItem(u16 item, u16 quantity)
+void Net_DropItem(u16 item, u16 quantity, u32 owner)
 {
-    u8 body[5];
+    u8 body[9];
 
     if (!sInitialised)
         return;
@@ -1630,6 +1630,10 @@ void Net_DropItem(u16 item, u16 quantity)
     body[2] = (u8)((item >> 8) & 0xFF);
     body[3] = (u8)(quantity & 0xFF);
     body[4] = (u8)((quantity >> 8) & 0xFF);
+    body[5] = (u8)(owner & 0xFF);
+    body[6] = (u8)((owner >> 8) & 0xFF);
+    body[7] = (u8)((owner >> 16) & 0xFF);
+    body[8] = (u8)((owner >> 24) & 0xFF);
     Enqueue(body, sizeof(body));
 }
 
