@@ -1051,9 +1051,19 @@ static void Task_PokePlanetConnect(u8 taskId)
                 SetContinueGameWarpStatus();
             }
         }
+        else if (Net_ServerSaveDecided() && !Net_HasServerSave())
+        {
+            // The server has confirmed this character has no save -- a brand-new world, most often
+            // a fresh Deadman character on an account that already has a Normal one. There is
+            // nothing to continue, and the save physically on this machine belongs to a *different*
+            // character/world; continuing it drops the player onto a stale warp into a black void
+            // (exactly the busted Deadman spawn). Force the main menu to offer NEW GAME so the intro
+            // builds a proper starting save, which then reports up to the server as this character's.
+            gSaveFileStatus = SAVE_STATUS_EMPTY;
+        }
 
-        // Signed in: hand straight over to the normal menu, which draws the CONTINUE
-        // panel from the server's save summary.
+        // Signed in: hand straight over to the normal menu, which draws the CONTINUE panel from the
+        // server's save summary, or offers NEW GAME for a character the server has no save for.
         EnterMainMenu(taskId);
         return;
     }
